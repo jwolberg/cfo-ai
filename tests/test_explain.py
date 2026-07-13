@@ -46,6 +46,7 @@ SAMPLES: dict[ReasonCode, dict] = {
         "buffer": money("750.00"),
         "reserved": money("180.00"),
     },
+    ReasonCode.INTEREST_AVOIDED: {"amount": money("31.00"), "debt_id": "visa"},
     ReasonCode.PER_SWEEP_CAP: {"cap": money("300.00")},
     ReasonCode.WEEKLY_CAP: {"cap": money("600.00"), "already": money("450.00")},
     ReasonCode.CLEARS_THE_CARD: {"debt_id": "visa"},
