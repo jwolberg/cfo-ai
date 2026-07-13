@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cfo-ai — how the engine decides</title>
+<style>
+  :root {
+    --bg: #fbfbfa;
+    --panel: #ffffff;
+    --ink: #1a1a19;
+    --muted: #6b6b66;
+    --faint: #93938c;
+    --rule: #e3e3df;
+    --spine: #2f2f2c;
+
+    --stop: #b4443a;
+    --stop-bg: #fdf2f1;
+    --stop-rule: #eccfcc;
+
+    --go: #2f6f4f;
+    --go-bg: #f0f7f3;
+    --go-rule: #c7e0d4;
+
+    --note: #7a6432;
+    --note-bg: #fbf6ea;
+    --note-rule: #e8dcbf;
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a;
+      --panel: #1d1d22;
+      --ink: #ececeb;
+      --muted: #9a9a96;
+      --faint: #6e6e6a;
+      --rule: #2e2e35;
+      --spine: #c9c9c4;
+
+      --stop: #e08d84;
+      --stop-bg: #2a1d1c;
+      --stop-rule: #4a2f2c;
+
+      --go: #7fc3a0;
+      --go-bg: #172621;
+      --go-rule: #2c4a3c;
+
+      --note: #d9c184;
+      --note-bg: #262117;
+      --note-rule: #453c26;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #16161a; --panel: #1d1d22; --ink: #ececeb; --muted: #9a9a96; --faint: #6e6e6a;
+    --rule: #2e2e35; --spine: #c9c9c4;
+    --stop: #e08d84; --stop-bg: #2a1d1c; --stop-rule: #4a2f2c;
+    --go: #7fc3a0; --go-bg: #172621; --go-rule: #2c4a3c;
+    --note: #d9c184; --note-bg: #262117; --note-rule: #453c26;
+  }
+  :root[data-theme="light"] {
+    --bg: #fbfbfa; --panel: #ffffff; --ink: #1a1a19; --muted: #6b6b66; --faint: #93938c;
+    --rule: #e3e3df; --spine: #2f2f2c;
+    --stop: #b4443a; --stop-bg: #fdf2f1; --stop-rule: #eccfcc;
+    --go: #2f6f4f; --go-bg: #f0f7f3; --go-rule: #c7e0d4;
+    --note: #7a6432; --note-bg: #fbf6ea; --note-rule: #e8dcbf;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    padding: 3rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1020px; margin: 0 auto; }
+
+  header { margin-bottom: 3.5rem; }
+  h1 {
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    line-height: 1.15;
+    margin: 0 0 .75rem;
+    letter-spacing: -0.02em;
+  }
+  .lede {
+    font-size: 1.075rem;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 1.5rem;
+  }
+  .thesis {
+    border-left: 3px solid var(--stop);
+    padding: .3rem 0 .3rem 1rem;
+    font-size: 1.05rem;
+    max-width: 62ch;
+  }
+  .thesis strong { color: var(--stop); }
+
+  h2 {
+    font-size: .78rem;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--faint);
+    font-weight: 600;
+    margin: 3.25rem 0 1.25rem;
+    padding-bottom: .5rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* --- the flow ------------------------------------------------------- */
+
+  .flow { display: flex; flex-direction: column; gap: 0; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.25rem minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* left column: the spine */
+  .node {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 1rem 1.15rem;
+    position: relative;
+  }
+  .node .kicker {
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    display: block;
+    margin-bottom: .5rem;
+  }
+  .node h3 {
+    margin: 0 0 .35rem;
+    font-size: 1.02rem;
+    letter-spacing: -0.01em;
+  }
+  .node p {
+    margin: 0;
+    font-size: .875rem;
+    color: var(--muted);
+  }
+  .node code {
+    font: .82em var(--mono);
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+  }
+
+  .node.go { border-color: var(--go-rule); background: var(--go-bg); }
+  .node.go h3 { color: var(--go); }
+
+  /* the connector column */
+  .link { position: relative; }
+  .link::before {  /* vertical spine */
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0; bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--rule);
+  }
+  .stage.first .link::before { top: 50%; }
+  .stage.last  .link::before { bottom: 50%; }
+  .link::after {  /* horizontal branch out to the refusal */
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    height: 2px;
+    width: 50%;
+    background: var(--stop-rule);
+  }
+  .stage.noexit .link::after { display: none; }
+
+  .gap { height: 1.15rem; }
+  .gap .link::before { top: 0; bottom: 0; }
+  .gap .link::after { display: none; }
+
+  /* right column: where the money doesn't move */
+  .exit {
+    background: var(--stop-bg);
+    border: 1px solid var(--stop-rule);
+    border-radius: 10px;
+    padding: .85rem 1rem;
+    align-self: center;
+  }
+  .exit .verdict {
+    font: 700 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    color: var(--stop);
+    display: block;
+    margin-bottom: .5rem;
+  }
+  .codes { display: flex; flex-wrap: wrap; gap: .3rem; }
+  .code {
+    font: .72rem/1.5 var(--mono);
+    background: var(--panel);
+    border: 1px solid var(--stop-rule);
+    color: var(--stop);
+    border-radius: 5px;
+    padding: .15rem .45rem;
+    white-space: nowrap;
+  }
+  .exit p {
+    margin: .6rem 0 0;
+    font-size: .8rem;
+    color: var(--muted);
+  }
+  .exit.empty { background: none; border: none; }
+
+  /* --- the worst-case table ------------------------------------------- */
+  .rules { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .875rem;
+    min-width: 460px;
+  }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--rule); }
+  th {
+    font: 600 .68rem/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--faint);
+  }
+  td:last-child { color: var(--muted); }
+  td b { color: var(--ink); font-weight: 600; }
+
+  /* --- the loop -------------------------------------------------------- */
+  .loop {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: .75rem;
+    margin-top: .25rem;
+  }
+  .beat {
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: .9rem 1rem;
+  }
+  .beat .kicker {
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    display: block;
+    margin-bottom: .45rem;
+  }
+  .beat h3 { margin: 0 0 .3rem; font-size: .95rem; }
+  .beat p { margin: 0; font-size: .82rem; color: var(--muted); }
+
+  .callout {
+    margin-top: 1.25rem;
+    background: var(--note-bg);
+    border: 1px solid var(--note-rule);
+    border-left: 3px solid var(--note);
+    border-radius: 8px;
+    padding: 1rem 1.15rem;
+    font-size: .9rem;
+  }
+  .callout strong { color: var(--note); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: .82rem;
+    color: var(--faint);
+  }
+  footer a { color: var(--muted); }
+
+  @media (max-width: 700px) {
+    .stage { grid-template-columns: 1fr; gap: .6rem; }
+    .link { display: none; }
+    .exit { border-left: 3px solid var(--stop); margin-left: 1rem; }
+    .exit.empty { display: none; }
+    .gap { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>How the engine decides</h1>
+  <p class="lede">
+    Every day, move the cash a household genuinely doesn&rsquo;t need onto the debt that costs them
+    the most &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; This is the whole decision,
+    top to bottom. It is deterministic: no clock, no network, no LLM, no randomness.
+  </p>
+  <p class="thesis">
+    Read the diagram by its <strong>shape</strong>. The spine down the middle is short. Almost
+    everything branches <strong>off</strong> it, into a reason to do nothing.
+    <strong>Refusal is the product.</strong>
+  </p>
+</header>
+
+<h2>The decision</h2>
+
+<div class="flow">
+
+  <div class="stage first noexit">
+    <div class="node">
+      <span class="kicker">Input &middot; models.py</span>
+      <h3>Snapshot</h3>
+      <p>Everything the engine may look at, frozen. Balances, events, pending, debts, policy.
+         <code>today</code> is a field, never <code>date.today()</code> &mdash; which is what makes
+         a sweep replayable and auditable after Plaid rewrites history beneath you.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Gate &middot; decide.py</span>
+      <h3>Is it safe to look at all?</h3>
+      <p>Seven conditions under which <em>no</em> amount of surplus justifies moving money. They
+         apply to the <strong>funding account</strong> &mdash; the one the debit actually leaves.
+         A stale savings balance can&rsquo;t overdraw checking, so refusing on it would be
+         superstition, not safety.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">MOVE NOTHING</span>
+      <div class="codes">
+        <span class="code">FUNDING_ACCOUNT_MISSING</span>
+        <span class="code">FUNDING_ACCOUNT_NOT_CHECKING</span>
+        <span class="code">CONNECTION_UNHEALTHY</span>
+        <span class="code">BALANCE_STALE</span>
+        <span class="code">INSUFFICIENT_HISTORY</span>
+        <span class="code">INCOME_TOO_VARIABLE</span>
+        <span class="code">BLACKOUT</span>
+        <span class="code">SWEEP_IN_FLIGHT</span>
+      </div>
+      <p>Balance older than <b>2 days</b> is a guess. Under <b>60 days</b> of history you cannot
+         see a monthly bill. Income variation over <b>0.25</b> means their buffer is a rational
+         hedge and sweeping it is worse than doing nothing.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage noexit">
+    <div class="node">
+      <span class="kicker">Forecast &middot; forecast.py</span>
+      <h3>How low does checking go?</h3>
+      <p>Project the funding account alone over <b>30 days</b> and take the <strong>running
+         low</strong>, not the ending balance &mdash; the user only has to be broke once. Every
+         uncertain quantity resolves toward the end that hurts them.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Target &middot; decide.py</span>
+      <h3>Which card?</h3>
+      <p>Highest APR wins. But Plaid doesn&rsquo;t report APR for many issuers &mdash; and with two
+         cards and no rates, paying the wrong one <em>looks exactly like working</em> while quietly
+         destroying the entire point. So we say so instead.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOTHING TO AIM AT</span>
+      <div class="codes">
+        <span class="code">NO_DEBT</span>
+        <span class="code">APR_UNKNOWN</span>
+      </div>
+      <p><code>NO_DEBT</code> is the happiest refusal in the file.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Reserve &middot; decide.py</span>
+      <h3>What isn&rsquo;t ours to move?</h3>
+      <p><code>available = low &minus; buffer_floor &minus; reserved_minimums</code></p>
+      <p style="margin-top:.5rem">The minimum payment is not surplus. Sweeping it and then missing
+         it would cause the exact late fee we exist to prevent.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">THE MONEY ISN&rsquo;T THERE</span>
+      <div class="codes"><span class="code">NO_SURPLUS</span></div>
+      <p>Nothing above the buffer and the reserved minimums.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Caps &middot; decide.py</span>
+      <h3>What are we allowed to move?</h3>
+      <p>Cut down to the per-sweep cap, then the weekly cap, then the card balance. The engine may
+         never exceed the user&rsquo;s guardrails &mdash; only fall short of them.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOT WORTH IT</span>
+      <div class="codes"><span class="code">BELOW_MIN_SWEEP</span></div>
+      <p>Under <b>$1.00</b>, the ACH risk and the noise of a notification cost more than the
+         interest saved.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage last noexit">
+    <div class="node go">
+      <span class="kicker">Output</span>
+      <h3>Sweep</h3>
+      <p>An amount, a target card, and the <strong>reason codes</strong> that produced them &mdash;
+         never sentences. <code>explain.py</code> is the only file with copy in it, so a wording
+         change cannot break a financial calculation, and the LLM narrates <em>from</em> the codes
+         rather than paraphrasing a finished financial claim.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+</div>
+
+<h2>The one rule inside the forecast</h2>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  <em>Money arrives late and small. It leaves early and large.</em> A forecast that is right on
+  <em>average</em> overdrafts half its users half the time. This asymmetry is the entire safety
+  property.
+</p>
+
+<div class="rules">
+<table>
+  <thead><tr><th>Quantity</th><th>What we assume</th></tr></thead>
+  <tbody>
+    <tr><td>Income timing</td><td>expected date <b>+ jitter</b> &mdash; it&rsquo;s late</td></tr>
+    <tr><td>Income amount</td><td>the <b>low</b> end of its range</td></tr>
+    <tr><td>Income we&rsquo;re under 80% sure of</td><td><b>not money at all</b> &mdash; it&rsquo;s a hope</td></tr>
+    <tr><td>Obligation timing</td><td>expected date <b>&minus; jitter</b> &mdash; it&rsquo;s early</td></tr>
+    <tr><td>Obligation amount</td><td>the <b>high</b> end</td></tr>
+    <tr><td>Obligations we&rsquo;re unsure of</td><td><b>still counted</b> &mdash; an uncertain bill is still a bill</td></tr>
+    <tr><td>Pending debits</td><td><b>already gone</b></td></tr>
+    <tr><td>Pending credits</td><td><b>not yet money</b></td></tr>
+    <tr><td>Our own unsettled sweeps</td><td><b>already gone</b> &mdash; the bank may not have taken it yet</td></tr>
+    <tr><td>Discretionary spend</td><td>the <b>p90 &mdash; every single day</b></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <strong>That last row is measurably wrong,</strong> and we know it. Charging a p90 of
+  <em>daily</em> spend across all 30 days compounds a per-day quantile into a horizon quantile &mdash;
+  but variance grows with &radic;t, not t. Measured against three years of a household&rsquo;s own
+  spending, the engine reserves <strong>more than they have ever spent in any 30-day stretch.</strong>
+  It fails <em>safe</em>, which is exactly why it would have survived forever: nobody is overdrawn,
+  nothing throws, and the product simply refuses more often than it should. It is deliberately
+  <strong>not yet fixed</strong> &mdash; the fix loosens the forecast and buys bigger sweeps, and that
+  must not happen before we can measure the breach rate.
+</div>
+
+<h2>What happens after &mdash; and why any of this is knowable</h2>
+
+<div class="loop">
+  <div class="beat">
+    <span class="kicker">1 &middot; decide.py</span>
+    <h3>A prediction</h3>
+    <p>&ldquo;This $220 is not needed.&rdquo; That is a claim about the future, and it is falsifiable.</p>
+  </div>
+  <div class="beat">
+    <span class="kicker">2 &middot; reality</span>
+    <h3>The days pass</h3>
+    <p>They get paid, rent clears, they spend. A real low balance happens, whatever we said.</p>
+  </div>
+  <div class="beat">
+    <span class="kicker">3 &middot; outcome.py</span>
+    <h3>The bet is settled</h3>
+    <p>Did they overdraft, and was it <em>us</em>? How wrong was the projection? How much safe money
+       did we leave sitting there?</p>
+  </div>
+  <div class="beat">
+    <span class="kicker">4 &middot; the asset</span>
+    <h3>Calibration</h3>
+    <p>The empirical distribution of our own errors. Not the data &mdash; every competitor can buy
+       that. <strong>The graveyard of our own mistakes.</strong></p>
+  </div>
+</div>
+
+<div class="callout">
+  <strong>This loop is the company.</strong> Moving money is a commodity; forecasting is hard but
+  tractable. What compounds is knowing, from millions of observed outcomes, how often a forecast at
+  a stated confidence was <em>actually right</em> &mdash; because that is what lets you move
+  <em>more</em> money at the <em>same</em> tail risk. It only accrues to a system that acts and then
+  looks. An advice product never learns whether it was right, because nothing happens.
+</div>
+
+<footer>
+  Generated from the engine itself. The prose lives in
+  <a href="./decision-engine.md">decision-engine.md</a>; the argument for the product lives in
+  <a href="./prd.md">prd.md</a> and <a href="./strategy.md">strategy.md</a>. The tests are the spec.
+</footer>
+
+</div>
+</body>
+</html>

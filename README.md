@@ -17,6 +17,45 @@ The only code here, and deliberately so. Given a frozen snapshot of a household'
 position, decide whether it is safe to move money to a card — **and usually decide that
 it is not.**
 
+Read the diagram by its **shape**. The spine is short. Almost everything branches *off* it,
+into a reason to do nothing.
+
+```mermaid
+flowchart TD
+    S["<b>Snapshot</b><br/><i>frozen inputs · no clock</i>"] --> G{"<b>Is it safe to<br/>look at all?</b>"}
+
+    G -->|no| R1["FUNDING_ACCOUNT_MISSING<br/>FUNDING_ACCOUNT_NOT_CHECKING<br/>CONNECTION_UNHEALTHY<br/>BALANCE_STALE<br/>INSUFFICIENT_HISTORY<br/>INCOME_TOO_VARIABLE<br/>BLACKOUT · SWEEP_IN_FLIGHT"]
+
+    G -->|yes| F["<b>Project the low balance</b><br/><i>funding account, 30 days</i><br/><i>money arrives late and small;</i><br/><i>it leaves early and large</i>"]
+
+    F --> T{"<b>Which card?</b><br/><i>highest APR</i>"}
+    T -->|"nothing to aim at"| R2["NO_DEBT<br/>APR_UNKNOWN"]
+
+    T --> A["<b>available =</b><br/>low − buffer − minimums"]
+    A -->|"nothing spare"| R3["NO_SURPLUS"]
+
+    A --> C["<b>Apply the caps</b><br/><i>per-sweep · weekly · card balance</i>"]
+    C -->|"under $1.00"| R4["BELOW_MIN_SWEEP"]
+
+    C --> W(["<b>SWEEP</b><br/><i>amount + target + reason codes</i>"])
+
+    W --> O["<b>outcome.py</b> grades it<br/><i>overdrafted? how wrong were we?</i><br/><i>how much safe money did we leave?</i>"]
+    O -.->|"the only asset that compounds"| F
+
+    classDef stop fill:#fdf2f1,stroke:#b4443a,color:#b4443a;
+    classDef go fill:#f0f7f3,stroke:#2f6f4f,color:#2f6f4f;
+    classDef step fill:#ffffff,stroke:#c9c9c4,color:#1a1a19;
+    class R1,R2,R3,R4 stop;
+    class W go;
+    class S,G,F,T,A,C,O step;
+```
+
+**Every red box is the product working.** Days with no sweep are not failures.
+
+A richer, annotated version of this — with the full worst-case table and the calibration loop —
+lives at [`docs/decision-flow.html`](docs/decision-flow.html). GitHub renders `.html` from a
+private repo as source, so open it locally: `open docs/decision-flow.html`.
+
 | File | What it does |
 | --- | --- |
 | `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent. |
