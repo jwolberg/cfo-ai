@@ -19,10 +19,10 @@ it is not.**
 
 | File | What it does |
 | --- | --- |
-| `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen. |
-| `forecast.py` | The conservative projection: *money arrives late and small, it leaves early and large.* |
-| `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` codes, never sentences. |
-| `explain.py` | The only file with copy in it. Renders reason codes to prose, so a wording change can't break a financial calculation. |
+| `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent. |
+| `forecast.py` | The conservative projection: *money arrives late and small; it leaves early and large.* |
+| `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
+| `explain.py` | The only file with copy in it. A wording change can't break a financial calculation. |
 | `../tests/` | 65 adversarial tests. **These are the spec.** |
 
 **Why this and nothing else.** Moving money is a commodity (Plaid, Dwolla, bill-pay all
@@ -35,8 +35,26 @@ value. You win it on the tail.
 So the engine is deterministic — no clock, no network, no LLM, no randomness. The same
 snapshot yields the same decision forever, which is what makes a sweep explainable to a
 customer, auditable to a regulator, and replayable in a backtest after Plaid rewrites the
-underlying history beneath you. The LLM narrates `Decision.reasons`. It never produces
-them.
+underlying history beneath you.
+
+Three ideas carry it:
+
+**Only the funding account protects you.** An ACH debit leaves *one* account. A household
+with $100 in checking and $5,000 in savings has $5,100 of money and **$100 of
+protection** — summing them and testing the total against the buffer authorises a sweep
+that overdraws checking while the savings sits untouched. Savings is real, but it isn't
+*there*.
+
+**Bad data must never buy a bigger sweep.** `money()` rejects floats (`Decimal(2.675)`
+quantizes to 2.67). `CashEvent` rejects mis-signed bounds, which would let an outflow hide
+its own worst case. `Debt` rejects a negative `minimum_payment`, which would shrink the
+reserve and hand the user a *larger* sweep. Incoherent input fails loudly at the boundary
+rather than becoming someone's overdraft.
+
+**Reasons are codes, not sentences.** The LLM narrates *from* `ReasonCode` and its
+parameters — it is never handed a finished financial claim to paraphrase, and it is never
+in the decision path. Copy lives in exactly one file, so an edit to it can't change what
+the engine does.
 
 Most of the code is reasons to do nothing. That's the feature.
 

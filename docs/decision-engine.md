@@ -3,11 +3,20 @@
 anchor: ENG
 
 Reference implementation of the component [`prd.md`](./prd.md) §2 calls the hard part.
-`engine/` + `tests/test_decide.py`. Run: `python3 -m pytest tests/ -q`.
+Run: `python3 -m pytest tests/ -q` — 65 tests, ~0.3s.
 
 This is not a demo. It moves no money and talks to no bank. It exists to pin down the
 logic that decides whether moving money is safe — because that decision, not the
 plumbing around it, is what the company lives or dies on.
+
+| File | What it holds |
+| --- | --- |
+| `engine/models.py` | The value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent ([3]). |
+| `engine/forecast.py` | The conservative projection. One rule: *money arrives late and small; it leaves early and large* ([2.3]). |
+| `engine/decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
+| `engine/explain.py` | The only file in the engine that contains copy ([1.1]). |
+| `tests/test_decide.py` | The spec. Mostly the ways the real world breaks the happy path. |
+| `tests/test_explain.py` | Every code renders; no refusal reads like an error. |
 
 ## [1] The shape of it
 
@@ -100,19 +109,22 @@ has to be broke once.
 
 ### [2.4] Refusal is the product
 
-`decide()` is mostly a list of reasons to do nothing:
+`decide()` is mostly a list of reasons to do nothing. Every one is a `ReasonCode`:
 
-- an account needs reauth (`ITEM_LOGIN_REQUIRED` is a steady state, not an edge case)
-- the balance is more than 2 days stale
-- fewer than 60 days of history (cold start — you cannot detect a monthly obligation
-  from three weeks of data)
-- **income variation above 0.25** — see [5]
-- the user's blackout window
-- a previous sweep still unsettled (ACH is not instant; stacking is how you overdraft
-  someone with their own money)
-- no surplus above buffer + reserved minimums
-- APRs unknown *and* more than one card, so we cannot tell which one is costing them
-  most
+| Code | Why we do nothing |
+| --- | --- |
+| `FUNDING_ACCOUNT_MISSING` | We can't see the account the debit would leave from. |
+| `FUNDING_ACCOUNT_NOT_CHECKING` | The debit has to come from checking. |
+| `CONNECTION_UNHEALTHY` | Reauth needed. `ITEM_LOGIN_REQUIRED` is a steady state, not an edge case. |
+| `BALANCE_STALE` | More than 2 days old. A stale balance is a guess. |
+| `INSUFFICIENT_HISTORY` | Under 60 days — you cannot detect a monthly obligation from three weeks of data. |
+| `INCOME_TOO_VARIABLE` | Above 0.25 coefficient of variation. **See [5] — this is the one that matters.** |
+| `BLACKOUT` | The user paused sweeps for today. |
+| `SWEEP_IN_FLIGHT` | ACH is not instant, and stacking is how you overdraft someone with their own money. |
+| `NO_DEBT` | The happiest refusal. |
+| `APR_UNKNOWN` | Rates unknown *and* more than one card, so we cannot tell which is costing them most. |
+| `NO_SURPLUS` | Nothing above the buffer and the reserved minimums. |
+| `BELOW_MIN_SWEEP` | What's left isn't worth the ACH risk. |
 
 Days with no sweep are the feature working.
 
