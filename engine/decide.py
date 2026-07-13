@@ -5,7 +5,9 @@ this function returns the same Decision forever — which is what makes a sweep
 explainable to a customer, auditable to a regulator, and replayable in a backtest
 after Plaid has rewritten the underlying history beneath us.
 
-The LLM narrates `Decision.reasons`. It never produces them.
+The decision emits `Reason` codes with parameters, never sentences. Prose lives in
+engine/explain.py, and the LLM narrates *from* the codes rather than passing strings
+through. It is never in the decision path.
 
 Read the refusal gates below as the product, not as validation. Almost every hard
 thing that happens to a real household shows up here as a reason to do nothing.
@@ -16,8 +18,19 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
-from engine.forecast import HORIZON_DAYS, conservative_low_balance
-from engine.models import ZERO, Action, ConnectionState, Debt, Decision, Snapshot, money
+from engine.forecast import HORIZON_DAYS, conservative_low_balance, funding_account
+from engine.models import (
+    ZERO,
+    AccountKind,
+    Action,
+    ConnectionState,
+    Debt,
+    Decision,
+    Reason,
+    ReasonCode,
+    Snapshot,
+    money,
+)
 
 # Below this, the ACH risk and the cognitive noise of a notification cost more than
 # the interest saved. Not every dollar is worth moving.
@@ -35,57 +48,90 @@ MIN_HISTORY_DAYS = 60
 # advice than doing nothing. We decline to serve rather than serve badly.
 MAX_INCOME_VARIATION = 0.25
 
+# Idle cash outside the funding account worth telling the user about.
+MIN_IDLE_TO_MENTION = money("1000.00")
 
-def _refuse(*reasons: str, low: Decimal | None = None) -> Decision:
+
+def _refuse(*reasons: Reason, low: Decimal | None = None) -> Decision:
     return Decision(
         action=Action.REFUSE,
         amount=ZERO,
         target_debt_id=None,
-        reasons=tuple(reasons),
+        reasons=reasons,
         projected_low_balance=low,
     )
 
 
-def _blocking_reasons(s: Snapshot) -> list[str]:
+def _blocking_reasons(s: Snapshot) -> list[Reason]:
     """Conditions under which no amount of surplus justifies moving money."""
-    reasons: list[str] = []
+    reasons: list[Reason] = []
 
-    if any(a.connection is not ConnectionState.HEALTHY for a in s.accounts):
-        reasons.append("An account needs you to reconnect it — we can't see your real balance.")
+    account = funding_account(s)
 
-    if any(a.balance_age_days > MAX_BALANCE_AGE_DAYS for a in s.accounts):
-        reasons.append("Your balance is stale, so we're not acting on it today.")
+    # Gates apply to the account the money actually leaves. A stale savings balance
+    # cannot overdraw checking, so refusing on it would be superstition, not safety.
+    if account is None:
+        return [Reason(ReasonCode.FUNDING_ACCOUNT_MISSING, {"account_id": s.funding_account_id})]
+
+    if account.kind is not AccountKind.CHECKING:
+        return [Reason(ReasonCode.FUNDING_ACCOUNT_NOT_CHECKING, {"kind": account.kind})]
+
+    if account.connection is not ConnectionState.HEALTHY:
+        reasons.append(Reason(ReasonCode.CONNECTION_UNHEALTHY, {"state": account.connection}))
+
+    if account.balance_age_days > MAX_BALANCE_AGE_DAYS:
+        reasons.append(Reason(ReasonCode.BALANCE_STALE, {"age_days": account.balance_age_days}))
 
     if s.history_days < MIN_HISTORY_DAYS:
         reasons.append(
-            f"We only have {s.history_days} days of history. We're still learning your "
-            "pattern and won't move money until we know it."
+            Reason(
+                ReasonCode.INSUFFICIENT_HISTORY,
+                {"have_days": s.history_days, "need_days": MIN_HISTORY_DAYS},
+            )
         )
 
     if s.income_variation > MAX_INCOME_VARIATION:
         reasons.append(
-            "Your income is too variable for us to promise a payment is safe. "
-            "Holding your cash is the right call — that buffer is doing real work."
+            Reason(
+                ReasonCode.INCOME_TOO_VARIABLE,
+                {"variation": s.income_variation, "limit": MAX_INCOME_VARIATION},
+            )
         )
 
     if s.today in s.policy.blackout_dates:
-        reasons.append("You've paused sweeps for today.")
+        reasons.append(Reason(ReasonCode.BLACKOUT, {"date": s.today}))
 
     if s.sweeps_in_flight > ZERO:
-        reasons.append(
-            f"A ${s.sweeps_in_flight} payment hasn't settled yet. We won't stack another "
-            "on top of money the bank may not have taken out yet."
-        )
+        reasons.append(Reason(ReasonCode.SWEEP_IN_FLIGHT, {"amount": s.sweeps_in_flight}))
 
     return reasons
 
 
-def _select_target(debts: tuple[Debt, ...]) -> tuple[Debt | None, str | None]:
+def _idle_elsewhere(s: Snapshot) -> list[Reason]:
+    """Money sitting outside the funding account.
+
+    We will not sweep it — it isn't where the debit lands, and moving it is a second
+    ACH we haven't earned the right to make. But staying silent while someone holds
+    thousands in a savings account earning nothing and pays 24% on a card is its own
+    kind of failure. Name it; don't act on it.
+    """
+    idle = sum(
+        (a.balance for a in s.accounts if a.account_id != s.funding_account_id),
+        ZERO,
+    )
+
+    if idle < MIN_IDLE_TO_MENTION:
+        return []
+
+    return [Reason(ReasonCode.IDLE_CASH_ELSEWHERE, {"amount": idle})]
+
+
+def _select_target(debts: tuple[Debt, ...]) -> tuple[Debt | None, Reason | None]:
     """Highest effective APR wins. Returns (target, refusal_reason)."""
     open_debts = [d for d in debts if d.balance > ZERO]
 
     if not open_debts:
-        return None, "You have no debt left to pay. Nothing to do — congratulations."
+        return None, Reason(ReasonCode.NO_DEBT)
 
     if len(open_debts) == 1:
         # Nothing to rank, so a missing APR costs us nothing here.
@@ -96,10 +142,7 @@ def _select_target(debts: tuple[Debt, ...]) -> tuple[Debt | None, str | None]:
     if not ranked:
         # Paying the wrong card looks exactly like working while quietly destroying
         # the entire point. We would rather say so.
-        return None, (
-            "We don't have the APR for your cards, so we can't tell which one is "
-            "costing you the most. Add them and we'll start."
-        )
+        return None, Reason(ReasonCode.APR_UNKNOWN, {"card_count": len(open_debts)})
 
     return max(ranked, key=lambda d: d.apr), None
 
@@ -116,44 +159,62 @@ def decide(snapshot: Snapshot) -> Decision:
 
     # The minimum payment is not surplus. Sweeping it and then missing it would mean
     # causing the exact late fee we exist to prevent.
+    #
+    # Debt is the single authoritative source for minimums: the forecast deliberately
+    # skips DEBT_MINIMUM events so this reserve is not counted twice (see EventKind).
+    # Debt.__post_init__ rejects a negative minimum_payment; the max() is belt-and-
+    # braces, because the one direction this must never fail is "bad upstream data
+    # shrinks the reserve and buys a bigger sweep."
     horizon_end = snapshot.today + timedelta(days=HORIZON_DAYS)
     reserved = sum(
-        (d.minimum_payment for d in snapshot.debts if d.minimum_due_date <= horizon_end),
+        (max(d.minimum_payment, ZERO) for d in snapshot.debts if d.minimum_due_date <= horizon_end),
         ZERO,
     )
 
-    available = low - snapshot.policy.buffer_floor - reserved
+    buffer_floor = max(snapshot.policy.buffer_floor, ZERO)
+    available = low - buffer_floor - reserved
+
+    projection = Reason(
+        ReasonCode.PROJECTION,
+        {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
+    )
 
     if available < MIN_SWEEP:
         return _refuse(
-            f"Your balance is projected to dip to ${low} on {low_day}. After your "
-            f"${snapshot.policy.buffer_floor} buffer and ${reserved} of minimum payments, "
-            "there's nothing spare. We're leaving your cash alone.",
+            Reason(
+                ReasonCode.NO_SURPLUS,
+                {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
+            ),
+            *_idle_elsewhere(snapshot),
             low=low,
         )
 
     amount = available
-    reasons = [
-        f"Your balance is projected to bottom out at ${low} on {low_day}, "
-        f"after your ${snapshot.policy.buffer_floor} buffer and ${reserved} of minimums.",
-    ]
+    reasons = [projection]
 
     weekly_headroom = snapshot.policy.max_weekly_sweep - snapshot.swept_this_week
 
     if snapshot.policy.max_sweep < amount:
         amount = snapshot.policy.max_sweep
-        reasons.append(f"Held to your ${snapshot.policy.max_sweep} per-payment cap.")
+        reasons.append(Reason(ReasonCode.PER_SWEEP_CAP, {"cap": snapshot.policy.max_sweep}))
 
     if weekly_headroom < amount:
         amount = weekly_headroom
-        reasons.append(f"Held to your ${snapshot.policy.max_weekly_sweep} weekly cap.")
+        reasons.append(
+            Reason(
+                ReasonCode.WEEKLY_CAP,
+                {"cap": snapshot.policy.max_weekly_sweep, "already": snapshot.swept_this_week},
+            )
+        )
 
     if target.balance < amount:
         amount = target.balance
-        reasons.append("That clears the card.")
+        reasons.append(Reason(ReasonCode.CLEARS_THE_CARD, {"debt_id": target.debt_id}))
 
     if amount < MIN_SWEEP:
-        return _refuse("Nothing left to move under your caps this week.", low=low)
+        return _refuse(Reason(ReasonCode.BELOW_MIN_SWEEP, {"minimum": MIN_SWEEP}), low=low)
+
+    reasons.extend(_idle_elsewhere(snapshot))
 
     return Decision(
         action=Action.SWEEP,
