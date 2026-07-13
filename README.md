@@ -52,7 +52,7 @@ Design notes and the deliberately-unbuilt parts: [`docs/decision-engine.md`](doc
 | [`prd.md`](docs/prd.md) | What we'd build. Autonomous from day one; refusal and an overdraft guarantee as the load-bearing features. |
 | [`strategy.md`](docs/strategy.md) | Why it's a business. We sell insurance, not information — and what compounds is calibration, not data. |
 | [`decision-engine.md`](docs/decision-engine.md) | How the engine decides, and the four things it knowingly assumes away. |
-| [`tech-prep.md`](docs/tech-prep.md) | The subsystems below the snapshot: pending→posted reconciliation, internal-transfer detection, webhook idempotency, the ACH state machine, reproducibility, and how you test a forecaster with no real data. |
+| [`architecture.md`](docs/architecture.md) | The system around the engine, and what it deliberately doesn't build. The load-bearing choice is an append-only decision log that stores each decision's entire frozen input. |
 
 ### The evidence
 
@@ -81,14 +81,6 @@ product can't earn trust by working, because it doesn't work. **Automation isn't
 reward for trust; automation is the product, and trust is the constraint you engineer
 around.** That reversal is the whole point, and it's only legible if you can see what it
 reversed.
-
-### The system around it
-
-[`architecture.md`](docs/architecture.md) — what we'd build and in what order. Notable for
-what it *doesn't* build: no Temporal, no Redis, no provider abstraction for providers that
-don't exist. The load-bearing choice is an append-only decision log that stores each
-decision's entire frozen input, which is what makes a sweep explainable, auditable, and
-backtestable after Plaid rewrites history beneath it.
 
 ---
 
