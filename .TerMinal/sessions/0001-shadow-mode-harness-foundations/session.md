@@ -9,7 +9,10 @@ ended: null
 goal: "Build the shadow-mode harness foundations: #1 synthetic household generator (sim/) and #2 engine/interest.py counterfactual amortization — two independent branches"
 tickets: [1, 2]
 branches: ["chore/backlog-and-session-0001", "feat/interest-counterfactual", "feat/synthetic-households"]
-prs: []
+prs:
+  - https://github.com/jwolberg/cfo-ai/pull/4
+  - https://github.com/jwolberg/cfo-ai/pull/5
+  - https://github.com/jwolberg/cfo-ai/pull/6
 related_research: []
 related_docs:
   - docs/prd.md
@@ -153,6 +156,10 @@ Clean `main` at `8597d3a`. No open PRs. Nothing in flight.
   the three merge to `main` independently (disjoint file sets).
 - **2026-07-13** — Suite: 65 → 123 tests, ~0.3s. `ruff check` + `ruff format --check` clean.
   Nothing pushed; no PRs open.
+- **2026-07-13** — Docs updated (README + `decision-engine.md` [6.5]/[7]). A trial merge of all
+  three branches caught a real conflict: both features appended to the *end* of
+  `decision-engine.md`. Moved [6.5] up next to [6.1] — which it is the empirical answer to
+  anyway — and re-verified all three merge clean. PRs #4, #5, #6 opened.
 
 ## [5] Decisions
 

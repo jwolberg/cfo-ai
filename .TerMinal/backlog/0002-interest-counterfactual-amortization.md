@@ -9,7 +9,7 @@ type: feature
 source: manual
 created: 2026-07-13
 updated: 2026-07-13
-prs: []
+prs: ["https://github.com/jwolberg/cfo-ai/pull/5"]
 refs: ["docs/prd.md#5.1", "docs/prd.md#1", "docs/decision-engine.md#6.3"]
 depends_on: []
 agent_id: 1000x-ai-engineer
