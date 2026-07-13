@@ -5,7 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cfo-ai — how the engine decides</title>
 <style>
+  /* Light only, deliberately. `color-scheme: light` also stops the browser (or an OS in dark
+     mode) from force-inverting the page into a palette nobody checked. */
   :root {
+    color-scheme: light;
+
     --bg: #fbfbfa;
     --panel: #ffffff;
     --ink: #1a1a19;
@@ -28,44 +32,6 @@
 
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
-  }
-
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #16161a;
-      --panel: #1d1d22;
-      --ink: #ececeb;
-      --muted: #9a9a96;
-      --faint: #6e6e6a;
-      --rule: #2e2e35;
-      --spine: #c9c9c4;
-
-      --stop: #e08d84;
-      --stop-bg: #2a1d1c;
-      --stop-rule: #4a2f2c;
-
-      --go: #7fc3a0;
-      --go-bg: #172621;
-      --go-rule: #2c4a3c;
-
-      --note: #d9c184;
-      --note-bg: #262117;
-      --note-rule: #453c26;
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #16161a; --panel: #1d1d22; --ink: #ececeb; --muted: #9a9a96; --faint: #6e6e6a;
-    --rule: #2e2e35; --spine: #c9c9c4;
-    --stop: #e08d84; --stop-bg: #2a1d1c; --stop-rule: #4a2f2c;
-    --go: #7fc3a0; --go-bg: #172621; --go-rule: #2c4a3c;
-    --note: #d9c184; --note-bg: #262117; --note-rule: #453c26;
-  }
-  :root[data-theme="light"] {
-    --bg: #fbfbfa; --panel: #ffffff; --ink: #1a1a19; --muted: #6b6b66; --faint: #93938c;
-    --rule: #e3e3df; --spine: #2f2f2c;
-    --stop: #b4443a; --stop-bg: #fdf2f1; --stop-rule: #eccfcc;
-    --go: #2f6f4f; --go-bg: #f0f7f3; --go-rule: #c7e0d4;
-    --note: #7a6432; --note-bg: #fbf6ea; --note-rule: #e8dcbf;
   }
 
   * { box-sizing: border-box; }
