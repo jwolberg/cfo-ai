@@ -23,6 +23,7 @@ it is not.**
 | `forecast.py` | The conservative projection: *money arrives late and small; it leaves early and large.* |
 | `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
 | `interest.py` | What the debt costs and what a sweep saves — measured against what the household *was already paying*, never against the card minimum. |
+| `outcome.py` | Grades a decision against what actually happened. Until this existed, nothing ever told the engine whether it was right. |
 | `explain.py` | The only file with copy in it. A wording change can't break a financial calculation. |
 | `../tests/` | Adversarial tests. **These are the spec.** |
 
@@ -151,6 +152,8 @@ reversed.
 ## Status
 
 - Only `engine/` and `sim/` exist. `architecture.md` is intent, not description.
+- The engine can now be **graded** (`engine/outcome.py`), but not yet **replayed** — the
+  shadow-mode driver is the last missing piece.
 - Engine thresholds (`INCOME_CONFIDENCE_FLOOR`, `MAX_INCOME_VARIATION`,
   `MAX_BALANCE_AGE_DAYS`) are **judgment, not evidence**. The honest way to set them is
   shadow mode: run against real households, move nothing, measure how often the realized
