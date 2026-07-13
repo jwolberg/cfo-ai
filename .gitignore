@@ -1,3 +1,6 @@
 .TerMinal/backlog/.next-id.lock
 .TerMinal/sessions/.next-id.lock
 .status.md
+__pycache__/
+*.pyc
+.pytest_cache/
