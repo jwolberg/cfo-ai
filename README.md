@@ -6,7 +6,7 @@ about "doesn't need."
 
 
 ```
-python3 -m pytest tests/ -q      # 65 tests, ~0.3s
+python3 -m pytest tests/ -q      # the suite is the spec; it runs in well under a second
 ```
 
 ---
@@ -22,8 +22,9 @@ it is not.**
 | `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent. |
 | `forecast.py` | The conservative projection: *money arrives late and small; it leaves early and large.* |
 | `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
+| `interest.py` | What the debt costs and what a sweep saves — measured against what the household *was already paying*, never against the card minimum. |
 | `explain.py` | The only file with copy in it. A wording change can't break a financial calculation. |
-| `../tests/` | 65 adversarial tests. **These are the spec.** |
+| `../tests/` | Adversarial tests. **These are the spec.** |
 
 **Why this and nothing else.** Moving money is a commodity (Plaid, Dwolla, bill-pay all
 do it). Forecasting is hard but tractable. The thing that decides whether the company
@@ -37,7 +38,7 @@ snapshot yields the same decision forever, which is what makes a sweep explainab
 customer, auditable to a regulator, and replayable in a backtest after Plaid rewrites the
 underlying history beneath you.
 
-Three ideas carry it:
+Four ideas carry it:
 
 **Only the funding account protects you.** An ACH debit leaves *one* account. A household
 with $100 in checking and $5,000 in savings has $5,100 of money and **$100 of
@@ -55,6 +56,15 @@ rather than becoming someone's overdraft.
 parameters — it is never handed a finished financial claim to paraphrase, and it is never
 in the decision path. Copy lives in exactly one file, so an edit to it can't change what
 the engine does.
+
+**We never claim a number we can't stand behind.** "That's $31 of interest you won't pay"
+is measured against what the household *was already paying* — not against the card minimum,
+which would credit our sweep with interest they were never going to pay anyway and inflate
+the one metric the company reports on itself. And when there's no honest figure — the issuer
+doesn't report the APR, or we haven't yet seen what they pay, or their payments don't even
+cover their interest — the engine emits **no claim at all**. The absence is structural: the
+claim is a `Reason` like any other, so there is no code path that can render an invented
+number.
 
 Most of the code is reasons to do nothing. That's the feature.
 

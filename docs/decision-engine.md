@@ -3,7 +3,7 @@
 anchor: ENG
 
 Reference implementation of the component [`prd.md`](./prd.md) §2 calls the hard part.
-Run: `python3 -m pytest tests/ -q` — 65 tests, ~0.3s.
+Run: `python3 -m pytest tests/ -q`.
 
 This is not a demo. It moves no money and talks to no bank. It exists to pin down the
 logic that decides whether moving money is safe — because that decision, not the
