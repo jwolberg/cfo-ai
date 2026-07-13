@@ -19,6 +19,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from engine.forecast import HORIZON_DAYS, conservative_low_balance, funding_account
+from engine.interest import claimable_interest_avoided
 from engine.models import (
     ZERO,
     AccountKind,
@@ -213,6 +214,14 @@ def decide(snapshot: Snapshot) -> Decision:
 
     if amount < MIN_SWEEP:
         return _refuse(Reason(ReasonCode.BELOW_MIN_SWEEP, {"minimum": MIN_SWEEP}), low=low)
+
+    # What the sweep saves — the number the user is told and the number the company is
+    # graded on (prd.md §5.1). None when the APR is unknown or the card does not amortize,
+    # in which case no claim is emitted at all rather than a guessed one.
+    if (saved := claimable_interest_avoided(target, amount, snapshot.today)) is not None:
+        reasons.append(
+            Reason(ReasonCode.INTEREST_AVOIDED, {"amount": saved, "debt_id": target.debt_id})
+        )
 
     reasons.extend(_idle_elsewhere(snapshot))
 

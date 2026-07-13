@@ -10,6 +10,7 @@ word "safe" — and the cheapest way to be right is to decline.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -89,13 +90,25 @@ def bill(
     )
 
 
-def card(apr: str | None = "0.2399", balance: str = "9000.00", debt_id: str = "visa") -> Debt:
+def card(
+    apr: str | None = "0.2399",
+    balance: str = "9000.00",
+    debt_id: str = "visa",
+    observed: str | None = "400.00",
+) -> Debt:
     return Debt(
         debt_id=debt_id,
         balance=money(balance),
         minimum_payment=money("180.00"),
         minimum_due_date=TODAY + timedelta(days=20),
-        apr=money(apr) if apr is not None else None,
+        # Deliberately Decimal(), not money(): an APR is a rate, not a dollar amount, and
+        # money() quantizes to cents — money("0.2399") is 0.24, a different card. Harmless
+        # while APR is only ranked, wrong the moment it is multiplied by a balance.
+        apr=Decimal(apr) if apr is not None else None,
+        # What this household was already paying, well above the $180 minimum — which is
+        # exactly why they have idle cash to sweep. This is the counterfactual the interest
+        # claim is measured against (prd.md §5.1).
+        observed_monthly_payment=money(observed) if observed is not None else None,
     )
 
 
@@ -520,6 +533,67 @@ def test_a_single_card_needs_no_apr_because_there_is_nothing_to_rank():
 
     assert d.action is Action.SWEEP
     assert d.target_debt_id == "only"
+
+
+# --- what the sweep saved, and when we refuse to say ------------------------------
+
+
+def test_a_sweep_says_what_it_saved():
+    d = decide(snapshot())
+
+    assert d.action is Action.SWEEP
+    assert d.has(ReasonCode.INTEREST_AVOIDED)
+
+    (saved,) = [r.params["amount"] for r in d.reasons if r.code is ReasonCode.INTEREST_AVOIDED]
+    assert saved > money("0.00")
+
+
+def test_a_sweep_against_a_card_with_no_apr_claims_nothing():
+    """The one case where we move money and cannot say what it bought.
+
+    Plaid does not return APR for many issuers. We still sweep — a single card needs no
+    ranking — but there is no honest interest figure, so none is emitted. Silence, not a
+    guess.
+    """
+    d = decide(
+        snapshot(
+            accounts=(account("50000.00"),),
+            events=(),
+            debts=(card(apr=None, debt_id="only"),),
+        )
+    )
+
+    assert d.action is Action.SWEEP
+    assert not d.has(ReasonCode.INTEREST_AVOIDED)
+
+
+def test_a_household_underwater_on_their_own_payments_does_not_crash_the_decision():
+    """Their payments don't cover their interest, so there is no payoff and no claim to make.
+
+    The interest model raises on this — correctly; it is the most important fact about their
+    finances. But the *decision* is unaffected: the sweep is still safe and still correct.
+    We move the money and say nothing about what it saved.
+    """
+    underwater = card(debt_id="only", observed="10.00")  # $10/mo against ~$180/mo of interest
+
+    d = decide(snapshot(accounts=(account("50000.00"),), events=(), debts=(underwater,)))
+
+    assert d.action is Action.SWEEP
+    assert not d.has(ReasonCode.INTEREST_AVOIDED)
+
+
+def test_no_claim_until_we_have_seen_what_they_were_paying():
+    """We never fall back to the card minimum as the counterfactual — that would flatter us."""
+    d = decide(
+        snapshot(
+            accounts=(account("50000.00"),),
+            events=(),
+            debts=(card(debt_id="only", observed=None),),
+        )
+    )
+
+    assert d.action is Action.SWEEP
+    assert not d.has(ReasonCode.INTEREST_AVOIDED)
 
 
 def test_refuses_when_there_is_no_debt_left():

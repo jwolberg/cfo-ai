@@ -14,8 +14,10 @@ plumbing around it, is what the company lives or dies on.
 | `engine/models.py` | The value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent ([3]). |
 | `engine/forecast.py` | The conservative projection. One rule: *money arrives late and small; it leaves early and large* ([2.3]). |
 | `engine/decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
+| `engine/interest.py` | What the debt costs and what a sweep saves — the primary KPI ([`prd.md`](./prd.md) §5.1) and the sentence the user reads, computed in one place ([7]). |
 | `engine/explain.py` | The only file in the engine that contains copy ([1.1]). |
 | `tests/test_decide.py` | The spec. Mostly the ways the real world breaks the happy path. |
+| `tests/test_interest.py` | Hand-computable amortization, and the three ways we decline to claim. |
 | `tests/test_explain.py` | Every code renders; no refusal reads like an error. |
 
 ## [1] The shape of it
@@ -231,3 +233,49 @@ There is no universal "pay this card" API. Card networks are not a repayment rai
 issuer controls acceptance. Everything downstream of `Decision` — authorization,
 idempotency, the ACH state machine, returns, NSF, reconciliation — is out of scope here
 and is the other half of the engineering problem.
+
+## [7] What the sweep saved
+
+`engine/interest.py` computes the number in [`prd.md`](./prd.md) §1 — *"that's $31 of
+interest you won't pay"* — and the number in §5.1 that the company is graded on. They are the
+same number, so exactly one place computes it.
+
+**The counterfactual is the household's own payment trajectory, not the card minimum.** §5.1
+says so explicitly, and the distinction is load-bearing: users of this product already pay
+*more* than the minimum — that is *why* they have idle cash — so measuring against the
+minimum would credit our sweep with interest they were never going to pay anyway. That
+inflates the one metric the company reports, which is the exact KPI failure §5.1 was written
+to ban. So `Debt.observed_monthly_payment` is the baseline, `minimum_payment` is not an input
+to the interest math at all, and a test asserts that changing it cannot move the claim by a
+cent.
+
+Interest accrues **daily** (average-daily-balance, no intra-cycle compounding) because the
+product sweeps daily — a monthly amortization would value a sweep on day 2 and one on day 29
+identically, and be wrong in the direction of over-claiming.
+
+### [7.1] Three ways the engine declines to say what it saved
+
+The claim is a `Reason` like any other, so its **absence** is the mechanism — there is no code
+path that can render an invented number.
+
+| Condition | Why we say nothing |
+| --- | --- |
+| APR unknown | Plaid does not report it for many issuers ([6.3]). A figure that looks computed but was invented is worse than no figure. |
+| No observed payment history | We will **not** fall back to the minimum — that is the flattering assumption above. Costs nothing in practice: `INSUFFICIENT_HISTORY` already blocks sweeps under 60 days, so by the time we may move money we have seen two payment cycles. |
+| Their payments don't cover their interest | There is no payoff, so there is no interest total. The model *raises*; the decision path catches it and claims nothing. The sweep is still safe and still happens. |
+
+### [7.2] The claim runs to payoff, and it is bigger than you expect
+
+A $300 sweep against a $9,000 card at 23.99%, for a household paying $400/month, avoids
+**$236.94**. That is arithmetically right — the card takes ~31 months to clear, so $300 of
+principal removed today escapes ~2.6 years of compounding at 24%.
+
+It is also **7.6× the illustrative figure in [`prd.md`](./prd.md) §1** ("$220 → $31"). One of
+the two is wrong, and it is worth settling before this number is shown to a customer: a
+to-payoff claim is honest but leans on the household maintaining its payments for years, and a
+large number invites exactly the disbelief this product cannot afford. A bounded-horizon claim
+("over the next 12 months") would under-claim and be checkable against a real statement.
+
+Per-sweep claims **do** compose: each day's figure is marginal against that day's actual
+balance and assumes no further sweeps, so the daily claims telescope to the true total against
+never-sweeping. They are not double-counted.
