@@ -148,50 +148,46 @@ def _select_target(debts: tuple[Debt, ...]) -> tuple[Debt | None, Reason | None]
     return max(ranked, key=lambda d: d.apr), None
 
 
-def decide(snapshot: Snapshot) -> Decision:
-    if blocking := _blocking_reasons(snapshot):
-        return _refuse(*blocking)
+def untouchable(snapshot: Snapshot) -> tuple[Decimal, Decimal]:
+    """The cash that is not ours to move: (buffer_floor, reserved_minimums).
 
-    low, low_day = conservative_low_balance(snapshot)
+    Exported because `engine/outcome.py` has to answer "how much was *actually* safe, in
+    hindsight?" and it must apply the identical definition of untouchable cash. Two copies of
+    this arithmetic would drift, and the day they drifted the calibration numbers would quietly
+    start measuring a different engine than the one that shipped.
 
-    target, cannot_rank = _select_target(snapshot.debts)
-    if cannot_rank:
-        return _refuse(cannot_rank, low=low)
+    The minimum payment is not surplus. Sweeping it and then missing it would mean causing the
+    exact late fee we exist to prevent.
 
-    # The minimum payment is not surplus. Sweeping it and then missing it would mean
-    # causing the exact late fee we exist to prevent.
-    #
-    # Debt is the single authoritative source for minimums: the forecast deliberately
-    # skips DEBT_MINIMUM events so this reserve is not counted twice (see EventKind).
-    # Debt.__post_init__ rejects a negative minimum_payment; the max() is belt-and-
-    # braces, because the one direction this must never fail is "bad upstream data
-    # shrinks the reserve and buys a bigger sweep."
+    Debt is the single authoritative source for minimums: the forecast deliberately skips
+    DEBT_MINIMUM events so this reserve is not counted twice (see EventKind).
+    Debt.__post_init__ rejects a negative minimum_payment; the max() is belt-and-braces,
+    because the one direction this must never fail is "bad upstream data shrinks the reserve
+    and buys a bigger sweep."
+    """
     horizon_end = snapshot.today + timedelta(days=HORIZON_DAYS)
     reserved = sum(
         (max(d.minimum_payment, ZERO) for d in snapshot.debts if d.minimum_due_date <= horizon_end),
         ZERO,
     )
 
-    buffer_floor = max(snapshot.policy.buffer_floor, ZERO)
-    available = low - buffer_floor - reserved
+    return max(snapshot.policy.buffer_floor, ZERO), reserved
 
-    projection = Reason(
-        ReasonCode.PROJECTION,
-        {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
-    )
 
-    if available < MIN_SWEEP:
-        return _refuse(
-            Reason(
-                ReasonCode.NO_SURPLUS,
-                {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
-            ),
-            *_idle_elsewhere(snapshot),
-            low=low,
-        )
+def apply_caps(
+    snapshot: Snapshot, target: Debt, available: Decimal
+) -> tuple[Decimal, list[Reason]]:
+    """Cut `available` down to what the user's guardrails and the card actually permit.
 
+    Exported for the same reason as `untouchable()`: `engine/outcome.py` has to answer "what
+    would we have swept if our forecast had been perfect?", and the honest answer applies the
+    *same* ceilings. Without this, `false_refusal_cost` would blame us for the user's own
+    `max_sweep` — reporting a huge cost of conservatism on a day the engine was not being
+    conservative at all, merely obedient. prd.md §5.3 says **our** cost of conservatism, and
+    a cap the user chose is not ours.
+    """
     amount = available
-    reasons = [projection]
+    reasons: list[Reason] = []
 
     weekly_headroom = snapshot.policy.max_weekly_sweep - snapshot.swept_this_week
 
@@ -211,6 +207,63 @@ def decide(snapshot: Snapshot) -> Decision:
     if target.balance < amount:
         amount = target.balance
         reasons.append(Reason(ReasonCode.CLEARS_THE_CARD, {"debt_id": target.debt_id}))
+
+    return amount, reasons
+
+
+def would_sweep(snapshot: Snapshot, low: Decimal) -> Decimal:
+    """What `decide()` would have moved if the projected low had been `low`.
+
+    The grader's counterfactual. Feed it the *realized* low and it answers: knowing what we now
+    know, and obeying every guardrail the user set, how much should we have moved? The gap
+    between that and what we actually moved is our forecast error priced in dollars — and
+    nothing else. Returns ZERO when it would have refused on the money.
+    """
+    target, cannot_rank = _select_target(snapshot.debts)
+    if target is None or cannot_rank:
+        return ZERO
+
+    buffer_floor, reserved = untouchable(snapshot)
+    available = low - buffer_floor - reserved
+
+    if available < MIN_SWEEP:
+        return ZERO
+
+    amount, _ = apply_caps(snapshot, target, available)
+
+    return amount if amount >= MIN_SWEEP else ZERO
+
+
+def decide(snapshot: Snapshot) -> Decision:
+    if blocking := _blocking_reasons(snapshot):
+        return _refuse(*blocking)
+
+    low, low_day = conservative_low_balance(snapshot)
+
+    target, cannot_rank = _select_target(snapshot.debts)
+    if cannot_rank:
+        return _refuse(cannot_rank, low=low)
+
+    buffer_floor, reserved = untouchable(snapshot)
+    available = low - buffer_floor - reserved
+
+    projection = Reason(
+        ReasonCode.PROJECTION,
+        {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
+    )
+
+    if available < MIN_SWEEP:
+        return _refuse(
+            Reason(
+                ReasonCode.NO_SURPLUS,
+                {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
+            ),
+            *_idle_elsewhere(snapshot),
+            low=low,
+        )
+
+    amount, cap_reasons = apply_caps(snapshot, target, available)
+    reasons = [projection, *cap_reasons]
 
     if amount < MIN_SWEEP:
         return _refuse(Reason(ReasonCode.BELOW_MIN_SWEEP, {"minimum": MIN_SWEEP}), low=low)
