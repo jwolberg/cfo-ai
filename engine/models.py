@@ -154,7 +154,15 @@ class Debt:
     minimum_due_date: date
     # None when the issuer does not report it through Plaid. This is common, and the
     # engine must not pretend otherwise. See docs/decision-engine.md [4.3].
+    #
+    # An APR is a *rate*, not a dollar amount — do not construct it with money(), which
+    # quantizes to cents and would silently turn 23.99% into 24%.
     apr: Decimal | None
+    # What the household was actually paying on this card before we arrived — the
+    # counterfactual the interest claim is measured against (prd.md §5.1). None when we
+    # haven't observed enough history, in which case we make no claim at all rather than
+    # falling back to the minimum, which would flatter us. See engine/interest.py.
+    observed_monthly_payment: Decimal | None = None
 
     def __post_init__(self) -> None:
         """Corrupt debt data is rejected, not smoothed over.
@@ -172,6 +180,14 @@ class Debt:
 
         if self.apr is not None and not (ZERO <= self.apr <= Decimal("2")):
             raise ValueError(f"apr={self.apr} is outside a plausible range (0–200%)")
+
+        # A negative observed payment would make the counterfactual *cheaper* than reality
+        # and inflate the interest we claim to have saved. Same rule as everywhere else:
+        # bad upstream data must never buy us a bigger number.
+        if self.observed_monthly_payment is not None and self.observed_monthly_payment < ZERO:
+            raise ValueError(
+                f"observed_monthly_payment={self.observed_monthly_payment} cannot be negative"
+            )
 
 
 @dataclass(frozen=True)
@@ -255,6 +271,9 @@ class ReasonCode(str, Enum):
 
     # Advisory — true, and worth saying, but not why we acted.
     IDLE_CASH_ELSEWHERE = "idle_cash_elsewhere"
+    # Emitted only when the APR is known *and* the debt actually amortizes. Its absence is
+    # how the engine declines to make a claim it cannot stand behind — see engine/interest.py.
+    INTEREST_AVOIDED = "interest_avoided"
 
 
 @dataclass(frozen=True)

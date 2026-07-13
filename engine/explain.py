@@ -118,6 +118,12 @@ def render(reason: Reason) -> str:
         case ReasonCode.CLEARS_THE_CARD:
             return "That clears the card."
 
+        case ReasonCode.INTEREST_AVOIDED:
+            return (
+                f"That's about {usd(p['amount'])} of interest you won't pay, if you keep "
+                "your payments where they are."
+            )
+
         case ReasonCode.IDLE_CASH_ELSEWHERE:
             return (
                 f"Separately: you're holding {usd(p['amount'])} in savings. It isn't cash we "
