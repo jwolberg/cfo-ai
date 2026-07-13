@@ -1,0 +1,144 @@
+#!/usr/bin/env bun
+// merge-digest — deterministic final stage of /digest.
+//
+// Storage-agnostic: merges the codex digest pass output (digest-patch.json) into
+// the chunk-diff skeleton (chunks.json), in place. Enforces the risk-override
+// rules so the LLM can never lower a deterministic 🔴, assigns decision ids, and
+// recomputes stats. Zero tokens. See .agents/digest.md.
+
+import { createHash } from 'crypto';
+import { readFile, writeFile } from 'fs/promises';
+
+type Risk = 'green' | 'yellow' | 'red';
+
+function usage(code = 0): never {
+  console.log(`Usage: bin/merge-digest --chunks <chunks.json> --patch <digest-patch.json> [--out <file>]
+
+  --chunks <file>   the chunk-diff skeleton                 [required]
+  --patch <file>    the codex digest pass output            [required]
+  --out <file>      where to write the final (default: overwrite --chunks)
+
+Enforces risk-override rules, assigns decision ids, recomputes stats.`);
+  process.exit(code);
+}
+
+async function readJson<T>(path: string, fallback: T): Promise<T> {
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+// Enforce the contract: never lower a deterministic 🔴; allow raise to 🔴; allow
+// lower to 🟢 only for trivial test/config 🟡.
+function applyRiskOverride(current: Risk, kind: string, override: unknown): Risk {
+  if (override !== 'green' && override !== 'yellow' && override !== 'red') return current;
+  if (current === 'red') return 'red';
+  if (override === 'red') return 'red';
+  if (override === 'green') return kind === 'test' || kind === 'config' ? 'green' : current;
+  return current; // yellow override on a yellow chunk: no-op
+}
+
+function decisionId(title: string): string {
+  return createHash('sha256').update(title).digest('hex').slice(0, 8);
+}
+
+const REV_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
+
+async function main() {
+  const argv = [...Bun.argv.slice(2)];
+  const opt: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '-h' || a === '--help') usage(0);
+    else if (a.startsWith('--')) opt[a.slice(2)] = argv[++i];
+    else usage(1);
+  }
+  if (!opt.chunks || !opt.patch) usage(1);
+  const outPath = opt.out ?? opt.chunks;
+
+  const digest = await readJson<any>(opt.chunks, null);
+  if (!digest) throw new Error(`Missing or unreadable ${opt.chunks}; run chunk-diff first`);
+  const patch = await readJson<any>(opt.patch, null);
+  if (!patch) throw new Error(`Missing or unreadable ${opt.patch}; the codex digest pass must write it`);
+
+  // MR-level fields
+  digest.brief = patch.brief ?? digest.brief;
+  digest.blast_radius = patch.blast_radius ?? digest.blast_radius;
+  // Diagrams: accept an array of {title,kind,mermaid}; fall back to a legacy
+  // single `diagram` string. Drop empties.
+  const rawDiagrams = Array.isArray(patch.diagrams)
+    ? patch.diagrams
+    : typeof patch.diagram === 'string' && patch.diagram.trim()
+      ? [{ title: 'How it fits', kind: 'flow', mermaid: patch.diagram }]
+      : [];
+  digest.diagrams = rawDiagrams
+    .map((d: any) => ({
+      title: String(d.title || 'Diagram'),
+      kind: String(d.kind || 'flow'),
+      mermaid: String(d.mermaid || d.source || '').trim(),
+    }))
+    .filter((d: any) => d.mermaid);
+  delete digest.diagram;
+  digest.double_check = Array.isArray(patch.double_check) ? patch.double_check : digest.double_check;
+  digest.generator = 'codex:gpt-5 + chunk-diff';
+
+  // Decisions: synthesized by the LLM; assign ids + sort by reversibility (low first).
+  const decisions = Array.isArray(patch.decisions) ? patch.decisions : [];
+  digest.decisions = decisions
+    .map((d: any) => ({
+      id: d.id || decisionId(String(d.title ?? '')),
+      title: d.title ?? '',
+      category: d.category ?? 'system-design',
+      files: Array.isArray(d.files) ? d.files : [],
+      what: d.what ?? null,
+      why: d.why ?? null,
+      alternatives: d.alternatives ?? null,
+      reversibility: ['low', 'medium', 'high'].includes(d.reversibility) ? d.reversibility : 'medium',
+    }))
+    .sort((a: any, b: any) => REV_RANK[a.reversibility] - REV_RANK[b.reversibility]);
+
+  // Per-chunk fields
+  const patchChunks: Record<string, any> = patch.chunks ?? {};
+  let filled = 0;
+  for (const chunk of digest.chunks) {
+    const p = patchChunks[chunk.id];
+    if (!p) continue;
+    filled++;
+    if (typeof p.summary === 'string') chunk.summary = p.summary.slice(0, 220);
+    if (typeof p.note === 'string') chunk.note = p.note;
+    chunk.confidence = typeof p.confidence === 'string' ? p.confidence : null;
+    const nextRisk = applyRiskOverride(chunk.risk as Risk, chunk.kind, p.risk);
+    if (nextRisk !== chunk.risk) {
+      chunk.risk_reason = nextRisk === 'red' ? 'model-flagged' : nextRisk === 'green' ? 'model: trivial' : chunk.risk_reason;
+    }
+    chunk.risk = nextRisk;
+  }
+
+  // Re-sort + recompute stats from final risk.
+  const rank: Record<Risk, number> = { red: 0, yellow: 1, green: 2 };
+  digest.chunks.sort(
+    (a: any, b: any) => rank[a.risk as Risk] - rank[b.risk as Risk] || a.file.localeCompare(b.file),
+  );
+  const count = (r: Risk) => digest.chunks.filter((c: any) => c.risk === r).length;
+  digest.stats = {
+    ...digest.stats,
+    green: count('green'),
+    yellow: count('yellow'),
+    red: count('red'),
+    llm_chunks: filled,
+    decisions: digest.decisions.length,
+  };
+
+  await writeFile(outPath, JSON.stringify(digest, null, 2) + '\n', 'utf8');
+  console.error(
+    `Digest: ${outPath} — ${digest.stats.red}🔴 ${digest.stats.yellow}🟡 ${digest.stats.green}🟢; ` +
+      `${filled} chunk summaries; ${digest.decisions.length} design decision(s)`,
+  );
+}
+
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

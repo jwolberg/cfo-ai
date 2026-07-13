@@ -1,0 +1,53 @@
+---
+generated: {{TIMESTAMP}}
+commit: {{HEAD_SHA}}
+short_sha: {{SHORT_SHA}}
+pr_number: {{PR_NUMBER}}
+verdict: blocked
+test_status: fail
+merge_ready: false
+risk_tier: high
+overall: 0
+correctness: 0
+security: 0
+architecture: 0
+conformance: 0
+quality: 0
+dependencies: 0
+diff_hash: "{{DIFF_HASH}}"
+generated_by: code-review-preflight (deterministic — codex not invoked)
+---
+
+# Code review · PR #{{PR_NUMBER}} · {{SHORT_SHA}}
+
+**Verdict: `blocked` — test gate failed.**
+
+The test suite must be green before the six-axis review runs. Codex was not invoked because the gate failed.
+
+## Test gate
+
+- runner: `{{TEST_RUNNER}}`
+- command: `{{TEST_CMD}}`
+- pass: {{TEST_PASS}}
+- fail: {{TEST_FAIL}}
+- exit code: {{TEST_EXIT}}
+
+### Last 30 lines of test output
+
+```
+{{TEST_TAIL}}
+```
+
+## Next steps
+
+1. Diagnose the failing test(s) above
+2. Fix in this PR (commit + push)
+3. Re-run `/code-review` on the new head — the preflight will re-test and gate again
+
+## Findings
+
+None — the review did not run.
+
+## Suggestions
+
+None.

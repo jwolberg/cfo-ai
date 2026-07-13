@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# Deterministic merge-sync reconcile: close tickets whose PR(s) merged and scrub
+# the merged URL from `prs:`. Replaces the per-ticket LLM↔forge round-trips with
+# a single forge query + matching. Read-only by default; --apply mutates.
+#
+#   bin/merge-sync                 # dry-run: print the reconcile plan
+#   bin/merge-sync --apply         # execute merge-driven closes + URL scrubs
+#   bin/merge-sync --merged-from F # use merged URLs from file F (one per line)
+#                                  #   instead of querying the forge (test seam /
+#                                  #   precomputed list)
+#
+# Scope: the UNAMBIGUOUS, judgment-free part of /merge-sync (CLAUDE.md [4.1]).
+# The drift sweep that needs a thinker (stuck-blocker-cleared, long-stale-open)
+# stays in the skill. This only ever closes a ticket whose linked PR is actually
+# merged, and only edits ticket files (never merges, never touches code).
+# Portable (macOS + Linux).
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -d "$ROOT/backlog" ] && [ ! -f "$ROOT/.TerMinal/template.json" ]; then
+  BACKLOG="$ROOT/backlog"
+else
+  BACKLOG="$ROOT/.TerMinal/backlog"
+fi
+APPLY=0
+MERGED_FROM=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) APPLY=1 ;;
+    --merged-from) MERGED_FROM="${2:-}"; shift ;;
+    -h|--help) sed -n '2,17p' "$0"; exit 0 ;;
+    *) echo "merge-sync: unknown arg '$1'" >&2; exit 2 ;;
+  esac
+  shift
+done
+
+[ -d "$BACKLOG" ] || { echo "merge-sync: no ticket backlog at $BACKLOG" >&2; exit 1; }
+today="$(date +%Y-%m-%d)"
+
+# --- merged URL set --------------------------------------------------------
+# One forge call (or a supplied file) gives every merged PR/MR URL; we match
+# ticket `prs:` entries against it. This is the whole point — no per-PR query.
+merged_urls_file="$(mktemp)"
+trap 'rm -f "$merged_urls_file"' EXIT
+
+if [ -n "$MERGED_FROM" ]; then
+  [ -f "$MERGED_FROM" ] || { echo "merge-sync: --merged-from file not found: $MERGED_FROM" >&2; exit 1; }
+  grep -E '^https?://' "$MERGED_FROM" > "$merged_urls_file" || true
+else
+  forge="$("$ROOT/.claude/bin/forge" 2>/dev/null || echo github)"
+  case "$forge" in
+    github)
+      gh pr list --state merged --limit 200 --json url -q '.[].url' > "$merged_urls_file" 2>/dev/null \
+        || { echo "merge-sync: 'gh pr list' failed (auth? not a GitHub repo?)" >&2; exit 1; } ;;
+    gitlab)
+      # glab gives MR URLs; capture them directly.
+      glab mr list --state merged -P 200 2>/dev/null | grep -oE 'https?://[^ ]+/merge_requests/[0-9]+' > "$merged_urls_file" \
+        || { echo "merge-sync: 'glab mr list' failed (auth? not a GitLab repo?)" >&2; exit 1; } ;;
+    *) echo "merge-sync: unknown forge '$forge'" >&2; exit 1 ;;
+  esac
+fi
+
+is_merged() { grep -qxF "$1" "$merged_urls_file"; }
+
+# --- frontmatter helpers ---------------------------------------------------
+# Extract prs: URLs (handles block `- url`, inline [], inline ["a","b"]).
+prs_urls() {
+  awk '
+    NR==1 && $0=="---" { fm=1; next }
+    fm && $0=="---" { exit }
+    fm && /^prs:/ {
+      line=$0; sub(/^prs:[[:space:]]*/, "", line)
+      if (line ~ /^\[/) {                       # inline array
+        gsub(/[]["'\'' ]/, "", line)
+        n=split(line, a, ",")
+        for (i=1;i<=n;i++) if (a[i] != "") print a[i]
+        next
+      }
+      inblock=1; next                            # block form follows
+    }
+    fm && inblock {
+      if ($0 ~ /^[[:space:]]*-[[:space:]]*/) {
+        u=$0; sub(/^[[:space:]]*-[[:space:]]*/, "", u); gsub(/["'\'']/, "", u); gsub(/[[:space:]]/, "", u)
+        if (u != "") print u
+      } else { inblock=0 }
+    }' "$1"
+}
+
+field() {
+  awk -v key="$2" 'NR==1&&$0=="---"{fm=1;next} fm&&$0=="---"{exit}
+    fm && $0 ~ "^"key": " { sub("^"key": *",""); gsub(/^"|"$/,""); print; exit }' "$1"
+}
+
+# Rewrite frontmatter: set the prs: block canonically to the remaining URLs, and
+# (when newstatus is set) status:->newstatus + updated:->today. Rewrites the
+# whole prs region to avoid format-specific deletion bugs. Pure bash for
+# portability (BSD/macOS awk chokes on the equivalent program).
+rewrite_ticket() {
+  local file="$1" newstatus="$2"; shift 2
+  local remaining=("$@")
+  local tmp; tmp="$(mktemp)"
+  local in_fm=0 fm_seen=0 in_prs=0 upd_done=0 line trimmed
+  while IFS= read -r line || [ -n "$line" ]; do
+    if [ "$fm_seen" -eq 0 ] && [ "$line" = "---" ]; then
+      in_fm=1; fm_seen=1; printf '%s\n' "$line" >> "$tmp"; continue
+    fi
+    if [ "$in_fm" -eq 1 ] && [ "$line" = "---" ]; then
+      [ -n "$newstatus" ] && [ "$upd_done" -eq 0 ] && printf 'updated: %s\n' "$today" >> "$tmp"
+      in_fm=0; printf '%s\n' "$line" >> "$tmp"; continue
+    fi
+    if [ "$in_fm" -eq 1 ]; then
+      # swallow old block-form prs entries until the next non-list key
+      if [ "$in_prs" -eq 1 ]; then
+        trimmed="${line#"${line%%[![:space:]]*}"}"
+        case "$trimmed" in -*) continue ;; *) in_prs=0 ;; esac
+      fi
+      case "$line" in
+        prs:*)
+          if [ "${#remaining[@]}" -eq 0 ]; then printf 'prs: []\n' >> "$tmp"
+          else printf 'prs:\n' >> "$tmp"; printf '  - %s\n' "${remaining[@]}" >> "$tmp"; fi
+          case "$line" in prs:*\[*) in_prs=0 ;; *) in_prs=1 ;; esac
+          continue ;;
+        status:*)
+          if [ -n "$newstatus" ]; then printf 'status: %s\n' "$newstatus" >> "$tmp"
+          else printf '%s\n' "$line" >> "$tmp"; fi
+          continue ;;
+        updated:*)
+          if [ -n "$newstatus" ]; then printf 'updated: %s\n' "$today" >> "$tmp"; upd_done=1
+          else printf '%s\n' "$line" >> "$tmp"; fi
+          continue ;;
+      esac
+    fi
+    printf '%s\n' "$line" >> "$tmp"
+  done < "$file"
+  mv "$tmp" "$file"
+}
+
+# --- reconcile -------------------------------------------------------------
+closed_count=0; scrub_count=0; drift_count=0; plan_lines=()
+
+shopt -s nullglob 2>/dev/null || true
+for f in $(ls -1 "$BACKLOG"/[0-9]*.md 2>/dev/null | sort); do
+  [ -e "$f" ] || continue
+  status="$(field "$f" status)"; status="${status:-open}"
+  slug="$(basename "$f" .md)"
+  urls=()
+  while IFS= read -r _u; do [ -n "$_u" ] && urls+=("$_u"); done < <(prs_urls "$f")
+  [ "${#urls[@]}" -eq 0 ] && continue
+
+  # Drift: closed ticket still listing PRs -> scrub (deterministic).
+  if [ "$status" = "closed" ]; then
+    plan_lines+=("DRIFT  $slug  closed but lists ${#urls[@]} pr(s) -> scrub")
+    drift_count=$((drift_count+1))
+    [ "$APPLY" -eq 1 ] && rewrite_ticket "$f" ""
+    continue
+  fi
+
+  remaining=(); merged_here=0
+  for u in "${urls[@]}"; do
+    if is_merged "$u"; then merged_here=$((merged_here+1)); else remaining+=("$u"); fi
+  done
+  [ "$merged_here" -eq 0 ] && continue
+
+  if [ "${#remaining[@]}" -eq 0 ]; then
+    plan_lines+=("CLOSE  $slug  all ${merged_here} pr(s) merged -> status:closed + scrub")
+    closed_count=$((closed_count+1)); scrub_count=$((scrub_count+merged_here))
+    [ "$APPLY" -eq 1 ] && rewrite_ticket "$f" closed
+  else
+    plan_lines+=("SCRUB  $slug  ${merged_here} merged, ${#remaining[@]} still open -> scrub merged, leave $status")
+    scrub_count=$((scrub_count+merged_here))
+    [ "$APPLY" -eq 1 ] && rewrite_ticket "$f" "" "${remaining[@]}"
+  fi
+done
+
+# --- report ----------------------------------------------------------------
+mode="DRY-RUN (read-only; re-run with --apply to execute)"; [ "$APPLY" -eq 1 ] && mode="APPLIED"
+echo "merge-sync · $mode"
+echo "merged URLs from forge: $(wc -l < "$merged_urls_file" | tr -d ' ')"
+if [ "${#plan_lines[@]}" -eq 0 ]; then
+  echo "nothing to reconcile — backlog matches merged state."
+else
+  printf '%s\n' "${plan_lines[@]}"
+  echo "---"
+  echo "close: $closed_count   scrub: $scrub_count   drift(closed-but-linked): $drift_count"
+fi
+echo
+echo "NOTE: judgment-laden drift (in-progress w/ no open PR, stuck-blocker-cleared,"
+echo "      long-stale open) is NOT handled here — that stays in the /merge-sync skill."

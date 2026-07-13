@@ -1,0 +1,106 @@
+#!/usr/bin/env bun
+// compute-verdict <pr-number> — deterministically compute verdict + merge-ready
+// based on the merged findings.json and the scorecard JSON.
+//
+// What this saves the LLM from:
+//   - Re-applying the verdict rules (axis floors, severity gates)
+//   - Re-computing overall = min(axes) per the contract
+//   - YAML-quoting the verdict string in frontmatter
+//
+// Per .agents/code-review.md:
+//   verdict: approve | request-changes | blocked
+//   overall = min(correctness, security, architecture, conformance, quality, dependencies)
+//   merge_ready when:
+//     verdict: approve
+//     test_status: pass
+//     no findings with severity >= medium
+//
+// Usage:
+//   compute-verdict <pr-number> <scorecard.json> [--test-status pass|fail]
+//
+// scorecard.json shape:
+//   {
+//     correctness: 90, security: 85, architecture: 88,
+//     conformance: 92, quality: 85, dependencies: 90
+//   }
+//
+// Prints {verdict, overall, merge_ready, risk_tier, by_severity} to stdout.
+
+import { existsSync, readFileSync } from 'node:fs'
+
+const [pr, scorecardPath, ...rest] = process.argv.slice(2)
+if (!pr || !scorecardPath) {
+  console.error('usage: compute-verdict <pr> <scorecard.json> [--test-status pass|fail]')
+  process.exit(2)
+}
+
+let testStatus = 'pass'
+for (let i = 0; i < rest.length; i++) {
+  if (rest[i] === '--test-status') testStatus = rest[i + 1] || 'pass'
+}
+
+let scorecard = {}
+try {
+  scorecard = JSON.parse(readFileSync(scorecardPath, 'utf8'))
+} catch (e) {
+  console.error(`bad scorecard: ${e.message}`)
+  process.exit(2)
+}
+
+const axes = ['correctness', 'security', 'architecture', 'conformance', 'quality', 'dependencies']
+const values = axes.map((a) => Number(scorecard[a] ?? 0)).filter((n) => Number.isFinite(n))
+const overall = values.length ? Math.min(...values) : 0
+
+const reviewRoot =
+  existsSync('.reviews') && !existsSync('.TerMinal/template.json') ? '.reviews' : '.TerMinal/reviews'
+const findingsPath = `${reviewRoot}/${pr}/findings.json`
+let findings = []
+try {
+  if (existsSync(findingsPath)) findings = JSON.parse(readFileSync(findingsPath, 'utf8'))
+} catch {}
+const open = findings.filter((f) => f.status === 'open' || f.status === 'reopened')
+
+const bySeverity = {}
+for (const f of open) {
+  const s = f.severity || 'medium'
+  bySeverity[s] = (bySeverity[s] || 0) + 1
+}
+
+// Verdict logic
+let verdict = 'approve'
+if (testStatus !== 'pass') verdict = 'blocked'
+else if (bySeverity.high > 0 || bySeverity.critical > 0) verdict = 'request-changes'
+else if (bySeverity.medium > 0) verdict = 'request-changes'
+else if (overall < 70) verdict = 'request-changes'
+
+// Risk tier
+let riskTier = 'low'
+if (
+  verdict === 'blocked' ||
+  bySeverity.high > 0 ||
+  bySeverity.critical > 0 ||
+  Math.min(...values) < 70
+) {
+  riskTier = 'high'
+} else if (verdict === 'request-changes' || Math.min(...values) < 80) {
+  riskTier = 'medium'
+}
+
+const mergeReady =
+  verdict === 'approve' &&
+  testStatus === 'pass' &&
+  !bySeverity.high &&
+  !bySeverity.critical &&
+  !bySeverity.medium
+
+console.log(
+  JSON.stringify({
+    verdict,
+    overall,
+    merge_ready: mergeReady,
+    risk_tier: riskTier,
+    test_status: testStatus,
+    by_severity: bySeverity,
+    open_count: open.length,
+  }),
+)

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "open-tickets",
+    "title": "Open tickets",
+    "icon": "🎫",
+    "command": ".claude/skills/ticket/bin/tickets open 2>/dev/null | tail -n +3 | wc -l | tr -d ' '",
+    "intervalMs": 5000,
+    "mode": "big"
+  },
+  {
+    "id": "hitl",
+    "title": "Needs you",
+    "icon": "🙋",
+    "command": ".claude/skills/ticket/bin/tickets hitl 2>/dev/null | tail -n +3 | wc -l | tr -d ' '",
+    "intervalMs": 5000,
+    "mode": "big"
+  },
+  {
+    "id": "active-session",
+    "title": "Session",
+    "icon": "🎯",
+    "command": ".claude/skills/session-start/bin/sessions active 2>/dev/null | tail -n +3 || echo '(none active)'",
+    "intervalMs": 8000,
+    "mode": "text"
+  },
+  {
+    "id": "git",
+    "title": "Git",
+    "icon": "⎇",
+    "command": "git status -sb | head -6",
+    "intervalMs": 5000,
+    "mode": "text"
+  }
+]

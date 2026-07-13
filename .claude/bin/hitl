@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# hitl — raise a TRUE human-in-the-loop item to the GLOBAL TerMinal Inbox.
+#
+#   hitl "<title>" ["<action needed>"] ["<detail>"]
+#
+# This is the primary append-only way an agent gets the human's attention. It:
+#   1. files a record to ~/.config/TerMinal/hitl.json — the one cross-repo Inbox
+#      the operator watches from TerMinal's top-right drawer,
+#   2. mirrors a `blocked` line to the activity feed (terminal shows it + desktop
+#      notifies when open, without duplicating the direct Telegram ping),
+#   3. pings Telegram directly when bot/chat are configured (works even if
+#      TerMinal is closed; not gated by the general activity notify toggle).
+#      Missing/broken Telegram is a no-op and never blocks HITL filing.
+#
+# Reserve it for things only a HUMAN can resolve — a decision/spec fork, an
+# approval, provisioning creds, an OAuth/browser flow, a hard blocker. Do NOT use
+# it for review request-changes or test failures inside a workflow — those are
+# iterative and the agent/factory handles them. Agents do not resolve HITL items;
+# the human/operator resolves them from TerMinal Inbox or Telegram. Always exits 0.
+set -uo pipefail
+
+TITLE="${1:-}"
+ACTION="${2:-}"
+DETAIL="${3:-}"
+[ -n "$TITLE" ] || { echo 'usage: hitl "<title>" ["<action>"] ["<detail>"]' >&2; exit 0; }
+
+CFG="$HOME/.config/TerMinal"
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REPO="$(git -C "$ROOT" remote get-url origin 2>/dev/null | sed -E 's#\.git$##; s#.*[/:]([^/]+/[^/]+)$#\1#')"
+[ -n "$REPO" ] || REPO="$(basename "$ROOT")"
+mkdir -p "$CFG" 2>/dev/null || exit 0
+
+python3 - "$TITLE" "$ACTION" "$DETAIL" "$REPO" "$ROOT" "$CFG" <<'PY' || exit 0
+import json, os, sys, time, uuid, urllib.request
+title, action, detail, repo, root, cfg = sys.argv[1:7]
+hitl_file = os.path.join(cfg, "hitl.json")
+act_file = os.path.join(cfg, "activity.jsonl")
+settings_file = os.path.join(cfg, "settings.json")
+
+# 1. file the global HITL item (newest first)
+try:
+    items = json.load(open(hitl_file)) if os.path.exists(hitl_file) else []
+    if not isinstance(items, list):
+        items = []
+except Exception:
+    items = []
+item = {
+    "id": str(uuid.uuid4()), "title": title, "action": action or None, "detail": detail or None,
+    "repo": repo, "repoRoot": root, "source": "skill", "status": "open",
+    "createdAt": int(time.time() * 1000),
+}
+try:
+    json.dump([item] + items, open(hitl_file, "w"), indent=2)
+except Exception:
+    pass
+
+# 2. mirror a blocked line to the activity feed
+try:
+    with open(act_file, "a") as f:
+        f.write(json.dumps({
+            "id": str(uuid.uuid4()), "ts": int(time.time() * 1000), "kind": "blocked",
+            "title": "HITL · " + title, "detail": action or detail, "repo": repo, "repoRoot": root,
+            "suppressTelegram": True,
+        }) + "\n")
+except Exception:
+    pass
+
+# 3. Telegram ping directly (works with the app closed). HITL is loud when
+# bot/chat are configured; do not gate this on telegram.notify. Missing/broken
+# Telegram is a no-op and never blocks HITL filing.
+try:
+    s = json.load(open(settings_file)).get("telegram", {})
+    if s.get("botToken") and s.get("chatId"):
+        body = json.dumps({
+            "chat_id": s["chatId"],
+            "text": "⛔ HITL · " + title + ((" — " + action) if action else ""),
+            "reply_markup": {
+                "inline_keyboard": [[
+                    {"text": "✅ Resolve", "callback_data": "hitl:resolve:" + item["id"]}
+                ]]
+            },
+        }).encode()
+        req = urllib.request.Request(
+            "https://api.telegram.org/bot%s/sendMessage" % s["botToken"],
+            data=body, headers={"content-type": "application/json"},
+        )
+        urllib.request.urlopen(req, timeout=8)
+except Exception:
+    pass
+PY
+exit 0

@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# list-agents — compact assignable agent inventory for this repo.
+#
+# Prefer TerMinal MCP when available; fall back to local/default discovery so
+# shell agents always have a cheap command for picking ticket owners.
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REPO="$(basename "$ROOT")"
+
+if command -v terminal-cli >/dev/null 2>&1; then
+  if terminal-cli mcp list_agents repo="$REPO"; then
+    exit 0
+  fi
+fi
+
+printf 'repo: %s\nagents:\n' "$REPO"
+for id in factory 1000x-ai-engineer docs deep-audit ticket-pr-cleanup test-coverage code-review security-sweep perf-pass dep-upgrade dead-code comments-inspector product-audit friction-hunter red-team-audit intelligence strategy cert-check translations-check changelog simplification devils-advocate bloat-check knowledge-base ci-improver summary beacon emergency-fix unblock-ci revert-main; do
+  printf '  - id: %s\n    scope: global\n    kind: classic\n    source: default\n' "$id"
+done
+
+if [ -d "$ROOT/.agents" ]; then
+  for f in "$ROOT"/.agents/*.sh; do
+    [ -e "$f" ] || continue
+    id="$(basename "$f" .sh)"
+    printf '  - id: %s\n    scope: repo\n    kind: classic\n    source: repo-script\n' "$id"
+  done
+fi
+
+for f in "$HOME"/.config/TerMinal/scripts/*.sh; do
+  [ -e "$f" ] || continue
+  id="$(basename "$f" .sh)"
+  printf '  - id: %s\n    scope: global\n    kind: classic\n    source: global-script\n' "$id"
+done
+
+for d in "$HOME"/.config/TerMinal/persistent-agents/*; do
+  [ -d "$d" ] || continue
+  id="$(basename "$d")"
+  printf '  - id: %s\n    scope: global\n    kind: persistent\n    source: persistent\n' "$id"
+done

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -lc 'p=\"${CODEX_PROJECT_DIR:-$PWD}/.codex/hooks/stop-notify.sh\"; [ -x \"$p\" ] && \"$p\" || true'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

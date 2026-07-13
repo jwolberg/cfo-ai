@@ -1,0 +1,118 @@
+#!/usr/bin/env bun
+// findings-merge <pr-number> <new-findings-json-path> — merge new findings
+// into the persistent findings.json, carrying forward state across reviews.
+//
+// What this saves codex from doing every review:
+//   - Stable id generation (sha256(title+file+line))
+//   - first_seen_sha carry-forward
+//   - Auto-resolved status flips for findings that disappeared
+//   - Iteration tracking
+//   - Writing findings.json + suggestions.json
+//
+// The codex prompt now just emits a flat array of new scan findings; this
+// helper handles the bookkeeping.
+//
+// Usage:
+//   findings-merge <pr-number> <head-sha> <new.json>
+//   new.json shape: { findings: [...], suggestions: [...] }
+//   each finding: { title, file, line, severity, axis, description, fix_prompt? }
+//
+// Writes:
+//   .TerMinal/reviews/<pr-number>/findings.json   (v2)
+//   .TerMinal/reviews/<pr-number>/suggestions.json
+//
+// Prints the merged findings array (JSON) to stdout for the artifact body.
+
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+
+const [pr, headSha, newPath] = process.argv.slice(2)
+if (!pr || !headSha || !newPath) {
+  console.error('usage: findings-merge <pr> <head-sha> <new.json>')
+  process.exit(2)
+}
+
+function idFor(f) {
+  return createHash('sha256')
+    .update(`${f.title}|${f.file || ''}|${f.line || ''}`)
+    .digest('hex')
+    .slice(0, 10)
+}
+
+const reviewRoot =
+  existsSync('.reviews') && !existsSync('.TerMinal/template.json') ? '.reviews' : '.TerMinal/reviews'
+const dir = `${reviewRoot}/${pr}`
+mkdirSync(dir, { recursive: true })
+
+const findingsPath = `${dir}/findings.json`
+const suggestionsPath = `${dir}/suggestions.json`
+
+let prior = []
+let priorSugg = []
+try {
+  if (existsSync(findingsPath)) prior = JSON.parse(readFileSync(findingsPath, 'utf8'))
+} catch {}
+try {
+  if (existsSync(suggestionsPath)) priorSugg = JSON.parse(readFileSync(suggestionsPath, 'utf8'))
+} catch {}
+
+const fresh = JSON.parse(readFileSync(newPath, 'utf8'))
+const newFindings = fresh.findings || []
+const newSuggestions = fresh.suggestions || []
+
+const now = Date.now()
+function mergeList(prior, fresh, kind) {
+  const priorById = new Map(prior.map((p) => [p.id, p]))
+  const freshById = new Map()
+  const merged = []
+  for (const f of fresh) {
+    const id = f.id || idFor(f)
+    freshById.set(id, true)
+    const prev = priorById.get(id)
+    merged.push({
+      ...f,
+      id,
+      status: prev?.status === 'resolved' ? 'reopened' : prev?.status || 'open',
+      first_seen_sha: prev?.first_seen_sha || headSha,
+      last_seen_sha: headSha,
+      first_seen_at: prev?.first_seen_at || now,
+      last_seen_at: now,
+    })
+  }
+  // Findings that were in prior but not in fresh → auto-resolved (if open)
+  for (const p of prior) {
+    if (freshById.has(p.id)) continue
+    if (p.status === 'open' || p.status === 'reopened') {
+      merged.push({
+        ...p,
+        status: 'auto-resolved',
+        resolved_at: now,
+        resolved_sha: headSha,
+      })
+    } else {
+      merged.push(p) // already resolved / closed — keep as-is
+    }
+  }
+  return merged
+}
+
+const mergedFindings = mergeList(prior, newFindings, 'finding')
+const mergedSuggestions = mergeList(priorSugg, newSuggestions, 'suggestion')
+
+writeFileSync(findingsPath, JSON.stringify(mergedFindings, null, 2))
+writeFileSync(suggestionsPath, JSON.stringify(mergedSuggestions, null, 2))
+
+// Stats summary on stdout for the skill body
+const stats = {
+  total: mergedFindings.length,
+  open: mergedFindings.filter((f) => f.status === 'open' || f.status === 'reopened').length,
+  auto_resolved: mergedFindings.filter(
+    (f) => f.status === 'auto-resolved' && f.resolved_sha === headSha,
+  ).length,
+  by_severity: {},
+}
+for (const f of mergedFindings.filter((x) => x.status === 'open' || x.status === 'reopened')) {
+  const s = f.severity || 'medium'
+  stats.by_severity[s] = (stats.by_severity[s] || 0) + 1
+}
+console.log(JSON.stringify(stats))

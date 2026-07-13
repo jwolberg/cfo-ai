@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# List backlog tickets from frontmatter. Optional filters, order-independent.
+#
+#   bin/tickets                 # all tickets, newest id first
+#   bin/tickets open            # status: open
+#   bin/tickets open high       # status: open AND priority: high
+#   bin/tickets future          # horizon: future (extensions / ideas)
+#   bin/tickets hitl            # human-in-the-loop tickets only
+#   bin/tickets open now        # any combination — order doesn't matter
+#
+# Each arg is classified automatically as a status, priority, horizon, or the
+# `hitl` flag by matching the known value sets below.
+# Portable (macOS + Linux). Reads v2 .TerMinal/backlog and legacy backlog.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+want_status=""
+want_priority=""
+want_horizon=""
+want_hitl=""
+
+for arg in "$@"; do
+  case "$arg" in
+    open|in-progress|closed|stuck|icebox) want_status="$arg" ;;
+    critical|high|medium|low)             want_priority="$arg" ;;
+    now|next|future)                      want_horizon="$arg" ;;
+    hitl)                                 want_hitl=1 ;;
+    *) echo "warning: unknown filter '$arg' (status/priority/horizon/hitl)" >&2 ;;
+  esac
+done
+
+# field <file> <key> -> first frontmatter value for key (quotes stripped)
+field() {
+  awk -v key="$2" '
+    NR==1 && $0=="---" { infm=1; next }
+    infm && $0=="---"  { exit }
+    infm && $0 ~ "^"key": " {
+      sub("^"key": *",""); gsub(/^"|"$/,""); print; exit
+    }' "$1"
+}
+
+printf '%-6s %-12s %-9s %-7s %-5s %-12s %-18s %s\n' ID STATUS PRIORITY HORIZON HITL TYPE AGENT TITLE
+printf '%-6s %-12s %-9s %-7s %-5s %-12s %-18s %s\n' "----" "------" "--------" "-------" "----" "----" "-----" "-----"
+
+shopt -s nullglob 2>/dev/null || true
+found=""
+# newest first
+for f in $(ls -1 "$ROOT/.TerMinal/backlog"/[0-9]*.md "$ROOT/backlog"/[0-9]*.md 2>/dev/null | sort -r); do
+  [ -e "$f" ] || continue
+  found=1
+  status="$(field "$f" status)"
+  priority="$(field "$f" priority)"
+  horizon="$(field "$f" horizon)"
+  [ -z "$horizon" ] && horizon="now"           # default for tickets predating the field
+  hitl="$(field "$f" hitl)"
+  agent_id="$(field "$f" agent_id)"
+  agent_scope="$(field "$f" agent_scope)"
+  [ -z "$agent_id" ] && agent_id="1000x-ai-engineer"
+  [ -z "$agent_scope" ] && agent_scope="global"
+  [ "$hitl" = "true" ] && hitl_disp="HITL" || hitl_disp=""
+  [ -n "$want_status" ]   && [ "$status" != "$want_status" ]     && continue
+  [ -n "$want_priority" ] && [ "$priority" != "$want_priority" ] && continue
+  [ -n "$want_horizon" ]  && [ "$horizon" != "$want_horizon" ]   && continue
+  [ -n "$want_hitl" ]     && [ "$hitl" != "true" ]               && continue
+  printf '%-6s %-12s %-9s %-7s %-5s %-12s %-18s %s\n' \
+    "$(field "$f" id)" "$status" "$priority" "$horizon" "$hitl_disp" "$(field "$f" type)" "${agent_scope}/${agent_id}" "$(field "$f" title)"
+done
+[ -n "$found" ] || echo "(no tickets yet — create one with /ticket)" >&2

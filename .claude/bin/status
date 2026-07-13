@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Print a live, human-facing status snapshot for a developer MANAGING AGENTS in
+# this repo. Local-only (no network): backlog tickets, active session, git
+# state, and on-disk review verdicts. Fast enough to poll.
+#
+# Write it to the gitignored live doc, or pipe to a terminal widget:
+#   .claude/bin/status > .status.md
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT"
+
+area_paths() {
+  case "$1" in
+    backlog) printf '%s\n' "$ROOT/.TerMinal/backlog" "$ROOT/backlog" ;;
+    reviews) printf '%s\n' "$ROOT/.TerMinal/reviews" "$ROOT/.reviews" ;;
+  esac
+}
+
+field() {
+  awk -v key="$2" '
+    NR==1 && $0=="---" { f=1; next }
+    f && $0=="---" { exit }
+    f && $0 ~ "^"key": " { sub("^"key": *",""); gsub(/^"|"$/,""); print; exit }' "$1"
+}
+
+branch="$(git branch --show-current 2>/dev/null || echo '?')"
+ahead="$(git rev-list --count origin/main..HEAD 2>/dev/null || echo '?')"
+now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+repo="$(basename "$ROOT")"
+
+open=0; inprog=0; nextc=0; future=0; needs=""
+shopt -s nullglob 2>/dev/null || true
+for f in $(for d in $(area_paths backlog); do ls -1 "$d"/[0-9]*.md 2>/dev/null; done | sort -r); do
+  [ -e "$f" ] || continue
+  st="$(field "$f" status)"; hz="$(field "$f" horizon)"; [ -z "$hz" ] && hz=now
+  hitl="$(field "$f" hitl)"; id="$(field "$f" id)"; title="$(field "$f" title)"
+  case "$st" in open) open=$((open+1)) ;; in-progress) inprog=$((inprog+1)) ;; esac
+  case "$hz" in next) nextc=$((nextc+1)) ;; future) future=$((future+1)) ;; esac
+  if [ "$st" != "closed" ]; then
+    [ "$hitl" = "true" ] && needs="${needs}- [HITL] #${id} ${title}\n"
+    [ "$st" = "stuck" ] && needs="${needs}- [STUCK] #${id} ${title}\n"
+  fi
+done
+
+sess="$(.claude/skills/session-start/bin/sessions active 2>/dev/null | tail -n +3 | head -1)"
+
+reviews=""
+for d in $(for root in $(area_paths reviews); do ls -1d "$root"/*/ 2>/dev/null; done); do
+  [ -d "$d" ] || continue
+  latest="$(ls -1t "$d"/*.md 2>/dev/null | grep -v README | head -1)"
+  [ -n "$latest" ] || continue
+  v="$(field "$latest" verdict)"; pr="$(field "$latest" pr)"
+  reviews="${reviews}- ${pr} — ${v}\n"
+done
+
+printf '# Status — %s · %s (+%s vs main) · updated %s\n\n' "$repo" "$branch" "$ahead" "$now"
+printf '## Needs you\n'
+[ -n "$needs" ] && printf '%b' "$needs" || printf '_nothing waiting_\n'
+printf '\n## Backlog\nopen %s · in-progress %s · next %s · future %s\n\n' "$open" "$inprog" "$nextc" "$future"
+printf '## Active session\n%s\n\n' "${sess:-_none active_}"
+printf '## Recent reviews\n'
+[ -n "$reviews" ] && printf '%b' "$reviews" || printf '_none yet_\n'

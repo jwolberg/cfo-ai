@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Atomically allocate the next session ID.
+#
+# Portable: uses a mkdir-based lock (works on macOS + Linux; no `flock`).
+# Bootstraps the sessions directory and counter on first use, so dropping the
+# session-start/session-end skills into a fresh repo "just works".
+#
+#   id=$("$(git rev-parse --show-toplevel)/.claude/skills/session-start/bin/next-session-id")
+#   mkdir -p "$SESSIONS_REL/${id}-my-slug"
+#
+# v2 repos use .TerMinal/sessions/.next-id; legacy v1 repos use sessions/.next-id.
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+if [ -d "$ROOT/sessions" ] && [ ! -f "$ROOT/.TerMinal/template.json" ]; then
+  SESSIONS_REL="sessions"
+else
+  SESSIONS_REL=".TerMinal/sessions"
+fi
+SESSIONS="$ROOT/$SESSIONS_REL"
+COUNTER="$SESSIONS/.next-id"
+LOCK="$SESSIONS/.next-id.lock"
+
+mkdir -p "$SESSIONS"
+[ -f "$COUNTER" ] || printf '1\n' > "$COUNTER"
+
+acquired=""
+for _ in $(seq 1 50); do
+  if mkdir "$LOCK" 2>/dev/null; then
+    acquired=1
+    trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+    break
+  fi
+  sleep 0.1
+done
+[ -n "$acquired" ] || { echo "ERROR: could not acquire lock $LOCK" >&2; exit 1; }
+
+current="$(tr -d '[:space:]' < "$COUNTER")"
+printf '%04d\n' "$current"
+printf '%s\n' "$((current + 1))" > "$COUNTER"

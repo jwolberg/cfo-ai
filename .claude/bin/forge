@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Print the active forge for this repo: "github" or "gitlab".
+#
+# Resolution order:
+#   1. .claude/forge file (explicit override — required for self-hosted GitLab)
+#   2. $FORGE env var
+#   3. auto-detect from origin remote (github.com -> github; *gitlab* -> gitlab)
+#   4. default: github
+#
+#   forge="$("$(git rev-parse --show-toplevel)/.claude/bin/forge")"
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+if [ -f "$ROOT/.claude/forge" ]; then
+  val="$(tr -d '[:space:]' < "$ROOT/.claude/forge")"
+  case "$val" in github|gitlab) echo "$val"; exit 0 ;; esac
+fi
+
+if [ -n "${FORGE:-}" ]; then
+  case "$FORGE" in github|gitlab) echo "$FORGE"; exit 0 ;; esac
+fi
+
+url="$(git -C "$ROOT" remote get-url origin 2>/dev/null || echo "")"
+case "$url" in
+  *gitlab*)              echo gitlab ;;
+  *github.com*|*github*) echo github ;;
+  *)                     echo github ;;
+esac

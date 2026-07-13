@@ -1,0 +1,413 @@
+#!/usr/bin/env bun
+// code-review-preflight <PR-URL> — deterministic recon for /code-review.
+//
+// What codex previously rediscovered every review (PR meta, diff, base SHA,
+// language histogram, surface flags, test runner, prior review state),
+// this script computes ONCE up front and writes to a packet that codex
+// consumes verbatim. Eliminates ~15-25k tokens + 30-60s wall-clock per
+// review.
+//
+// Also produces:
+//   - diff_hash for cached-artifact short-circuit (rebase / amend / re-run)
+//   - test_status by running the suite + parsing output deterministically
+//   - test result cache keyed by (test_command + lockfile + src tree hash)
+//   - review_kind_hint (docs-only / lockfile-only / comments-only / code)
+//     so the skill can route trivial diffs through a fast path
+//
+// Output:
+//   /tmp/review-packet-<short_sha>.json   ← codex reads this
+//   /tmp/review-packet-<short_sha>.md     ← human-readable for skill body
+//
+// Exit codes:
+//   0   ok, packet written
+//   2   short-circuit available — packet says { "short_circuit": "..." }
+//       skill should NOT call codex; copy the prior artifact or emit a
+//       deterministic blocked artifact
+//   3   bad PR URL / forge resolution failed
+//   4   no test runner detected and tests are required (gate failure)
+//
+import { execFileSync, execSync } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, readdirSync } from 'node:fs'
+import { join, dirname, basename } from 'node:path'
+import { createHash } from 'node:crypto'
+
+const args = process.argv.slice(2)
+const PR_URL = args[0]
+if (!PR_URL) {
+  console.error('usage: code-review-preflight <PR-URL>')
+  process.exit(3)
+}
+
+// ---------------------------------------------------------------------------
+// forge resolution — reuses existing .claude/bin/forge if present, else
+// detects from URL host
+// ---------------------------------------------------------------------------
+function detectForge(url) {
+  try {
+    const f = execSync('.claude/bin/forge', { encoding: 'utf8' }).trim()
+    if (f === 'github' || f === 'gitlab') return f
+  } catch {}
+  if (/github\.com/.test(url)) return 'github'
+  if (/gitlab|labs\.gauntletai/.test(url)) return 'gitlab'
+  return 'github'
+}
+
+const forge = detectForge(PR_URL)
+const cli = forge === 'github' ? 'gh' : 'glab'
+
+// Parse PR/MR number from URL
+const numMatch = PR_URL.match(/(?:pull|merge_requests)\/(\d+)/)
+if (!numMatch) {
+  console.error(`could not parse PR number from ${PR_URL}`)
+  process.exit(3)
+}
+const prNumber = parseInt(numMatch[1], 10)
+
+// ---------------------------------------------------------------------------
+// fetch PR metadata
+// ---------------------------------------------------------------------------
+function ghJson(cmd) {
+  return JSON.parse(execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }))
+}
+
+let prMeta
+try {
+  if (forge === 'github') {
+    prMeta = ghJson(
+      `gh pr view ${prNumber} --json number,title,state,baseRefName,headRefName,headRefOid,additions,deletions,changedFiles,files,isDraft,labels`,
+    )
+  } else {
+    prMeta = ghJson(`glab mr view ${prNumber} -F json`)
+  }
+} catch (e) {
+  console.error(`forge fetch failed: ${e.message}`)
+  process.exit(3)
+}
+
+// Normalize to a single shape
+const headSha = prMeta.headRefOid || prMeta.sha || prMeta.head_sha || ''
+const baseBranch = prMeta.baseRefName || prMeta.target_branch || 'main'
+const shortSha = headSha.slice(0, 7)
+const title = prMeta.title
+const additions = prMeta.additions ?? prMeta.changes_count ?? 0
+const deletions = prMeta.deletions ?? 0
+const files = prMeta.files || prMeta.changes || []
+const fileList = files
+  .map((f) => f.path || f.new_path || f.filename || '')
+  .filter(Boolean)
+
+const reviewRoot =
+  existsSync('.reviews') && !existsSync('.TerMinal/template.json') ? '.reviews' : '.TerMinal/reviews'
+
+// ---------------------------------------------------------------------------
+// diff hash — short-circuit cached reviews on rebase/amend
+// ---------------------------------------------------------------------------
+let diffHash = ''
+try {
+  execSync(`git fetch --quiet origin`, { stdio: 'ignore' })
+  const diff = execSync(`git diff origin/${baseBranch}...${headSha}`, {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  diffHash = createHash('sha256').update(diff).digest('hex').slice(0, 16)
+} catch {
+  /* fall through */
+}
+
+// Look for cached artifact with matching diff_hash
+function findCachedArtifact() {
+  const dir = `${reviewRoot}/${prNumber}`
+  if (!existsSync(dir)) return null
+  for (const f of readdirSync(dir)) {
+    if (!f.endsWith('.md') || f.length < 7) continue
+    const path = join(dir, f)
+    try {
+      const raw = readFileSync(path, 'utf8')
+      const m = raw.match(/^diff_hash:\s*(\S+)/m)
+      if (m && m[1] === diffHash) {
+        return { path, sha: f.replace(/\.md$/, '') }
+      }
+    } catch {}
+  }
+  return null
+}
+
+// Self short-circuit (re-run on same SHA)
+const ownArtifact = `${reviewRoot}/${prNumber}/${shortSha}.md`
+if (existsSync(ownArtifact)) {
+  // Already reviewed at this exact SHA
+  emitPacket({ short_circuit: 'already_reviewed', artifact: ownArtifact })
+  process.exit(2)
+}
+
+const cached = diffHash ? findCachedArtifact() : null
+if (cached) {
+  emitPacket({
+    short_circuit: 'diff_hash_match',
+    equivalent_to: cached.sha,
+    source_artifact: cached.path,
+  })
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------------------
+// language histogram + surface flags + review_kind_hint
+// ---------------------------------------------------------------------------
+const langOf = (path) => {
+  const ext = path.split('.').pop() || ''
+  return (
+    {
+      ts: 'typescript',
+      tsx: 'typescript',
+      js: 'javascript',
+      jsx: 'javascript',
+      py: 'python',
+      rs: 'rust',
+      go: 'go',
+      java: 'java',
+      rb: 'ruby',
+      md: 'markdown',
+      json: 'json',
+      yaml: 'yaml',
+      yml: 'yaml',
+      sql: 'sql',
+      sh: 'shell',
+      Dockerfile: 'docker',
+    }[ext] || ext
+  )
+}
+const languageHist = {}
+for (const f of fileList) {
+  const l = langOf(f)
+  languageHist[l] = (languageHist[l] || 0) + 1
+}
+
+const SURFACE_PATTERNS = {
+  auth: /\bauth\b|\bsession\b|\boauth\b|\bjwt\b|\blogin\b/i,
+  migrations: /(^|\/)migrations?\/|\.sql$|schema\.prisma/i,
+  routes: /(^|\/)(routes|api|controllers|handlers)\//i,
+  deps: /(^|\/)package\.json$|(^|\/)Cargo\.toml$|(^|\/)go\.mod$|(^|\/)pyproject\.toml$/,
+  lockfile: /(^|\/)(bun\.lock|package-lock\.json|yarn\.lock|Cargo\.lock|go\.sum|poetry\.lock)$/,
+  tests: /(^|\/)(test|tests|__tests__|spec)\/|\.test\.|\.spec\./,
+  docs: /\.md$|(^|\/)docs?\//,
+  config: /(^|\/)(\.github\/|tsconfig|biome|prettier|eslint|\.gitlab)/,
+  infra: /(^|\/)(k8s|kubernetes|helm|terraform|docker)/i,
+  secrets: /(\.env$|\.env\.|credentials|\.pem$|\.key$)/,
+}
+const surface = {}
+for (const [name, pat] of Object.entries(SURFACE_PATTERNS)) {
+  surface[name] = fileList.some((f) => pat.test(f))
+}
+
+// review_kind_hint — quick triage so skill can fast-path trivial diffs
+let reviewKindHint = 'code'
+const allLockfile = fileList.length > 0 && fileList.every((f) => SURFACE_PATTERNS.lockfile.test(f))
+const allDocs = fileList.length > 0 && fileList.every((f) => SURFACE_PATTERNS.docs.test(f))
+if (allLockfile) reviewKindHint = 'lockfile-only'
+else if (allDocs) reviewKindHint = 'docs-only'
+
+// ---------------------------------------------------------------------------
+// prior findings state — carry forward across iterations
+// ---------------------------------------------------------------------------
+const findingsPath = `${reviewRoot}/${prNumber}/findings.json`
+const suggestionsPath = `${reviewRoot}/${prNumber}/suggestions.json`
+let priorFindings = []
+let priorSuggestions = []
+try {
+  if (existsSync(findingsPath)) priorFindings = JSON.parse(readFileSync(findingsPath, 'utf8'))
+} catch {}
+try {
+  if (existsSync(suggestionsPath))
+    priorSuggestions = JSON.parse(readFileSync(suggestionsPath, 'utf8'))
+} catch {}
+const priorOpenFindings = priorFindings.filter((f) => f.status === 'open').length
+
+// ---------------------------------------------------------------------------
+// test runner detection + run + parse
+// ---------------------------------------------------------------------------
+function detectTestRunner() {
+  if (existsSync('package.json')) {
+    try {
+      const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+      if (pkg.scripts?.test) return { runner: 'bun', cmd: 'bun test' }
+      // fallback for npm-shaped projects
+      return { runner: 'bun', cmd: 'bun test' }
+    } catch {}
+  }
+  if (existsSync('Cargo.toml')) return { runner: 'cargo', cmd: 'cargo test' }
+  if (existsSync('go.mod')) return { runner: 'go', cmd: 'go test ./...' }
+  if (existsSync('pyproject.toml') || existsSync('pytest.ini'))
+    return { runner: 'pytest', cmd: 'pytest' }
+  return null
+}
+
+function hashSourceTree() {
+  try {
+    const ls = execSync('git ls-files', { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    const lockMatch = ls.split('\n').filter((f) =>
+      SURFACE_PATTERNS.lockfile.test(f),
+    )
+    let lockContent = ''
+    for (const lf of lockMatch) {
+      try {
+        lockContent += readFileSync(lf, 'utf8')
+      } catch {}
+    }
+    // hash = list of files + lockfile contents + working tree mtime sum
+    return createHash('sha256').update(ls + lockContent + headSha).digest('hex').slice(0, 16)
+  } catch {
+    return ''
+  }
+}
+
+function parseTestOutput(stdout, stderr, exitCode, runner) {
+  const out = (stdout + '\n' + stderr).replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, '')
+  let pass = 0
+  let fail = 0
+  let m
+  // Generic patterns
+  if ((m = out.match(/(\d+)\s+pass\b/))) pass = parseInt(m[1], 10)
+  if ((m = out.match(/(\d+)\s+fail\b/))) fail = parseInt(m[1], 10)
+  // bun test specifics
+  if ((m = out.match(/(\d+)\s+pass\b.*?(\d+)\s+fail\b/s))) {
+    pass = parseInt(m[1], 10)
+    fail = parseInt(m[2], 10)
+  }
+  // pytest specifics
+  if ((m = out.match(/(\d+)\s+passed.*?(\d+)\s+failed/))) {
+    pass = parseInt(m[1], 10)
+    fail = parseInt(m[2], 10)
+  }
+  return {
+    exit_code: exitCode,
+    pass,
+    fail,
+    status: exitCode === 0 ? 'pass' : 'fail',
+    tail: out.split('\n').slice(-30).join('\n'),
+  }
+}
+
+const runner = detectTestRunner()
+let testResult = null
+let testCacheKey = ''
+let testCached = false
+
+if (runner) {
+  testCacheKey = createHash('sha256')
+    .update(runner.cmd + '|' + hashSourceTree())
+    .digest('hex')
+    .slice(0, 16)
+  const cacheDir = `${reviewRoot}/.cache`
+  const cachePath = join(cacheDir, `test-${testCacheKey}.json`)
+  if (existsSync(cachePath)) {
+    try {
+      testResult = JSON.parse(readFileSync(cachePath, 'utf8'))
+      testCached = true
+    } catch {}
+  }
+  if (!testResult) {
+    try {
+      const out = execSync(runner.cmd, {
+        encoding: 'utf8',
+        timeout: 5 * 60 * 1000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+        maxBuffer: 32 * 1024 * 1024,
+      })
+      testResult = parseTestOutput(out, '', 0, runner.runner)
+    } catch (e) {
+      testResult = parseTestOutput(
+        e.stdout?.toString() || '',
+        e.stderr?.toString() || '',
+        e.status || 1,
+        runner.runner,
+      )
+    }
+    if (testResult.status === 'pass') {
+      // Only cache passing results — failure cache could mask flake fixes
+      try {
+        mkdirSync(cacheDir, { recursive: true })
+        writeFileSync(cachePath, JSON.stringify(testResult))
+      } catch {}
+    }
+  }
+}
+
+// On red tests, emit a packet flagging the blocked verdict so skill writes
+// the artifact deterministically (no codex call needed).
+if (testResult && testResult.status === 'fail') {
+  emitPacket({
+    short_circuit: 'tests_red',
+    test_result: testResult,
+    pr: prMetaSummary(),
+    files: fileList,
+    surface,
+    review_kind_hint: reviewKindHint,
+  })
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------------------
+// build full packet
+// ---------------------------------------------------------------------------
+function prMetaSummary() {
+  return {
+    forge,
+    cli,
+    pr_number: prNumber,
+    title,
+    state: prMeta.state || prMeta.state_name,
+    is_draft: prMeta.isDraft || prMeta.draft || false,
+    base_branch: baseBranch,
+    head_sha: headSha,
+    short_sha: shortSha,
+    additions,
+    deletions,
+    changed_files: fileList.length,
+    labels: (prMeta.labels || []).map((l) => l.name || l).filter(Boolean),
+    url: PR_URL,
+  }
+}
+
+emitPacket({
+  pr: prMetaSummary(),
+  files: fileList,
+  language_histogram: languageHist,
+  surface,
+  review_kind_hint: reviewKindHint,
+  diff_hash: diffHash,
+  test_result: testResult,
+  test_cache_hit: testCached,
+  prior_findings_count: priorFindings.length,
+  prior_open_findings: priorOpenFindings,
+  prior_suggestions_count: priorSuggestions.length,
+})
+
+function emitPacket(data) {
+  const dir = '/tmp'
+  const jsonPath = join(dir, `review-packet-${shortSha}.json`)
+  const mdPath = join(dir, `review-packet-${shortSha}.md`)
+  writeFileSync(jsonPath, JSON.stringify(data, null, 2))
+  // Human-readable summary for the skill body to log/quote
+  let md = `# Review packet · ${shortSha}\n\n`
+  if (data.short_circuit) {
+    md += `**SHORT-CIRCUIT:** \`${data.short_circuit}\`\n\n`
+  }
+  if (data.pr) {
+    md += `PR ${data.pr.pr_number} · ${data.pr.title}\n`
+    md += `${data.pr.base_branch} ← ${data.pr.head_sha} (${data.pr.short_sha})\n`
+    md += `${data.pr.changed_files} files · +${data.pr.additions} / -${data.pr.deletions}\n\n`
+  }
+  if (data.test_result) {
+    md += `Tests: ${data.test_result.status} (${data.test_result.pass} pass / ${data.test_result.fail} fail)`
+    if (data.test_cache_hit) md += ' [cached]'
+    md += '\n'
+  }
+  if (data.review_kind_hint) md += `Kind hint: ${data.review_kind_hint}\n`
+  if (data.surface) {
+    const flags = Object.entries(data.surface).filter(([, v]) => v).map(([k]) => k)
+    if (flags.length) md += `Surface: ${flags.join(', ')}\n`
+  }
+  md += `\nFull packet: ${jsonPath}\n`
+  writeFileSync(mdPath, md)
+  console.log(jsonPath)
+}

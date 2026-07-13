@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# request-agent-artifact — delegate a focused knowledge/artifact request.
+#
+# Usage:
+#   .claude/bin/request-agent-artifact --agent security-sweep --title "Auth risk scan" -- "Review auth changes for risks"
+#   printf '%s\n' "Question..." | .claude/bin/request-agent-artifact --agent docs
+#
+# Writes .TerMinal/agent-requests/<run>/report.md and prints the path. Prefer
+# terminal-cli/MCP when available; otherwise run a short-lived Claude subprocess.
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+REPO="$(basename "$ROOT")"
+AGENT_ID="knowledge-base"
+AGENT_SCOPE="global"
+AGENT_KIND="classic"
+TITLE="Agent artifact request"
+MODEL=""
+TIMEOUT_MS="180000"
+PROMPT=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="${2:-$REPO}"; shift 2 ;;
+    --agent|--agent-id) AGENT_ID="${2:-$AGENT_ID}"; shift 2 ;;
+    --scope|--agent-scope) AGENT_SCOPE="${2:-$AGENT_SCOPE}"; shift 2 ;;
+    --kind|--agent-kind) AGENT_KIND="${2:-$AGENT_KIND}"; shift 2 ;;
+    --title) TITLE="${2:-$TITLE}"; shift 2 ;;
+    --model) MODEL="${2:-}"; shift 2 ;;
+    --timeout-ms) TIMEOUT_MS="${2:-$TIMEOUT_MS}"; shift 2 ;;
+    --) shift; PROMPT="$*"; break ;;
+    *) PROMPT="${PROMPT}${PROMPT:+ }$1"; shift ;;
+  esac
+done
+
+if [ -z "$PROMPT" ] && [ ! -t 0 ]; then
+  PROMPT="$(cat)"
+fi
+if [ -z "$PROMPT" ]; then
+  echo "request-agent-artifact: prompt required" >&2
+  exit 2
+fi
+
+if command -v terminal-cli >/dev/null 2>&1; then
+  args=(request_agent_artifact "repo=$REPO" "title=$TITLE" "prompt=$PROMPT" "agentId=$AGENT_ID" "agentScope=$AGENT_SCOPE" "agentKind=$AGENT_KIND" "timeoutMs=$TIMEOUT_MS")
+  [ -n "$MODEL" ] && args+=("model=$MODEL")
+  if terminal-cli mcp "${args[@]}"; then
+    exit 0
+  fi
+fi
+
+slug="$(printf '%s' "$TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-|-$//g' | cut -c1-60)"
+[ -n "$slug" ] || slug="agent-request"
+run="$(date -u +%Y-%m-%dT%H-%M-%SZ)-$slug"
+dir="$ROOT/.TerMinal/agent-requests/$run"
+mkdir -p "$dir"
+prompt_path="$dir/prompt.md"
+report_path="$dir/report.md"
+meta_path="$dir/artifact.json"
+
+full_prompt="You are a delegated TerMinal agent request.
+
+Agent: $AGENT_KIND:$AGENT_SCOPE:$AGENT_ID
+Repo: $REPO
+Working directory: $ROOT
+
+Task:
+$PROMPT
+
+Rules:
+- Stay focused on this request; do not implement code unless explicitly asked.
+- Re-read files from disk instead of asking the parent agent for pasted context.
+- Return a concise markdown artifact with: Summary, Findings, Evidence/Paths, and Recommended next steps.
+- If follow-up implementation is needed, recommend exactly which agent should own it.
+"
+printf '%s\n' "$full_prompt" > "$prompt_path"
+
+tmp="$dir/stdout.tmp"
+err="$dir/stderr.tmp"
+if command -v claude >/dev/null 2>&1; then
+  claude -p "$full_prompt" --permission-mode auto ${MODEL:+--model "$MODEL"} > "$tmp" 2> "$err"
+  status=$?
+else
+  printf 'claude CLI not found on PATH\n' > "$err"
+  : > "$tmp"
+  status=127
+fi
+
+{
+  printf -- '---\n'
+  printf 'title: %s\n' "$TITLE"
+  printf 'repo: %s\n' "$REPO"
+  printf 'agent_id: %s\n' "$AGENT_ID"
+  printf 'agent_scope: %s\n' "$AGENT_SCOPE"
+  printf 'agent_kind: %s\n' "$AGENT_KIND"
+  printf 'created: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'ok: %s\n' "$([ "$status" -eq 0 ] && echo true || echo false)"
+  printf -- '---\n\n'
+  cat "$tmp"
+  if [ "$status" -ne 0 ]; then
+    printf '\n\n## stderr\n\n```\n'
+    tail -200 "$err"
+    printf '\n```\n'
+  fi
+} > "$report_path"
+
+summary="$(grep -v '^#' "$report_path" | sed '/^---$/,/^---$/d' | sed '/^[[:space:]]*$/d' | head -6 | tr '\n' ' ' | cut -c1-600)"
+python3 - "$TITLE" "$AGENT_ID" "$AGENT_SCOPE" "$AGENT_KIND" "$status" "$prompt_path" "$report_path" "$summary" > "$meta_path" <<'PY'
+import json, sys, datetime
+title, agent_id, agent_scope, agent_kind, status, prompt_path, report_path, summary = sys.argv[1:9]
+print(json.dumps({
+  "title": title,
+  "kind": "agent-artifact",
+  "createdAt": datetime.datetime.utcnow().isoformat() + "Z",
+  "agent": {"id": agent_id, "scope": agent_scope, "kind": agent_kind},
+  "ok": status == "0",
+  "status": int(status),
+  "promptPath": prompt_path,
+  "primaryPath": report_path,
+  "summary": summary,
+}, indent=2))
+PY
+
+rm -f "$tmp"
+printf '%s\n' "$report_path"
+exit "$status"

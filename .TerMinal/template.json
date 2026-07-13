@@ -1,0 +1,16 @@
+{
+  "schema": "terminal.project-template",
+  "version": 2,
+  "layout": {
+    "backlog": ".TerMinal/backlog",
+    "sessions": ".TerMinal/sessions",
+    "reviews": ".TerMinal/reviews",
+    "checks": ".TerMinal/checks",
+    "reports": ".TerMinal/reports",
+    "agents": ".agents"
+  },
+  "legacy": {
+    "version": 1,
+    "paths": ["backlog", "sessions", ".reviews", ".checks", "reports"]
+  }
+}
