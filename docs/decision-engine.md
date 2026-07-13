@@ -96,7 +96,7 @@ Every uncertain quantity resolves toward the end of its range that hurts the use
 | Obligation timing | expected date **−** jitter (early) |
 | Obligation amount | the **high** end |
 | Obligations we're unsure of | still counted — an uncertain bill is still a bill |
-| Discretionary spend | the **p90**, every day |
+| Discretionary spend | the **p90**, every day — **and this one is measurably too conservative; see [6.5]** |
 | Pending debits | already gone |
 | Pending credits | not yet money |
 | Our own unsettled sweeps | already gone (the bank may not have taken it yet) |
@@ -203,6 +203,42 @@ balance fell below the projection. Then set the thresholds from the observed tai
 That backtest is the actual first milestone of the company ([`prd.md`](./prd.md) §8),
 and the resulting error distribution is the asset that compounds
 ([`strategy.md`](./strategy.md) §3).
+
+### [6.5] The discretionary-spend model over-reserves — measured, not suspected
+
+*(Anchor appended out of sequence, per the numbering convention: this sits here because it is
+the first empirical answer to [6.1] above, not a new gap.)*
+
+`daily_discretionary_high` is a **p90 of DAILY spend**, and `forecast.py` charges it on every
+one of the 30 horizon days ([2.3]). Compounding a per-day quantile is not a horizon quantile:
+variance grows with **√t**, and this model grows it with **t**.
+
+Measured against three years of synthetic households' own enumerated 30-day windows
+(`tests/test_spend_model.py`, `sim/`):
+
+| Household | Engine assumes | Real p99 | Worst 30 days **ever** | Over-reserved vs p99 |
+|---|---|---|---|---|
+| Typical | $3,101.70 | $2,128.34 | $2,231.26 | $973.36 |
+| High-variance | $4,461.00 | $4,058.78 | $4,439.43 | $402.22 |
+| Steady | $2,403.30 | $1,785.33 | $1,870.57 | $617.97 |
+
+In every case **the engine reserves more than the household has ever spent in three years.**
+The over-reservation is comparable to the entire default $750 buffer, so on many days it is
+the whole difference between sweeping and refusing.
+
+Note the shape, because it is [3.1]'s again: it fails **safe**. Nobody is overdrawn, nothing
+throws, no alert fires. The product simply refuses more often than it should, quietly,
+forever — and the only instrument that would ever reveal it is `false_refusal_cost`, which is
+why that metric is a first-class part of the grader rather than a nice-to-have.
+
+**Deliberately not fixed.** The fix loosens the forecast and buys bigger sweeps, which is the
+one direction [3] forbids without evidence — and the evidence is precisely what the harness is
+being built to produce. Sequence: land the grader and the replay driver, ship the new spend
+model with its dial set to reproduce today's refusals, then loosen it only as far as the
+*measured* breach rate licenses. Fixing it first would trade a measurable, safe error for an
+unmeasured, unsafe one.
+
+Write-up: [`learnings/2026-07-13-the-spend-model-over-reserves.md`](./learnings/2026-07-13-the-spend-model-over-reserves.md).
 
 ### [6.2] The upstream problems this file assumes away
 

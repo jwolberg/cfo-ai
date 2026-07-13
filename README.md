@@ -62,6 +62,41 @@ Design notes and the deliberately-unbuilt parts: [`docs/decision-engine.md`](doc
 
 ---
 
+## `sim/` — the answer key
+
+A deterministic household generator. Given a spec and a seed it produces a `History`: every
+transaction a household made, and therefore the exact daily balance they actually had.
+
+**This is the ground truth the engine is not allowed to see.** It exists because
+[`prd.md`](docs/prd.md) §8 puts exactly one thing in the *Now* column — run the engine in
+**shadow mode**, move nothing, and check what we *would* have swept against what actually
+happened — and you cannot grade a forecast against a future you don't know. It is a
+simulation, not a product surface; nothing in `engine/` imports it.
+
+Two properties do the work. `(spec, seed)` yields a byte-identical history **forever** — a
+backtest whose ground truth moves is not a backtest. And `History.as_of(day)` **slices**
+rather than regenerates, so a snapshot built for day *T* can only contain what was knowable
+on day *T*. That's the guard against lookahead bias, which is the classic way a backtest
+reports a tail risk that is flattering and false.
+
+Spend is modelled zero-inflated and right-skewed, not Gaussian, because real discretionary
+spending is many $0 days and the occasional $400 one — and the entire calibration question is
+about its **tail**.
+
+**The first thing it found.** The generator was built partly to *kill* a claim I'd made about
+the forecast. It didn't. `forecast.py` charges a **p90 of daily spend on all 30 horizon days**,
+but variance grows with √t, not t. Measured against three years of each household's own
+enumerated 30-day windows, the engine reserves **more than the household has ever spent in
+three years** — over-reserving $400–$970 against a p99 month, versus a $750 default buffer. On
+many days that single error is the whole difference between sweeping and refusing.
+
+It fails *safe* — nobody is overdrawn — which is exactly why it would have survived
+indefinitely. It is **deliberately not fixed**: the fix loosens the forecast and buys bigger
+sweeps, and that must not happen before there's a grader to measure the breach rate. Write-up:
+[`docs/learnings/2026-07-13-the-spend-model-over-reserves.md`](docs/learnings/2026-07-13-the-spend-model-over-reserves.md).
+
+---
+
 ## `docs/` — the thinking
 
 ### The live product argument
@@ -105,10 +140,12 @@ reversed.
 
 ## Status
 
-- Only `engine/` exists. `architecture.md` is intent, not description.
+- Only `engine/` and `sim/` exist. `architecture.md` is intent, not description.
 - Engine thresholds (`INCOME_CONFIDENCE_FLOOR`, `MAX_INCOME_VARIATION`,
   `MAX_BALANCE_AGE_DAYS`) are **judgment, not evidence**. The honest way to set them is
   shadow mode: run against real households, move nothing, measure how often the realized
   low balance fell below the projection, and set the thresholds from the observed tail.
+  `sim/` is the first half of that; the grader and the replay driver are the rest, and
+  until they exist **the engine has never once been told whether it was right.**
 - Distribution and monetization are **named as unanswered**, not solved. They're what
   killed Tally, and pretending otherwise would be the one thing that discredits the rest.
