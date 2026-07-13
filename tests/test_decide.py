@@ -151,7 +151,9 @@ def test_sweep_never_exceeds_the_user_cap():
 
 
 def test_weekly_cap_binds_across_sweeps():
-    d = decide(snapshot(accounts=(account("50000.00"),), events=(), swept_this_week=money("450.00")))
+    d = decide(
+        snapshot(accounts=(account("50000.00"),), events=(), swept_this_week=money("450.00"))
+    )
 
     assert d.action is Action.SWEEP
     assert d.amount == money("150.00")  # 600 weekly - 450 already swept
@@ -241,8 +243,14 @@ def test_pending_debits_are_treated_as_already_gone():
 
 
 def test_discretionary_spending_is_charged_every_day_of_the_horizon():
-    without = decide(snapshot(accounts=(account("5000.00"),), events=(), daily_discretionary_high=money("0.00")))
-    with_spend = decide(snapshot(accounts=(account("5000.00"),), events=(), daily_discretionary_high=money("100.00")))
+    without = decide(
+        snapshot(accounts=(account("5000.00"),), events=(), daily_discretionary_high=money("0.00"))
+    )
+    with_spend = decide(
+        snapshot(
+            accounts=(account("5000.00"),), events=(), daily_discretionary_high=money("100.00")
+        )
+    )
 
     assert without.projected_low_balance == money("5000.00")
     # 30 days x $100 of assumed spend.
@@ -307,7 +315,9 @@ def test_a_pending_charge_on_savings_does_not_reduce_checking():
             accounts=(account("1200.00"), savings("5000.00")),
             events=(),
             pending=(
-                PendingTransaction(label="Transfer out", account_id="sav", amount=money("-4000.00")),
+                PendingTransaction(
+                    label="Transfer out", account_id="sav", amount=money("-4000.00")
+                ),
             ),
             daily_discretionary_high=money("0.00"),
         )
@@ -405,7 +415,9 @@ def test_refuses_when_income_is_too_volatile_to_forecast():
 
 
 def test_refuses_during_a_user_blackout_window():
-    d = decide(snapshot(accounts=(account("50000.00"),), policy=policy(blackout_dates=frozenset({TODAY}))))
+    d = decide(
+        snapshot(accounts=(account("50000.00"),), policy=policy(blackout_dates=frozenset({TODAY})))
+    )
 
     assert d.action is Action.REFUSE
     assert d.has(ReasonCode.BLACKOUT)
@@ -422,7 +434,9 @@ def test_refuses_while_a_previous_sweep_is_still_in_flight():
 
 
 def test_refuses_rather_than_dipping_into_the_buffer():
-    d = decide(snapshot(accounts=(account("800.00"),), events=(), daily_discretionary_high=money("0.00")))
+    d = decide(
+        snapshot(accounts=(account("800.00"),), events=(), daily_discretionary_high=money("0.00"))
+    )
 
     assert d.action is Action.REFUSE
     assert d.projected_low_balance == money("800.00")
