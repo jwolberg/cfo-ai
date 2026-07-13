@@ -21,7 +21,9 @@ from engine.models import (
     CashEvent,
     ConnectionState,
     Debt,
+    EventKind,
     PendingTransaction,
+    ReasonCode,
     Snapshot,
     UserPolicy,
     money,
@@ -145,7 +147,7 @@ def test_sweep_never_exceeds_the_user_cap():
 
     assert d.action is Action.SWEEP
     assert d.amount == money("300.00")
-    assert any("cap" in r for r in d.reasons)
+    assert d.has(ReasonCode.PER_SWEEP_CAP)
 
 
 def test_weekly_cap_binds_across_sweeps():
@@ -235,7 +237,7 @@ def test_pending_debits_are_treated_as_already_gone():
     # 1200 - 400 pending = 800; buffer is 750, leaving 50 — but minimums must be
     # protected too, so there is nothing to sweep.
     assert d.action is Action.REFUSE
-    assert any("minimum" in r or "buffer" in r for r in d.reasons)
+    assert d.has(ReasonCode.NO_SURPLUS)
 
 
 def test_discretionary_spending_is_charged_every_day_of_the_horizon():
@@ -282,7 +284,7 @@ def test_the_idle_savings_is_surfaced_rather_than_swept():
         )
     )
 
-    assert any("savings" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.IDLE_CASH_ELSEWHERE)
 
 
 def test_sweeps_only_what_checking_can_cover():
@@ -338,7 +340,7 @@ def test_refuses_when_the_funding_account_is_not_a_checking_account():
     )
 
     assert d.action is Action.REFUSE
-    assert any("checking" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.FUNDING_ACCOUNT_NOT_CHECKING)
 
 
 def test_refuses_when_the_funding_account_is_missing_entirely():
@@ -371,7 +373,7 @@ def test_refuses_when_a_connection_needs_reauth():
     d = decide(snapshot(accounts=(account("50000.00", connection=ConnectionState.LOGIN_REQUIRED),)))
 
     assert d.action is Action.REFUSE
-    assert any("reconnect" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.CONNECTION_UNHEALTHY)
 
 
 def test_refuses_on_a_stale_balance():
@@ -379,7 +381,7 @@ def test_refuses_on_a_stale_balance():
     d = decide(snapshot(accounts=(account("50000.00", age=3),)))
 
     assert d.action is Action.REFUSE
-    assert any("stale" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.BALANCE_STALE)
 
 
 def test_refuses_on_cold_start():
@@ -387,7 +389,7 @@ def test_refuses_on_cold_start():
     d = decide(snapshot(accounts=(account("50000.00"),), history_days=9))
 
     assert d.action is Action.REFUSE
-    assert any("history" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.INSUFFICIENT_HISTORY)
 
 
 def test_refuses_when_income_is_too_volatile_to_forecast():
@@ -399,14 +401,14 @@ def test_refuses_when_income_is_too_volatile_to_forecast():
     d = decide(snapshot(accounts=(account("50000.00"),), income_variation=0.60))
 
     assert d.action is Action.REFUSE
-    assert any("volatile" in r.lower() or "variable" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.INCOME_TOO_VARIABLE)
 
 
 def test_refuses_during_a_user_blackout_window():
     d = decide(snapshot(accounts=(account("50000.00"),), policy=policy(blackout_dates=frozenset({TODAY}))))
 
     assert d.action is Action.REFUSE
-    assert any("blackout" in r.lower() or "paused" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.BLACKOUT)
 
 
 def test_refuses_while_a_previous_sweep_is_still_in_flight():
@@ -416,7 +418,7 @@ def test_refuses_while_a_previous_sweep_is_still_in_flight():
     d = decide(snapshot(accounts=(account("50000.00"),), sweeps_in_flight=money("200.00")))
 
     assert d.action is Action.REFUSE
-    assert any("flight" in r.lower() or "settl" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.SWEEP_IN_FLIGHT)
 
 
 def test_refuses_rather_than_dipping_into_the_buffer():
@@ -490,7 +492,7 @@ def test_refuses_to_rank_when_aprs_are_unknown_and_there_is_a_choice():
     )
 
     assert d.action is Action.REFUSE
-    assert any("apr" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.APR_UNKNOWN)
 
 
 def test_a_single_card_needs_no_apr_because_there_is_nothing_to_rank():
@@ -513,7 +515,7 @@ def test_refuses_when_there_is_no_debt_left():
     d = decide(snapshot(accounts=(account("50000.00"),), events=(), debts=()))
 
     assert d.action is Action.REFUSE
-    assert any("no debt" in r.lower() or "paid off" in r.lower() for r in d.reasons)
+    assert d.has(ReasonCode.NO_DEBT)
 
 
 # --- the decision must be explainable and reproducible ----------------------------
@@ -522,6 +524,65 @@ def test_refuses_when_there_is_no_debt_left():
 def test_every_decision_carries_its_reasons():
     for d in (decide(snapshot()), decide(snapshot(accounts=(account("100.00"),)))):
         assert d.reasons, "a decision with no explanation is not shippable"
+
+
+# --- the minimum payment is reserved once, not twice --------------------------------
+
+
+def test_a_detected_card_minimum_is_not_counted_twice():
+    """The recurring-event detector will identify a card's minimum payment as a monthly
+    obligation — it looks exactly like one. But `Debt` already carries that minimum and
+    `decide()` reserves it. Subtracting it in the forecast too would take it twice.
+
+    The direction is safe (we under-sweep), which is exactly why it would have gone
+    unnoticed: the product would just quietly refuse more often than it should, forever.
+    """
+    without = decide(
+        snapshot(
+            accounts=(account("2000.00"),),
+            events=(),
+            daily_discretionary_high=money("0.00"),
+            policy=policy(max_sweep=money("5000.00"), max_weekly_sweep=money("5000.00")),
+        )
+    )
+    with_detected_minimum = decide(
+        snapshot(
+            accounts=(account("2000.00"),),
+            events=(
+                CashEvent(
+                    label="VISA payment",
+                    account_id="chk",
+                    expected_date=TODAY + timedelta(days=20),
+                    amount=money("-180.00"),
+                    amount_low=money("-180.00"),
+                    amount_high=money("-180.00"),
+                    date_jitter_days=1,
+                    confidence=0.99,
+                    kind=EventKind.DEBT_MINIMUM,
+                ),
+            ),
+            daily_discretionary_high=money("0.00"),
+            policy=policy(max_sweep=money("5000.00"), max_weekly_sweep=money("5000.00")),
+        )
+    )
+
+    # 2000 - 750 buffer - 180 minimum. The minimum is reserved by decide(), full stop.
+    assert without.amount == money("1070.00")
+    assert with_detected_minimum.amount == without.amount
+
+
+def test_an_ordinary_obligation_is_still_counted():
+    """Guard against the fix over-reaching: only DEBT_MINIMUM is skipped."""
+    d = decide(
+        snapshot(
+            accounts=(account("2000.00"),),
+            events=(bill(20, "180.00", "Gym"),),
+            daily_discretionary_high=money("0.00"),
+            policy=policy(max_sweep=money("5000.00"), max_weekly_sweep=money("5000.00")),
+        )
+    )
+
+    assert d.amount == money("890.00")  # 2000 - 750 - 180 minimum - 180 gym
 
 
 def test_the_engine_never_reads_a_clock():

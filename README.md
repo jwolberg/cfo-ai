@@ -6,7 +6,7 @@ about "doesn't need."
 
 
 ```
-python3 -m pytest tests/ -q      # 26 tests, ~0.25s
+python3 -m pytest tests/ -q      # 65 tests, ~0.3s
 ```
 
 ---
@@ -21,8 +21,9 @@ it is not.**
 | --- | --- |
 | `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen. |
 | `forecast.py` | The conservative projection: *money arrives late and small, it leaves early and large.* |
-| `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. |
-| `../tests/test_decide.py` | 26 adversarial tests. **These are the spec.** |
+| `decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` codes, never sentences. |
+| `explain.py` | The only file with copy in it. Renders reason codes to prose, so a wording change can't break a financial calculation. |
+| `../tests/` | 65 adversarial tests. **These are the spec.** |
 
 **Why this and nothing else.** Moving money is a commodity (Plaid, Dwolla, bill-pay all
 do it). Forecasting is hard but tractable. The thing that decides whether the company

@@ -12,14 +12,37 @@ plumbing around it, is what the company lives or dies on.
 ## [1] The shape of it
 
 ```
-Snapshot ──> forecast.conservative_low_balance ──> decide ──> Decision
-(frozen         (worst plausible trajectory)      (gates,     (sweep | refuse,
- inputs)                                           caps,       + reasons)
+Snapshot ──> forecast.conservative_low_balance ──> decide ──> Decision ──> explain
+(frozen         (worst plausible trajectory)      (gates,     (sweep|refuse,   (prose)
+ inputs)                                           caps,       + Reason codes)
                                                    target)
 ```
 
 Deterministic end to end. No LLM, no clock, no network, no randomness. The same
 `Snapshot` yields the same `Decision` forever.
+
+### [1.1] Reasons are codes, not sentences
+
+`decide()` emits `Reason(code, params)` — never English. Prose lives in one place,
+`engine/explain.py`, and is the only file in the engine that contains copy.
+
+This is not tidiness. Four things fall out of it:
+
+- **Copy edits cannot break a financial calculation.** Changing "paused" to "snoozed" is
+  a change to the renderer; the test suite asserts on `ReasonCode.BLACKOUT` and doesn't
+  care.
+- **The audit log stays stable.** A decision persisted in 2026 still means the same thing
+  in 2029 after three rounds of UI copy. The code is the record; the sentence is a view.
+- **The LLM narrates *from* the codes**, rather than passing a finished string through.
+  Handed a code and its parameters it can write for this particular household; handed a
+  sentence, all it can do is paraphrase — and any paraphrase of a financial claim is a
+  chance to change its meaning.
+- **Translation is possible at all**, instead of being a rewrite of `decide()`.
+
+A code with no copy fails in CI (`test_every_reason_code_has_copy`), not in front of a
+customer whose money has just moved. And a refusal must never read like an error — the
+user is not being denied something, they are being told their money is staying put and
+why. That's asserted too.
 
 ## [2] The four rules that matter
 
@@ -113,6 +136,22 @@ silently produces a *wrong dollar amount* rather than an error:
   also rejects an APR outside 0–200%, which catches the units bug (`24.99` for 24.99%).
 
 The rule: **an upstream data bug must never buy a bigger sweep.**
+
+### [3.1] The minimum payment is reserved once, not twice
+
+`Debt` is the **single authoritative source** for a card's minimum payment, and
+`decide()` reserves it out of available cash.
+
+The recurring-event detector will also happily identify that minimum as a monthly
+obligation — it looks exactly like one — and emit it as a `CashEvent`. Left
+undistinguished, the same payment is subtracted twice: once by the forecast, once by the
+reserve. So `CashEvent.kind` carries `DEBT_MINIMUM`, and the forecast skips those events.
+
+Note the shape of this bug, because it is the kind that survives: the direction is
+**safe**. Double-counting makes us *under*-sweep — nobody is overdrawn, nothing throws,
+no alert fires. The product would simply have refused more often than it should, quietly,
+forever, and the metric that revealed it would be a slightly disappointing revenue curve
+two years later.
 
 ## [4] Idle cash outside the funding account
 

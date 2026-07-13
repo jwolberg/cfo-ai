@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
-from engine.models import ZERO, Account, Snapshot
+from engine.models import ZERO, Account, EventKind, Snapshot
 
 HORIZON_DAYS = 30
 
@@ -65,6 +65,11 @@ def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
     for event in snapshot.events:
         if event.account_id != account.account_id:
             # Income paid into savings does not protect a checking-account debit.
+            continue
+
+        if event.kind is EventKind.DEBT_MINIMUM:
+            # Already reserved from available cash by decide(), out of Debt — the
+            # authoritative source. Subtracting it here too would double-count it.
             continue
 
         if event.is_inflow:

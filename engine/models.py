@@ -7,6 +7,7 @@ reads a clock. See docs/decision-engine.md [2.1] for why.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -43,6 +44,27 @@ class AccountKind(str, Enum):
     SAVINGS = "savings"
 
 
+class EventKind(str, Enum):
+    """Whether an event is already accounted for elsewhere.
+
+    The recurring-event detector will happily identify a credit card's minimum payment
+    as a monthly obligation — it looks exactly like one. But `Debt` already carries that
+    minimum explicitly, and `decide()` reserves it out of available cash. Left
+    undistinguished, the same payment is subtracted twice: once by the forecast, once by
+    the reserve.
+
+    The direction is safe (we under-sweep, nobody is overdrawn), which is precisely why
+    it would have gone unnoticed — the product would just quietly refuse more often than
+    it should, forever.
+
+    `Debt` is the authoritative source for minimums. The forecast skips DEBT_MINIMUM
+    events and lets the reserve do that job alone.
+    """
+
+    ORDINARY = "ordinary"
+    DEBT_MINIMUM = "debt_minimum"
+
+
 @dataclass(frozen=True)
 class Account:
     account_id: str
@@ -72,6 +94,9 @@ class CashEvent:
     amount_high: Decimal  # largest plausible magnitude (still signed)
     date_jitter_days: int
     confidence: float  # P(this event occurs roughly as predicted), 0..1
+    # DEBT_MINIMUM events are excluded from the forecast — Debt.minimum_payment is the
+    # authoritative source and decide() reserves it. See EventKind.
+    kind: EventKind = EventKind.ORDINARY
 
     def __post_init__(self) -> None:
         """Refuse to exist if the bounds are incoherent.
@@ -193,16 +218,67 @@ class Action(str, Enum):
     REFUSE = "refuse"
 
 
+class ReasonCode(str, Enum):
+    """Why the engine did what it did.
+
+    Codes, not sentences. A reason is a fact about the decision; the sentence is one
+    rendering of that fact. Keeping them apart means copy edits can't break the test
+    suite, the audit log stays stable while the UI changes, translation is possible at
+    all, and the LLM has something to narrate *from* rather than merely passing through.
+
+    See engine/explain.py for the rendering.
+    """
+
+    # Blocking — no amount of surplus justifies moving money.
+    FUNDING_ACCOUNT_MISSING = "funding_account_missing"
+    FUNDING_ACCOUNT_NOT_CHECKING = "funding_account_not_checking"
+    CONNECTION_UNHEALTHY = "connection_unhealthy"
+    BALANCE_STALE = "balance_stale"
+    INSUFFICIENT_HISTORY = "insufficient_history"
+    INCOME_TOO_VARIABLE = "income_too_variable"
+    BLACKOUT = "blackout"
+    SWEEP_IN_FLIGHT = "sweep_in_flight"
+
+    # Nothing to aim at.
+    NO_DEBT = "no_debt"
+    APR_UNKNOWN = "apr_unknown"
+
+    # The money isn't there.
+    NO_SURPLUS = "no_surplus"
+    BELOW_MIN_SWEEP = "below_min_sweep"
+
+    # Why this amount, and not more.
+    PROJECTION = "projection"
+    PER_SWEEP_CAP = "per_sweep_cap"
+    WEEKLY_CAP = "weekly_cap"
+    CLEARS_THE_CARD = "clears_the_card"
+
+    # Advisory — true, and worth saying, but not why we acted.
+    IDLE_CASH_ELSEWHERE = "idle_cash_elsewhere"
+
+
+@dataclass(frozen=True)
+class Reason:
+    code: ReasonCode
+    params: Mapping[str, object] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class Decision:
     action: Action
     amount: Decimal
     target_debt_id: str | None
-    # Every reason, in plain language, that produced this outcome. This is the
-    # explanation surface: the LLM narrates these, it does not generate them.
-    reasons: tuple[str, ...]
+    # Structured facts about why. Render with engine.explain.explain().
+    reasons: tuple[Reason, ...]
     projected_low_balance: Decimal | None = None
 
     @property
     def swept(self) -> bool:
         return self.action is Action.SWEEP
+
+    @property
+    def codes(self) -> tuple[ReasonCode, ...]:
+        return tuple(r.code for r in self.reasons)
+
+    def has(self, code: ReasonCode) -> bool:
+        return code in self.codes
