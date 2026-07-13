@@ -15,9 +15,11 @@ plumbing around it, is what the company lives or dies on.
 | `engine/forecast.py` | The conservative projection. One rule: *money arrives late and small; it leaves early and large* ([2.3]). |
 | `engine/decide.py` | The refusal gates, the buffer, the reserved minimums, the caps, the target card. Emits `Reason` **codes**, never sentences. |
 | `engine/interest.py` | What the debt costs and what a sweep saves — the primary KPI ([`prd.md`](./prd.md) §5.1) and the sentence the user reads, computed in one place ([7]). |
+| `engine/outcome.py` | Grades a decision against what actually happened. The calibration asset ([8]). |
 | `engine/explain.py` | The only file in the engine that contains copy ([1.1]). |
 | `tests/test_decide.py` | The spec. Mostly the ways the real world breaks the happy path. |
 | `tests/test_interest.py` | Hand-computable amortization, and the three ways we decline to claim. |
+| `tests/test_outcome.py` | The grader. Mostly the ways a metric can quietly lie to you. |
 | `tests/test_explain.py` | Every code renders; no refusal reads like an error. |
 
 ## [1] The shape of it
@@ -315,3 +317,64 @@ large number invites exactly the disbelief this product cannot afford. A bounded
 Per-sweep claims **do** compose: each day's figure is marginal against that day's actual
 balance and assumes no further sweeps, so the daily claims telescope to the true total against
 never-sweeping. They are not double-counted.
+
+## [8] Grading the decision
+
+`decide()` emits a prediction. `engine/outcome.py` settles the bet — and until it existed,
+nothing in this repo ever did. The engine's central claim, *"this $220 is not needed"*, had
+never once been checked against the future that followed it.
+
+[`strategy.md`](./strategy.md) §3: the only asset that compounds is **calibration** — "the
+empirical distribution of our own errors." This is that distribution's data structure, and it
+is what makes every future change to the forecast **defensible rather than merely plausible**.
+
+### [8.1] The signature is the safety property
+
+`grade()` does not take "the realized balances". It takes the household's own daily cash
+movement — **excluding anything we did** — and applies the decision's sweep **itself**.
+
+A replay that grades each decision against the household's *untouched* history never compounds
+the effect of its own sweeps, and systematically **understates** breach risk: it reports the
+tail we would have had if we had never acted. That is the difference between a shadow-mode
+report and a shadow-mode lie, and it is not the sort of thing to leave to a caller's diligence.
+The caller cannot forget to apply the sweep, because the caller is not the one who applies it.
+
+Our money is assumed to leave on the **day we decided**, not when ACH would plausibly have
+posted it — the assumption most likely to *find* a breach rather than excuse one. A grader that
+flatters itself is worse than no grader.
+
+### [8.2] What it measures, and why each one is a different fact
+
+| Field | Why it exists |
+| --- | --- |
+| `projection_error` | `realized_low_unswept − projected_low`, **signed**. The calibration asset. Measured against the household's *unswept* path: `projected_low_balance` projects their pre-sweep trajectory, so grading it against the post-sweep low would fold the size of our own sweep into the "error" — making the engine look wildly optimistic on exactly the days it swept hardest and was right. |
+| `sweep_caused_overdraft` | [`prd.md`](./prd.md) §5.2's guardrail — the hard gate that outranks the KPI. Distinct from `overdrafted`: a household that goes below zero **on its own** is not our doing, and folding those in would drown the metric in lives we never touched. True only when `realized_low < 0 ≤ realized_low_unswept`. |
+| `false_refusal_cost` | §5.3's "cost of conservatism" — but **ours**, not the user's. Computed as `would_sweep(realized_low) − swept`: what `decide()` would have moved with a perfect forecast, obeying every cap the user set. If they capped us at $300 and we moved $300, we were not being conservative, we were being *obedient*, and this is zero however much idle cash hindsight reveals. |
+| `interest_claimed` | What we told them it bought. Whether it was *realized* depends on their payments over years and belongs to the KPI layer, not a 30-day grade — see [7.2]. |
+
+`engine/decide.py` exports `untouchable()`, `apply_caps()` and `would_sweep()` so the grader
+applies the **identical** money rules the engine shipped. Two copies of that arithmetic would
+drift, and the day they drifted the calibration numbers would start describing an engine that
+never existed.
+
+Uncapped, the metrics satisfy an exact identity: **`false_refusal_cost == projection_error`**.
+The forecast error, priced in dollars. It is asserted as a test — if they ever drift apart under
+an uncapped policy, one of them has a bug.
+
+### [8.3] The per-sweep cap currently **masks** the spend-model bug
+
+Under the default **$300** cap, [6.5]'s over-reservation costs the user *nothing measurable*.
+The cap binds long before the forecast error does, `false_refusal_cost` reads **$0.00**, and a
+shadow-mode report run at production caps would pronounce the engine healthy.
+
+The bug is **latent, not absent**. Lift the cap on the same household, the same day, the same
+realized future, and it prices out at **$867.13** immediately.
+
+Which means it starts costing real money precisely when the ceiling is raised — and
+[`prd.md`](./prd.md) §8's *"Then: raise the ceiling as calibration proves out"* is exactly the
+plan to raise it. **The moment the company begins trusting its calibration is the moment this
+bug begins to bite.**
+
+So the replay driver — the last unbuilt piece of the shadow-mode harness — **must sweep the cap
+across a range.** Run at production caps alone, it will measure a forecast error of zero and
+issue a false clean bill of health. There is a test that says so.
