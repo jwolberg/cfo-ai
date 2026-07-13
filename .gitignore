@@ -1,14 +1,22 @@
-.TerMinal/backlog/.next-id.lock
-.TerMinal/sessions/.next-id.lock
+# Personal agent tooling. Stripped from the repo in #3 and kept out deliberately — it is
+# local workflow scaffolding, not part of the product. Ignoring it (rather than merely
+# deleting it) is what stops a stale checkout, or an agent branching from a pre-strip
+# commit, from quietly re-committing the whole tree.
+.claude/
+.codex/
+.agents/
+.TerMinal/
+.gitlab/
+CLAUDE.md
+AGENTS.md
 .status.md
-__pycache__/
-*.pyc
-.pytest_cache/
 
 # personal / not for the repo
 private/
 
 # python build artifacts
 __pycache__/
+*.pyc
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
