@@ -375,6 +375,6 @@ Which means it starts costing real money precisely when the ceiling is raised �
 plan to raise it. **The moment the company begins trusting its calibration is the moment this
 bug begins to bite.**
 
-So the replay driver ([`0004`](../.TerMinal/backlog/0004-replay-shadow-mode-driver.md)) **must
-sweep the cap across a range.** Run at production caps alone, it will measure a forecast error
-of zero and issue a false clean bill of health. There is a test that says so.
+So the replay driver — the last unbuilt piece of the shadow-mode harness — **must sweep the cap
+across a range.** Run at production caps alone, it will measure a forecast error of zero and
+issue a false clean bill of health. There is a test that says so.
