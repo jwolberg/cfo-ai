@@ -1,7 +1,7 @@
 ---
 id: 3
 title: "engine/outcome.py — grade a decision against what actually happened"
-status: open
+status: in-progress
 priority: high
 horizon: now
 hitl: false
@@ -9,7 +9,7 @@ type: feature
 source: manual
 created: 2026-07-13
 updated: 2026-07-13
-prs: []
+prs: ["https://github.com/jwolberg/cfo-ai/pull/7"]
 refs: ["docs/prd.md#5.2", "docs/prd.md#5.3", "docs/strategy.md#3"]
 depends_on: [1]
 agent_id: 1000x-ai-engineer
