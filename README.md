@@ -22,29 +22,29 @@ into a reason to do nothing.
 
 ```mermaid
 flowchart TD
-    S["<b>Snapshot</b><br/><i>frozen inputs · no clock</i>"] --> G{"<b>Is it safe to<br/>look at all?</b>"}
+    S["SNAPSHOT<br/>frozen inputs, no clock"] --> G{"Is it safe<br/>to look at all?"}
 
-    G -->|no| R1["FUNDING_ACCOUNT_MISSING<br/>FUNDING_ACCOUNT_NOT_CHECKING<br/>CONNECTION_UNHEALTHY<br/>BALANCE_STALE<br/>INSUFFICIENT_HISTORY<br/>INCOME_TOO_VARIABLE<br/>BLACKOUT · SWEEP_IN_FLIGHT"]
+    G -->|no| R1["FUNDING_ACCOUNT_MISSING<br/>FUNDING_ACCOUNT_NOT_CHECKING<br/>CONNECTION_UNHEALTHY<br/>BALANCE_STALE<br/>INSUFFICIENT_HISTORY<br/>INCOME_TOO_VARIABLE<br/>BLACKOUT<br/>SWEEP_IN_FLIGHT"]
 
-    G -->|yes| F["<b>Project the low balance</b><br/><i>funding account, 30 days</i><br/><i>money arrives late and small;</i><br/><i>it leaves early and large</i>"]
+    G -->|yes| F["PROJECT THE LOW BALANCE<br/>funding account, 30 days<br/>money arrives late and small,<br/>it leaves early and large"]
 
-    F --> T{"<b>Which card?</b><br/><i>highest APR</i>"}
-    T -->|"nothing to aim at"| R2["NO_DEBT<br/>APR_UNKNOWN"]
+    F --> T{"Which card?<br/>highest APR"}
+    T -->|nothing to aim at| R2["NO_DEBT<br/>APR_UNKNOWN"]
 
-    T --> A["<b>available =</b><br/>low − buffer − minimums"]
-    A -->|"nothing spare"| R3["NO_SURPLUS"]
+    T --> A["AVAILABLE<br/>low minus buffer<br/>minus reserved minimums"]
+    A -->|nothing spare| R3["NO_SURPLUS"]
 
-    A --> C["<b>Apply the caps</b><br/><i>per-sweep · weekly · card balance</i>"]
-    C -->|"under $1.00"| R4["BELOW_MIN_SWEEP"]
+    A --> C["APPLY THE CAPS<br/>per-sweep, weekly,<br/>card balance"]
+    C -->|under one dollar| R4["BELOW_MIN_SWEEP"]
 
-    C --> W(["<b>SWEEP</b><br/><i>amount + target + reason codes</i>"])
+    C --> W(["SWEEP<br/>amount, target card,<br/>and the reason codes"])
 
-    W --> O["<b>outcome.py</b> grades it<br/><i>overdrafted? how wrong were we?</i><br/><i>how much safe money did we leave?</i>"]
-    O -.->|"the only asset that compounds"| F
+    W --> O["OUTCOME.PY GRADES IT<br/>did they overdraft, and was it us?<br/>how wrong was the projection?<br/>how much safe money did we leave?"]
+    O -.->|the only asset that compounds| F
 
-    classDef stop fill:#fdf2f1,stroke:#b4443a,color:#b4443a;
-    classDef go fill:#f0f7f3,stroke:#2f6f4f,color:#2f6f4f;
-    classDef step fill:#ffffff,stroke:#c9c9c4,color:#1a1a19;
+    classDef stop fill:#fdf2f1,stroke:#b4443a,color:#8f3229;
+    classDef go fill:#f0f7f3,stroke:#2f6f4f,color:#24583e;
+    classDef step fill:#ffffff,stroke:#b9b9b3,color:#1a1a19;
     class R1,R2,R3,R4 stop;
     class W go;
     class S,G,F,T,A,C,O step;
