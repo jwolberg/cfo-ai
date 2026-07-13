@@ -4,9 +4,6 @@ Working repo for a product thesis: **autonomous debt paydown** — every day, mo
 a household genuinely doesn't need onto the debt that costs them the most, and be right
 about "doesn't need."
 
-It began as a self-directed PRD and became something more useful: an adversarial review
-that killed the original plan, a rebuilt one that survives the evidence, and a reference
-implementation of the single component the whole idea rests on.
 
 ```
 python3 -m pytest tests/ -q      # 26 tests, ~0.25s
@@ -85,14 +82,19 @@ reward for trust; automation is the product, and trust is the constraint you eng
 around.** That reversal is the whole point, and it's only legible if you can see what it
 reversed.
 
+### The system around it
+
+[`architecture.md`](docs/architecture.md) — what we'd build and in what order. Notable for
+what it *doesn't* build: no Temporal, no Redis, no provider abstraction for providers that
+don't exist. The load-bearing choice is an append-only decision log that stores each
+decision's entire frozen input, which is what makes a sweep explainable, auditable, and
+backtestable after Plaid rewrites history beneath it.
 
 ---
 
 ## Status
 
-- [`architecture.md`](docs/architecture.md) is **still v0** and partly contradicts the
-  current PRD (it plans a Temporal-based, event-driven, provider-abstracted system for an
-  advice-only product). The review's §4 says what to cut. Not yet rewritten.
+- Only `engine/` exists. `architecture.md` is intent, not description.
 - Engine thresholds (`INCOME_CONFIDENCE_FLOOR`, `MAX_INCOME_VARIATION`,
   `MAX_BALANCE_AGE_DAYS`) are **judgment, not evidence**. The honest way to set them is
   shadow mode: run against real households, move nothing, measure how often the realized
