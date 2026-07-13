@@ -17,6 +17,45 @@ The only code here, and deliberately so. Given a frozen snapshot of a household'
 position, decide whether it is safe to move money to a card — **and usually decide that
 it is not.**
 
+Read the diagram by its **shape**. The spine is short. Almost everything branches *off* it,
+into a reason to do nothing.
+
+```mermaid
+flowchart TD
+    S["SNAPSHOT<br/>frozen inputs, no clock"] --> G{"Is it safe<br/>to look at all?"}
+
+    G -->|no| R1["FUNDING_ACCOUNT_MISSING<br/>FUNDING_ACCOUNT_NOT_CHECKING<br/>CONNECTION_UNHEALTHY<br/>BALANCE_STALE<br/>INSUFFICIENT_HISTORY<br/>INCOME_TOO_VARIABLE<br/>BLACKOUT<br/>SWEEP_IN_FLIGHT"]
+
+    G -->|yes| F["PROJECT THE LOW BALANCE<br/>funding account, 30 days<br/>money arrives late and small,<br/>it leaves early and large"]
+
+    F --> T{"Which card?<br/>highest APR"}
+    T -->|nothing to aim at| R2["NO_DEBT<br/>APR_UNKNOWN"]
+
+    T --> A["AVAILABLE<br/>low minus buffer<br/>minus reserved minimums"]
+    A -->|nothing spare| R3["NO_SURPLUS"]
+
+    A --> C["APPLY THE CAPS<br/>per-sweep, weekly,<br/>card balance"]
+    C -->|under one dollar| R4["BELOW_MIN_SWEEP"]
+
+    C --> W(["SWEEP<br/>amount, target card,<br/>and the reason codes"])
+
+    W --> O["OUTCOME.PY GRADES IT<br/>did they overdraft, and was it us?<br/>how wrong was the projection?<br/>how much safe money did we leave?"]
+    O -.->|the only asset that compounds| F
+
+    classDef stop fill:#fdf2f1,stroke:#b4443a,color:#8f3229;
+    classDef go fill:#f0f7f3,stroke:#2f6f4f,color:#24583e;
+    classDef step fill:#ffffff,stroke:#b9b9b3,color:#1a1a19;
+    class R1,R2,R3,R4 stop;
+    class W go;
+    class S,G,F,T,A,C,O step;
+```
+
+**Every red box is the product working.** Days with no sweep are not failures.
+
+A richer, annotated version of this — with the full worst-case table and the calibration loop —
+lives at [`docs/decision-flow.html`](docs/decision-flow.html). GitHub renders `.html` from a
+private repo as source, so open it locally: `open docs/decision-flow.html`.
+
 | File | What it does |
 | --- | --- |
 | `models.py` | Value types. Money is `Decimal`, dates are inputs, everything is frozen — and the types **refuse to exist** when the data is incoherent. |
