@@ -193,7 +193,7 @@ proposed → authorized → submitted → pending → settled
    each projected low balance against what actually happened. This produces the one thing
    no competitor in this category had before switching the money on: **a measured tail-risk
    number.** It is also what sets the engine's thresholds, which are currently judgment
-   ([`decision-engine.md`](./decision-engine.md) §4.1).
+   ([`decision-engine.md`](./decision-engine.md) §6.1).
 2. **Sweep, small caps, guarantee live.** Overdraft reimbursement from the first dollar.
 3. **Raise the ceiling** as calibration proves out — the cap is a function of demonstrated
    forecast calibration, never of a growth target.

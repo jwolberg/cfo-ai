@@ -16,6 +16,7 @@ import pytest
 from engine.decide import MIN_SWEEP, decide
 from engine.models import (
     Account,
+    AccountKind,
     Action,
     CashEvent,
     ConnectionState,
@@ -29,18 +30,33 @@ from engine.models import (
 TODAY = date(2026, 7, 12)
 
 
-def account(balance: str, *, connection=ConnectionState.HEALTHY, age=0) -> Account:
+def account(
+    balance: str,
+    *,
+    connection=ConnectionState.HEALTHY,
+    age=0,
+    account_id="chk",
+    kind=AccountKind.CHECKING,
+) -> Account:
     return Account(
-        account_id="chk",
+        account_id=account_id,
         balance=money(balance),
         connection=connection,
         balance_age_days=age,
+        kind=kind,
     )
 
 
-def paycheck(day_offset: int, amount: str = "3000.00", *, confidence=0.95, jitter=1) -> CashEvent:
+def savings(balance: str, *, account_id="sav", **kw) -> Account:
+    return account(balance, account_id=account_id, kind=AccountKind.SAVINGS, **kw)
+
+
+def paycheck(
+    day_offset: int, amount: str = "3000.00", *, confidence=0.95, jitter=1, account_id="chk"
+) -> CashEvent:
     return CashEvent(
         label="Payroll",
+        account_id=account_id,
         expected_date=TODAY + timedelta(days=day_offset),
         amount=money(amount),
         amount_low=money(amount),
@@ -50,10 +66,18 @@ def paycheck(day_offset: int, amount: str = "3000.00", *, confidence=0.95, jitte
     )
 
 
-def bill(day_offset: int, amount: str, label: str = "Rent", *, high: str | None = None) -> CashEvent:
+def bill(
+    day_offset: int,
+    amount: str,
+    label: str = "Rent",
+    *,
+    high: str | None = None,
+    account_id="chk",
+) -> CashEvent:
     amt = money("-" + amount.lstrip("-"))
     return CashEvent(
         label=label,
+        account_id=account_id,
         expected_date=TODAY + timedelta(days=day_offset),
         amount=amt,
         amount_low=amt,
@@ -88,6 +112,7 @@ def snapshot(**kw) -> Snapshot:
     base = dict(
         today=TODAY,
         accounts=(account("4000.00"),),
+        funding_account_id="chk",
         events=(paycheck(3), bill(6, "1800.00")),
         pending=(),
         debts=(card(),),
@@ -200,7 +225,9 @@ def test_pending_debits_are_treated_as_already_gone():
         snapshot(
             accounts=(account("1200.00"),),
             events=(),
-            pending=(PendingTransaction(label="Car repair", amount=money("-400.00")),),
+            pending=(
+                PendingTransaction(label="Car repair", account_id="chk", amount=money("-400.00")),
+            ),
             daily_discretionary_high=money("0.00"),
         )
     )
@@ -218,6 +245,123 @@ def test_discretionary_spending_is_charged_every_day_of_the_horizon():
     assert without.projected_low_balance == money("5000.00")
     # 30 days x $100 of assumed spend.
     assert with_spend.projected_low_balance == money("2000.00")
+
+
+# --- the sweep leaves ONE account, so only that account's balance protects it -------
+
+
+def test_savings_is_not_spendable_cash():
+    """The bug this suite was extended to kill.
+
+    An ACH debit hits the checking account. Summing checking and savings into one
+    "cash" figure and testing it against the buffer will happily overdraw checking
+    while the savings balance sits untouched — the money is real, but it is not *there*,
+    and moving it is a second ACH with its own delay.
+    """
+    d = decide(
+        snapshot(
+            accounts=(account("800.00"), savings("20000.00")),
+            events=(),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    assert d.action is Action.REFUSE
+    assert d.projected_low_balance == money("800.00")  # checking only, not 20,800
+
+
+def test_the_idle_savings_is_surfaced_rather_than_swept():
+    """We won't move it — but staying silent about $20k earning nothing while the user
+    pays 24% is its own kind of failure. Say it; don't act on it.
+    """
+    d = decide(
+        snapshot(
+            accounts=(account("800.00"), savings("20000.00")),
+            events=(),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    assert any("savings" in r.lower() for r in d.reasons)
+
+
+def test_sweeps_only_what_checking_can_cover():
+    d = decide(
+        snapshot(
+            accounts=(account("1200.00"), savings("50000.00")),
+            events=(),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    # 1200 checking - 750 buffer - 180 minimum = 270. The savings is irrelevant.
+    assert d.action is Action.SWEEP
+    assert d.amount == money("270.00")
+
+
+def test_a_pending_charge_on_savings_does_not_reduce_checking():
+    d = decide(
+        snapshot(
+            accounts=(account("1200.00"), savings("5000.00")),
+            events=(),
+            pending=(
+                PendingTransaction(label="Transfer out", account_id="sav", amount=money("-4000.00")),
+            ),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    assert d.projected_low_balance == money("1200.00")
+    assert d.action is Action.SWEEP
+
+
+def test_income_paid_into_savings_does_not_fund_a_checking_sweep():
+    d = decide(
+        snapshot(
+            accounts=(account("800.00"), savings("100.00")),
+            events=(paycheck(2, "6000.00", account_id="sav"),),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    assert d.action is Action.REFUSE
+    assert d.projected_low_balance == money("800.00")
+
+
+def test_refuses_when_the_funding_account_is_not_a_checking_account():
+    d = decide(
+        snapshot(
+            accounts=(savings("50000.00"),),
+            funding_account_id="sav",
+            events=(),
+        )
+    )
+
+    assert d.action is Action.REFUSE
+    assert any("checking" in r.lower() for r in d.reasons)
+
+
+def test_refuses_when_the_funding_account_is_missing_entirely():
+    d = decide(snapshot(accounts=(account("50000.00"),), funding_account_id="nope", events=()))
+
+    assert d.action is Action.REFUSE
+
+
+def test_a_broken_savings_connection_does_not_block_a_checking_sweep():
+    """Gates apply to the account the money actually leaves. A stale savings balance
+    cannot overdraw checking, so refusing on it would be superstition, not safety.
+    """
+    d = decide(
+        snapshot(
+            accounts=(
+                account("50000.00"),
+                savings("100.00", connection=ConnectionState.LOGIN_REQUIRED, age=90),
+            ),
+            events=(),
+        )
+    )
+
+    assert d.action is Action.SWEEP
 
 
 # --- refusal: the feature ---------------------------------------------------------
@@ -394,3 +538,109 @@ def test_refuses_when_the_account_is_already_at_or_below_zero(balance):
     d = decide(snapshot(accounts=(account(balance),), events=()))
 
     assert d.action is Action.REFUSE
+
+
+@pytest.mark.parametrize(
+    ("balance", "expected"),
+    [
+        ("931.00", Action.SWEEP),  # exactly MIN_SWEEP available
+        ("930.99", Action.REFUSE),  # a cent under
+    ],
+)
+def test_the_min_sweep_boundary_is_inclusive(balance, expected):
+    d = decide(
+        snapshot(
+            accounts=(account(balance),),
+            events=(),
+            daily_discretionary_high=money("0.00"),
+        )
+    )
+
+    assert d.action is expected
+
+
+# --- bad data must fail loudly, never quietly authorize a larger sweep -------------
+
+
+def test_money_refuses_floats():
+    """Decimal(2.675) is not 2.675 — it quantizes to 2.67. A silently wrong cent is
+    the exact failure this type discipline exists to prevent.
+    """
+    with pytest.raises(TypeError, match="refuses floats"):
+        money(2.675)
+
+
+def test_an_outflow_bound_with_the_wrong_sign_is_rejected():
+    """The sign bug that would otherwise understate a bill and cause an overdraft:
+    amount=-1800 with amount_high=+2200 ("could be as much as $2,200") silently
+    resolves to -1800 as the worst case, hiding $400 of exposure.
+    """
+    with pytest.raises(ValueError, match="different sign"):
+        CashEvent(
+            label="Utilities",
+            account_id="chk",
+            expected_date=TODAY,
+            amount=money("-1800.00"),
+            amount_low=money("-1800.00"),
+            amount_high=money("2200.00"),
+            date_jitter_days=1,
+            confidence=0.9,
+        )
+
+
+def test_inverted_bounds_are_rejected():
+    with pytest.raises(ValueError, match="larger in magnitude"):
+        CashEvent(
+            label="Rent",
+            account_id="chk",
+            expected_date=TODAY,
+            amount=money("-1800.00"),
+            amount_low=money("-2000.00"),
+            amount_high=money("-1500.00"),
+            date_jitter_days=1,
+            confidence=0.9,
+        )
+
+
+def test_negative_jitter_is_rejected():
+    """A negative jitter inverts the whole safety rule — obligations would be assumed
+    to clear late and income to arrive early.
+    """
+    with pytest.raises(ValueError, match="date_jitter_days"):
+        CashEvent(
+            label="Rent",
+            account_id="chk",
+            expected_date=TODAY,
+            amount=money("-1800.00"),
+            amount_low=money("-1800.00"),
+            amount_high=money("-1800.00"),
+            date_jitter_days=-2,
+            confidence=0.9,
+        )
+
+
+def test_a_negative_minimum_payment_is_rejected_rather_than_clamped():
+    """A misread signed Liabilities field must not become an overdraft.
+
+    Clamping it to zero would stop the overdraft but silently invent a $0 minimum —
+    the engine guessing at money. It refuses to exist instead.
+    """
+    with pytest.raises(ValueError, match="minimum_payment"):
+        Debt(
+            debt_id="visa",
+            balance=money("9000.00"),
+            minimum_payment=money("-180.00"),
+            minimum_due_date=TODAY + timedelta(days=20),
+            apr=money("0.2399"),
+        )
+
+
+def test_an_implausible_apr_is_rejected():
+    with pytest.raises(ValueError, match="apr"):
+        Debt(
+            debt_id="visa",
+            balance=money("9000.00"),
+            minimum_payment=money("180.00"),
+            minimum_due_date=TODAY + timedelta(days=20),
+            apr=money("24.99"),  # 2499%, not 24.99% — a units bug, caught at the door
+        )

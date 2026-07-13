@@ -12,9 +12,10 @@ average will overdraft half its users half the time.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
 
-from engine.models import ZERO, Snapshot
+from engine.models import ZERO, Account, Snapshot
 
 HORIZON_DAYS = 30
 
@@ -22,27 +23,50 @@ HORIZON_DAYS = 30
 INCOME_CONFIDENCE_FLOOR = 0.80
 
 
-def conservative_low_balance(snapshot: Snapshot) -> tuple[object, object]:
-    """Return (low_balance, day_it_occurs) over the forecast horizon.
+def funding_account(snapshot: Snapshot) -> Account | None:
+    for a in snapshot.accounts:
+        if a.account_id == snapshot.funding_account_id:
+            return a
+    return None
 
-    The low balance — not the ending balance — is what constrains a sweep. It is the
-    worst moment the user passes through, and they only have to be broke once.
+
+def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
+    """Return (low_balance, day_it_occurs) for the *funding account* over the horizon.
+
+    Only the funding account is projected, and this is the whole point. An ACH debit
+    leaves one specific account. A user with $100 in checking and $5,000 in savings has
+    $5,100 of money and $100 of *protection* — summing them and testing the total
+    against the buffer would authorize a sweep that overdraws checking while the savings
+    sits there untouched. Savings is real money, but it is not *there*, and moving it is
+    a second ACH with its own delay and its own failure modes.
+
+    The low balance — not the ending balance — is what constrains a sweep. The user only
+    has to be broke once.
     """
-    balance = sum((a.balance for a in snapshot.accounts), ZERO)
+    account = funding_account(snapshot)
+    if account is None:
+        raise ValueError(f"funding account {snapshot.funding_account_id!r} not in snapshot")
 
-    # Pending debits have not posted, but the money is already spoken for. Pending
-    # *credits* are ignored: we do not spend money the bank has not handed over.
+    balance = account.balance
+
+    # Pending debits against this account have not posted, but the money is already
+    # spoken for. Pending *credits* are ignored: we do not spend money the bank has not
+    # handed over.
     for p in snapshot.pending:
-        if p.amount < ZERO:
+        if p.account_id == account.account_id and p.amount < ZERO:
             balance += p.amount
 
     # A sweep we initiated but that has not settled may not be reflected in the
     # balance yet. Subtract it, or we will spend the same dollar twice.
     balance -= snapshot.sweeps_in_flight
 
-    daily: dict[object, object] = {}
+    daily: dict[date, Decimal] = {}
 
     for event in snapshot.events:
+        if event.account_id != account.account_id:
+            # Income paid into savings does not protect a checking-account debit.
+            continue
+
         if event.is_inflow:
             if event.confidence < INCOME_CONFIDENCE_FLOOR:
                 continue  # not money — a hope

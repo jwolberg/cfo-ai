@@ -16,8 +16,17 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal
 
-from engine.forecast import HORIZON_DAYS, conservative_low_balance
-from engine.models import ZERO, Action, ConnectionState, Debt, Decision, Snapshot, money
+from engine.forecast import HORIZON_DAYS, conservative_low_balance, funding_account
+from engine.models import (
+    ZERO,
+    AccountKind,
+    Action,
+    ConnectionState,
+    Debt,
+    Decision,
+    Snapshot,
+    money,
+)
 
 # Below this, the ACH risk and the cognitive noise of a notification cost more than
 # the interest saved. Not every dollar is worth moving.
@@ -35,6 +44,9 @@ MIN_HISTORY_DAYS = 60
 # advice than doing nothing. We decline to serve rather than serve badly.
 MAX_INCOME_VARIATION = 0.25
 
+# Idle cash outside the funding account worth telling the user about.
+MIN_IDLE_TO_MENTION = money("1000.00")
+
 
 def _refuse(*reasons: str, low: Decimal | None = None) -> Decision:
     return Decision(
@@ -50,10 +62,20 @@ def _blocking_reasons(s: Snapshot) -> list[str]:
     """Conditions under which no amount of surplus justifies moving money."""
     reasons: list[str] = []
 
-    if any(a.connection is not ConnectionState.HEALTHY for a in s.accounts):
-        reasons.append("An account needs you to reconnect it — we can't see your real balance.")
+    account = funding_account(s)
 
-    if any(a.balance_age_days > MAX_BALANCE_AGE_DAYS for a in s.accounts):
+    # Gates apply to the account the money actually leaves. A stale savings balance
+    # cannot overdraw checking, so refusing on it would be superstition, not safety.
+    if account is None:
+        return ["We can't see the account the payment would come from."]
+
+    if account.kind is not AccountKind.CHECKING:
+        return ["Payments have to come from a checking account."]
+
+    if account.connection is not ConnectionState.HEALTHY:
+        reasons.append("Your checking account needs reconnecting — we can't see your real balance.")
+
+    if account.balance_age_days > MAX_BALANCE_AGE_DAYS:
         reasons.append("Your balance is stale, so we're not acting on it today.")
 
     if s.history_days < MIN_HISTORY_DAYS:
@@ -78,6 +100,30 @@ def _blocking_reasons(s: Snapshot) -> list[str]:
         )
 
     return reasons
+
+
+def _idle_elsewhere(s: Snapshot) -> list[str]:
+    """Money sitting outside the funding account.
+
+    We will not sweep it — it isn't where the debit lands, and moving it is a second
+    ACH we haven't earned the right to make. But staying silent while someone holds
+    thousands in a savings account earning nothing and pays 24% on a card is its own
+    kind of failure. Name it; don't act on it.
+    """
+    idle = sum(
+        (a.balance for a in s.accounts if a.account_id != s.funding_account_id),
+        ZERO,
+    )
+
+    if idle < MIN_IDLE_TO_MENTION:
+        return []
+
+    return [
+        f"Separately: you're holding ${idle} in savings. It isn't cash we can move from "
+        "here, and some of it should stay as your buffer — but a buffer that size belongs "
+        "somewhere it earns interest, not in an account paying nothing while your card "
+        "charges you."
+    ]
 
 
 def _select_target(debts: tuple[Debt, ...]) -> tuple[Debt | None, str | None]:
@@ -116,19 +162,25 @@ def decide(snapshot: Snapshot) -> Decision:
 
     # The minimum payment is not surplus. Sweeping it and then missing it would mean
     # causing the exact late fee we exist to prevent.
+    #
+    # Debt.__post_init__ already rejects a negative minimum_payment — the max() is
+    # belt-and-braces, because the one direction this must never fail is "bad upstream
+    # data shrinks the reserve and buys a bigger sweep."
     horizon_end = snapshot.today + timedelta(days=HORIZON_DAYS)
     reserved = sum(
-        (d.minimum_payment for d in snapshot.debts if d.minimum_due_date <= horizon_end),
+        (max(d.minimum_payment, ZERO) for d in snapshot.debts if d.minimum_due_date <= horizon_end),
         ZERO,
     )
 
-    available = low - snapshot.policy.buffer_floor - reserved
+    available = low - max(snapshot.policy.buffer_floor, ZERO) - reserved
 
     if available < MIN_SWEEP:
+        idle = _idle_elsewhere(snapshot)
         return _refuse(
             f"Your balance is projected to dip to ${low} on {low_day}. After your "
             f"${snapshot.policy.buffer_floor} buffer and ${reserved} of minimum payments, "
-            "there's nothing spare. We're leaving your cash alone.",
+            "there's nothing spare in checking. We're leaving your cash alone.",
+            *idle,
             low=low,
         )
 
