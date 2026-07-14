@@ -52,6 +52,7 @@ from backend.precompute import (
     DEMO_SPEC,
     SEED,
     SERVED_DAYS,
+    SPEND_QUANTILE,
     WARMUP_DAYS,
     WINDOW_START,
     DebtLedger,
@@ -155,6 +156,7 @@ def replay(
     seed: int = SEED,
     policy: UserPolicy = DEMO_POLICY,
     warmup: int = WARMUP_DAYS,
+    spend_quantile: float | None = SPEND_QUANTILE,
 ) -> Iterator[Graded]:
     """Walk a household day by day, decide, and grade — for every day we can honestly grade.
 
@@ -217,6 +219,7 @@ def replay(
                 ZERO,
             ),
             days_since_last_sweep=(today - last_sweep).days if last_sweep else None,
+            spend_quantile=spend_quantile,
         )
 
         decision = decide(snapshot)

@@ -1028,3 +1028,66 @@ today's refusals, and loosen only as far as the measurement licenses.
 
 **6.9% is a starting reading, not a licence.** It is one household, one seed, 72 days. A population
 and a distribution come before anyone touches the forecast.
+
+---
+
+## 2026-07-14 — U9 (`0018`): the spend model was measured, and it was refused
+
+The 07-13 learning said `30 × p90_daily` over-reserves, proposed enumerating the household's own
+rolling 30-day windows instead, and — correctly — insisted the swap be **measured before it
+ships**, because it is the one change in this engine that *loosens*. This ticket built the dial,
+built the population harness that grades it, and ran it.
+
+**The measurement refused the swap.** `SPEND_QUANTILE = None`. The structure ships inert;
+`forecast.py` still calls `daily_discretionary_high` and the engine behaves exactly as it did.
+
+60 households (3 shapes × 20 seeds), 4,320 graded days:
+
+| dial | breach | worst shape | sweep-caused overdrafts | false-refusal cost |
+|---|---|---|---|---|
+| **today** | **2.3%** | 5.8% | 0 | $544,640 |
+| `q=1.0` — their worst month *ever* | **19.8%** | 22.0% | 1 | $380,499 |
+| `q=0.90` | 24.4% | 27.4% | 1 | $317,823 |
+
+Reserving against the worst 30-day stretch a household has **ever actually had** breaches nearly
+nine times as often as the model we called an over-reserver.
+
+### Two things I got wrong, and one the harness got wrong
+
+**I nearly committed a wrong explanation.** The first draft of `test_calibrate.py` pinned the
+failure on structure — *the low lands mid-horizon, so a flat-amortized 30-day total hasn't charged
+enough of itself by then*. It is a good story and it is arithmetically impossible: **both** models
+charge a flat constant per horizon day (`p90_daily` vs `spend_30d_high / 30`), so wherever the low
+lands it scales both identically. Only the size of the constant differs. A plausible mechanism
+attached to a real number is still decoration, and it was one edit away from becoming
+institutional knowledge.
+
+**The real cause is starvation.** `spend_30d_high` reads the worst 30-day window off the 60–150
+days the engine actually has — 2–5 *independent* months, since overlapping windows flatter the
+sample count without adding information. Against three years of ground truth it estimates the true
+worst month at 77% / **58%** / 86% for typical / high-variance / steady. The bias is worst exactly
+where it is most dangerous: a fat tail means the bad month is *rare*, so a short history almost
+never contains one, so the household most likely to blow up gets the reserve covering 58% of its
+worst month. Proven by giving the same model 3 years of history: breach falls **19.3% → 3.7%**,
+and on the fat-tailed household to **0.0%**. The idea was right; the data isn't there.
+
+**`licensed()` would have licensed a regression.** Its two conditions (no overdrafts, breach no
+worse per shape) are *both monotone in the size of the reserve* — reserving more always breaches
+less — so sweeping the dial far enough toward *tightening* eventually passes both. `q=3.0` does:
+it clears both bars and costs **$1.62M** against today's $544K, and `report()` would have
+announced that $1.08M regression as a buy-back of `$-1,078,015.78`. A safety bar that only
+measures safety will license the least useful thing you show it. There is now a third condition —
+it has to actually buy something back — and a test pinning it.
+
+### Follow-ups (not done here)
+
+- **Gate the empirical model on history, not on a quantile.** It beats the incumbent for
+  households with years of data and is dangerous for ones we just onboarded. That is not a dial,
+  it is a second model with an eligibility rule — a real ticket, and the most promising direction.
+- The 07-13 over-reserve is **still real and still unfixed**. We now know the proposed fix is
+  unavailable at the history we have.
+- Single-overdraft counts flicker non-monotonically across neighbouring dial settings (a sweep
+  changes the walk, so trajectories diverge). At n=60 I would not read `od=1` vs `od=0` between
+  adjacent settings as signal; the baseline's `od=0` across every run is.
+
+Full write-up: `docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`.
