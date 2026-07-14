@@ -433,13 +433,20 @@ def from_json(text: str) -> Artifact:
     return Artifact.from_dict(raw)
 
 
-def dump(artifact: Artifact, path: Path = DEFAULT_PATH) -> None:
+def dump(artifact: Artifact, path: Path | None = None) -> None:
+    path = path or DEFAULT_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(to_json(artifact))
 
 
-def load(path: Path = DEFAULT_PATH) -> Artifact:
-    """Read and validate the artifact. Raises `ArtifactError` on anything wrong with it."""
+def load(path: Path | None = None) -> Artifact:
+    """Read and validate the artifact. Raises `ArtifactError` on anything wrong with it.
+
+    The default resolves at call time, not at import time — `path: Path = DEFAULT_PATH` would
+    bind the module constant into the function's defaults and quietly ignore anyone who
+    pointed `DEFAULT_PATH` somewhere else.
+    """
+    path = path or DEFAULT_PATH
     try:
         text = path.read_text()
     except OSError as exc:
