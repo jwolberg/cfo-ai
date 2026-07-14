@@ -424,7 +424,7 @@
        alt="resfi — responsible finance" width="259" height="88">
   <h1>The bet, the engineering approach, and distribution</h1>
   <p class="lede">
-    Autonomously manage and optimize a household&rsquo;s cashflow &mdash; save on interest expense,
+    Autonomously manage and optimize a household&rsquo;s cashflow to save on interest expense,
     pay down debt faster, save more, and invest what&rsquo;s freed up, so there&rsquo;s more left
     over for life&rsquo;s necessities and desires.
   </p>
@@ -434,8 +434,7 @@
     <li>Working software that decides when it is safe to move a household&rsquo;s money and
         refuses when it isn&rsquo;t. It runs against a made-up household, because no real money moves
         yet.</li>
-    <li>The open distribution questions nobody's closed yet &mdash; the two I&rsquo;d put at the
-        top of my own list</li>
+    <li>Open distribution questions.</li>
   </ol>
 </header>
 </section>
@@ -448,14 +447,14 @@
     <span class="kicker">The product</span>
     <h3>Autonomous cashflow optimization</h3>
     <p>Connect once. The system continuously cuts interest expense, accelerates paydown, and grows
-       savings and investment &mdash; no dashboard, no decisions. This build proves the hardest slice:
+       savings and investment. No ongoing user decisions. This build proves the hardest slice:
        moving money safely. Save-more and invest-more are the same engine, downstream.</p>
   </div>
   <div class="beat">
     <span class="kicker">Why automation</span>
     <h3>Advice doesn't move debt</h3>
     <p>Financial education / more information does not push people to make additional interest
-       payments &mdash; the money has to move.</p>
+       payments. The money has to move.</p>
   </div>
   <div class="beat">
     <span class="kicker">Why it refuses</span>
@@ -469,24 +468,24 @@
 <section class="slide">
 <div class="callout">
   <strong>This is a service people want.</strong> Tally: ~$172M raised, $855M valuation, shut down 2024
-  &mdash; on CAC, not the model, the technology, or the product. Users liked it: <b>4.5 stars</b> across
+  on CAC, not the model, the technology, or the product. Users liked it: <b>4.5 stars</b> across
   17k+ App Store reviews, <b>$1B+</b> in debt paid off, <b>~$4,300</b> average lifetime savings per
   member. <br>
-  The estate split on the CAC line &mdash; LendingClub took the consumer app, while Pagaya took the
+  The estate split: LendingClub took the consumer app, while Pagaya took the
   decisioning platform, presumably to embed into partners it already serves at scale.
 </div>
 
 <div class="callout">
   <strong>Conservative estimates and auditability are must-haves from day one.</strong> Every scaled competitor in this category has ended up in front of a
   regulator. Dave: FTC + DOJ, 2024. Brigit: $18M FTC settlement.
-  Always stems from consent, fees, harm &mdash; a wrong &ldquo;it&rsquo;s safe to sweep&rdquo; is a textbook
-  UDAAP fact pattern. The guarantee plus an append-only decision log &mdash; the full frozen input
-  behind every sweep &mdash; is what <em>will</em> make refusal auditable rather than merely asserted.
+  Always stems from consent, fees, harm, i.e. a wrong &ldquo;it&rsquo;s safe to sweep&rdquo; is a textbook
+  UDAAP fact pattern. An an append-only decision log including the full frozen input
+  behind every sweep is what <em>will</em> make refusal auditable rather than merely asserted.
   <b>That log is not built yet.</b> It is a prerequisite, not an afterthought, and the engine is
   already shaped for it: every decision is emitted as stable <em>reason codes</em> rather than
   sentences, so a decision recorded today still means the same thing in five years after the copy has
   been rewritten three times. The record exists in the right form; nothing yet persists it. Reg E,
-  NACHA, KYC/AML, and GLBA sign-off comes before any real rail connects &mdash; and so does that log.
+  NACHA, KYC/AML, and GLBA sign-off comes before any real rail connects.
 </div>
 
 <div class="callout">
@@ -509,7 +508,7 @@
 
 <p class="lede" style="margin-bottom:1.25rem">
   <strong>Status: a 1-day prototype of what two screens on the customer app might look like, built and
-  deployed &mdash; <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real
+  deployed at <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real
   funds is in place</strong> &mdash; no Plaid link, no payment rail. Everything below the API is real
   and runs; everything that would touch an actual bank account is not built.
 </p>
