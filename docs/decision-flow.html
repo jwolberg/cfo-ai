@@ -426,12 +426,14 @@
   <p class="lede">
     Autonomously manage and optimize a household&rsquo;s cashflow &mdash; save on interest expense,
     pay down debt faster, save more, and invest what&rsquo;s freed up, so there&rsquo;s more left
-    over for life&rsquo;s necessities and desires, not less to think about.
+    over for life&rsquo;s necessities and desires.
   </p>
   <p class="lede" style="margin-bottom:.6rem">Here's what's outlined below:</p>
   <ol class="lede-list">
     <li>The thesis underneath that promise</li>
-    <li>A real decision engine that tests the hardest slice of it against a synthetic household</li>
+    <li>Working software that decides when it is safe to move a household&rsquo;s money and
+        refuses when it isn&rsquo;t. It runs against a made-up household, because no real money moves
+        yet.</li>
     <li>The open distribution questions nobody's closed yet &mdash; the two I&rsquo;d put at the
         top of my own list</li>
   </ol>
@@ -473,8 +475,7 @@
   The estate split on the CAC line &mdash; LendingClub took the consumer app, while Pagaya took the
   decisioning platform, presumably to embed into partners it already serves at scale.
 </div>
-</section>
-<section class="slide">
+
 <div class="callout">
   <strong>Conservative estimates and auditability are must-haves from day one.</strong> Every scaled competitor in this category has ended up in front of a
   regulator. Dave: FTC + DOJ, 2024. Brigit: $18M FTC settlement.
@@ -487,9 +488,7 @@
   been rewritten three times. The record exists in the right form; nothing yet persists it. Reg E,
   NACHA, KYC/AML, and GLBA sign-off comes before any real rail connects &mdash; and so does that log.
 </div>
-</section>
 
-<section class="slide">
 <div class="callout">
   <strong>A bank won't build this &mdash; sweeping deposits onto a card it issues itself destroys the interest income it earns.</strong> Bank ROE has
   recovered somewhat over the past year, but the industry still trades near <b>1.0x book,
@@ -515,18 +514,8 @@
   and runs; everything that would touch an actual bank account is not built.
 </p>
 
-<div class="callout">
-  <strong>What &ldquo;no rail&rdquo; means, precisely.</strong> Moving money here is two legs, not one.
-  The <b>debit leg</b> pulls from the user&rsquo;s checking &mdash; ordinary ACH origination, and a
-  solved problem (Dwolla, Moov, Increase, Column, or Plaid Transfer alongside the link itself). The
-  <b>payoff leg</b> has to land that money on a card held at <em>someone else&rsquo;s</em> issuer, and
-  plain ACH cannot route it &mdash; that needs creditor/biller routing, which is what
-  <b>Method Financial</b> exists to sell. The second leg is the hard one, and it is the one every
-  Tally-shaped product actually depends on. Neither is wired here.
-</div>
-</section>
 
-<section class="slide">
+
 <p class="lede" style="margin-bottom:1.25rem">
   Below is an outline of the deployed tech stack:
 </p>
@@ -575,12 +564,25 @@
   </tbody>
 </table>
 </div>
-
+</section>  
+<section class="slide">
 <div class="callout">
   <strong>The LLM narrates, never decides.</strong> Sweeps, interest, and reason codes are computed
   deterministically at build time; a guard &mdash; not a system prompt &mdash; enforces the boundary.
   The dashboard and base explanations never call the model at all, so a provider outage can't take
   the product down.
+</div>
+
+
+<div class="callout">
+
+  <strong>What &ldquo;no rail&rdquo; means, precisely.</strong> Moving money here is two legs, not one.
+  The <b>debit leg</b> pulls from the user&rsquo;s checking &mdash; ordinary ACH origination, and a
+  solved problem (Dwolla, Moov, Increase, Column, or Plaid Transfer alongside the link itself). The
+  <b>payoff leg</b> has to land that money on a card held at <em>someone else&rsquo;s</em> issuer, and
+  plain ACH cannot route it &mdash; that needs creditor/biller routing, which is what
+  <b>Method Financial</b> exists to sell. The second leg is the hard one, and it is the one every
+  Tally-shaped product actually depends on. Neither is wired here.
 </div>
 </section>
 
@@ -804,47 +806,10 @@
 
 <p class="lede" style="margin-bottom:1.25rem">
   EXAMPLE: The loop is closed and it has run. <code>replay.py</code> grades one household;
-  <code>calibrate.py</code> grades sixty. The first numbers the engine has ever had about itself,
-  across <b>4,320 graded days</b>:
+  <code>calibrate.py</code> grades sixty. 
 </p>
 
-<div class="rules">
-<table>
-  <thead><tr><th>What we measured</th><th>What it says</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><b>Breach rate</b><br>days the real low came in <em>below</em> our projection</td>
-      <td><b>2.3%</b> &mdash; the days we were optimistic. The only number that may ever be traded
-          for a bigger sweep.</td>
-    </tr>
-    <tr>
-      <td><b>Sweep-caused overdrafts</b><br>the guardrail that outranks the KPI</td>
-      <td><b>0</b>, in <b>590</b> sweeps. Zero events is not zero risk: that bounds the per-sweep
-          rate at <b>&le;0.51%</b> (95%), which rules out the &gt;1% world and cannot yet exclude
-          the 0.1% one.</td>
-    </tr>
-    <tr>
-      <td><b>False-refusal cost</b><br>our conservatism, priced</td>
-      <td>~<b>$544K</b> &mdash; money we left idle that was genuinely safe to move. The conservatism
-          above, priced. Recovering it safely is the open engineering problem.</td>
-    </tr>
-  </tbody>
-</table>
-</div>
 
-<div class="callout">
-  <strong>The first thing the harness did was catch us overdrafting people.</strong>
-  <code>derive_cash_events</code> emitted <em>today&rsquo;s</em> events as future ones &mdash; but the
-  balance is already end-of-day, so on a payday the forecast counted the paycheck <strong>twice</strong>.
-  A $2,600 phantom inflow, a projected low thousands too high, and a sweep against money that was
-  never there. The exact inverse of the one rule above: counting a paycheck that already landed
-  makes it arrive <em>twice</em>.
-  <br><br>
-  Across the population: <b>43 sweep-caused overdrafts</b>. <strong>The single-household demo
-  reported zero</strong> &mdash; whether it bites depends on the cash position on whichever paydays
-  a seed happens to produce, and one seed never landed on one. <strong>A guardrail measured on one
-  household is not measured.</strong>
-</div>
 </section>
 
 <section class="slide">
