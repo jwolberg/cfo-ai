@@ -54,7 +54,7 @@ def expected_key() -> str:
 
 
 async def require_api_key(provided: str | None = Security(_scheme)) -> None:
-    """Gate a route. `Depends(require_api_key)` on the router, `/healthz` excepted."""
+    """Gate a route. `Depends(require_api_key)` on the router, `/health` excepted."""
     expected = expected_key()
 
     # compare_digest rather than `==`: constant-time, and free. A timing oracle on this key

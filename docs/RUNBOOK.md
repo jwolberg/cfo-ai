@@ -123,7 +123,7 @@ and the app refuses to boot without it. A dummy value works for every endpoint e
 Check it:
 
 ```bash
-curl -s localhost:8000/healthz                                   # {"status":"ok"}
+curl -s localhost:8000/health                                    # {"status":"ok"}
 curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/decisions # 401 — auth is on
 curl -s -H "X-API-Key: dev-key" localhost:8000/decisions | python3 -m json.tool | head -20
 curl -s -H "X-API-Key: dev-key" localhost:8000/spend | python3 -m json.tool
