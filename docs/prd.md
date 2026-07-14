@@ -293,6 +293,15 @@ plausible answers are an embedded/B2B2C channel (a bank, a card issuer, an emplo
 distribution insight not yet articulated. **This should be settled before headcount is spent on
 growth.**
 
+**It also settles [6.1], and whoever answers it should know that.** If the channel is embedded,
+the partner institution very likely owns the money-movement rail — and the whole
+rent-vs-own-the-rail ladder in [6.1] becomes moot before we ever climb it. Owning the rail and
+embedding in an institution pull in opposite directions. So this question is not merely *first in
+importance*, it is **first in sequence**: it forecloses an engineering decision that looks
+independent of it, and money spent on rail ownership before this lands is money spent on an option
+that distribution may simply delete. (This is why the rail is not a third question here. It is not
+open — it is *downstream*.)
+
 ### [7.2] Monetization
 
 Consumer fintech does not monetize by subscription at scale: MoneyLion's subscriptions are ~6–7% of
