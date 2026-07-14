@@ -393,8 +393,7 @@
     <tr>
       <td><b>Build step</b><br><code>backend/precompute.py</code></td>
       <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
-          <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a test
-          regenerates it and asserts the bytes match, so a stale demo is a red build.
+          <code>backend/data/decisions.json</code>. 
           <b>Every day gets a decision; about one in eight is a sweep</b> &mdash; the cadence cap
           alone allows at most one in seven, and the other gates take the rest. The remaining days
           are refusals, and the held ones still carry their forecast so they stay gradeable.</td>
@@ -404,22 +403,20 @@
 </table>
 </div>
 
+<h2>The decision</h2>
+
+
 <div class="callout">
   <strong>The LLM is nowhere near the decision.</strong> Sweeps, interest and reason codes are computed
-  deterministically at build time; the model only narrates decisions that already exist, and a guard
+  deterministically at build time; the LLM only narrates decisions that already exist, and a guard
   &mdash; not a system prompt &mdash; is what enforces that. The dashboard and the base explanations
   never call it at all, so an Anthropic outage cannot take the product&rsquo;s main surface down.
   <strong>What this demo does not do is move money:</strong> there is no Plaid link and no ACH rail
   &mdash; the arithmetic of refusing is the part worth proving first.
 </div>
 
-<h2>The decision</h2>
 
-<p class="thesis" style="margin: 0 0 1.75rem">
-  Read the diagram by its <strong>shape</strong>. The spine down the middle is short. Almost
-  everything branches <strong>off</strong> it, into a reason to do nothing.
-  <strong>Refusal is the product.</strong>
-</p>
+<br>
 
 <div class="flow">
 
