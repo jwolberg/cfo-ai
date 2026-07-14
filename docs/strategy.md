@@ -74,6 +74,32 @@ error history. **The asset is the graveyard of our own mistakes.**
 This only accrues to a system that acts. An advice product never learns whether it was right,
 because nothing happens.
 
+### [3.1] The loop is closed, and the first thing it did was say no
+
+Until this week, **this section was not even true of our own codebase.** The grader existed and
+nothing called it — the engine was in precisely the state described above, acting without ever
+finding out whether it was right.
+
+It now has a caller, and a population to run against: 60 synthetic households, 4,320 graded days,
+and the first error distribution this product has ever had. A **2.3%** breach rate, **0**
+sweep-caused overdrafts in 590 sweeps, ~**$544K** of measured conservatism.
+
+The instructive part is not the numbers, which are synthetic and small. It is what happened when we
+used them. The forecast has a known, documented over-reserve — it reserves more than the household
+has ever spent in any 30-day stretch — and the fix for it was obvious, elegant, and would have
+bought back a large share of that $544K. **We built it, measured it, and the measurement refused
+it**: the replacement breaches nearly nine times as often, because it estimates a household's worst
+month from 2–5 independent months of their history and the worst of 3 months badly understates the
+worst of 36.
+
+So we shipped the model we know is wrong, with the fix behind a dial set to `None`.
+
+That is the asset behaving exactly as this section claims it should. **The graveyard of our own
+mistakes is only worth anything if it is allowed to overrule us** — and its first act was to
+overrule a change we wanted, on evidence we would not have had a month ago. A calibration loop that
+only ever ratifies the decision you had already made is not an asset; it is a rubber stamp with
+extra steps.
+
 ## [4] Conservatism is the strategy, not the brake
 
 The instinct is to treat the safety buffer as a constraint on growth. It is the opposite.
