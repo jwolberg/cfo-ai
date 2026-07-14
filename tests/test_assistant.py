@@ -21,7 +21,7 @@ import pytest
 from backend import artifact as art
 from backend import assistant
 from backend.assistant import Facts, Outcome, RateCap, answer, run_tool, verify
-from engine.models import Action, ReasonCode
+from engine.models import Action, Decision, Reason, ReasonCode
 
 
 @pytest.fixture(scope="module")
@@ -446,14 +446,46 @@ class TestSupportingDates:
                 f"guard rejected the engine's own copy for {record.day}"
             )
 
-    def test_the_real_models_answer_survives(self, artifact: art.Artifact) -> None:
+    def test_the_real_models_answer_survives(self) -> None:
         """Verbatim output from a live claude-opus-4-8 call, which the guard used to reject.
 
         Kept word for word rather than paraphrased: it is the actual failure, and a tidied-up
         version of it would not have caught the bug.
+
+        The `DayRecord` is built here rather than pulled from the demo artifact, and that is a
+        deliberate change. This test used to read 2026-05-20 out of `backend/data/decisions.json`
+        — so the moment the demo's policy changed (the sweep cadence went weekly), that day's
+        projection changed with it and this test failed, even though the guard it exists to
+        protect had not moved a line. A regression test for the guard must not be hostage to the
+        demo household's seed. These are the figures the model was actually answering about.
         """
-        record = artifact.by_day(date(2026, 5, 20))
-        assert record is not None, "the fixture artifact no longer serves 2026-05-20"
+        record = art.DayRecord(
+            day=date(2026, 5, 20),
+            decision=Decision(
+                action=Action.REFUSE,
+                amount=Decimal("0.00"),
+                target_debt_id=None,
+                reasons=(
+                    Reason(
+                        ReasonCode.NO_SURPLUS,
+                        {
+                            "low": Decimal("748.79"),
+                            "low_day": date(2026, 6, 5),
+                            "buffer": Decimal("800.00"),
+                            "reserved": Decimal("280.00"),
+                        },
+                    ),
+                ),
+                projected_low_balance=Decimal("748.79"),
+            ),
+            checking_balance=Decimal("1892.44"),
+            savings_balance=Decimal("2400.00"),
+            buffer_floor=Decimal("800.00"),
+            debt_balance=Decimal("4751.31"),
+            debt_apr=Decimal("0.2399"),
+            debt_id="card_demo",
+            history_days=140,
+        )
 
         text = (
             "On 2026-05-20 nothing moved because there was no spare cash to move: your "

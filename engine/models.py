@@ -198,6 +198,20 @@ class UserPolicy:
     max_sweep: Decimal
     max_weekly_sweep: Decimal
     blackout_dates: frozenset[date] = field(default_factory=frozenset)
+    # The minimum spacing between two ACH debits. Every sweep is an independent draw from
+    # the forecast-error distribution, and prd.md §2 says we win this on the tail, not on
+    # expected value — so the number of draws is itself a risk control, not a UX detail.
+    # A spacing rule rather than a calendar: a day we hold for lack of surplus does not
+    # push the next eligible day out, so the household never loses a cycle to a quiet week.
+    min_days_between_sweeps: int = 7
+
+    def __post_init__(self) -> None:
+        # Zero is the old daily behaviour and remains expressible; negative is nonsense and
+        # would read as "sweep more often than every day", which is not a thing.
+        if self.min_days_between_sweeps < 0:
+            raise ValueError(
+                f"min_days_between_sweeps={self.min_days_between_sweeps} cannot be negative"
+            )
 
 
 @dataclass(frozen=True)
@@ -227,6 +241,22 @@ class Snapshot:
     # bank may not have subtracted from the balance yet.
     sweeps_in_flight: Decimal = ZERO
     swept_this_week: Decimal = ZERO
+    # Days since the last sweep actually left. None means we have never swept for this
+    # household, which is the one honest way to be eligible on day one.
+    #
+    # Note the default is the *permissive* value, unlike everywhere else in this file. It is
+    # defensible only because the cadence is a frequency control, not a solvency gate: a
+    # sync bug that leaves this unset produces sweeps that are each still individually safe
+    # (the buffer and the forecast are untouched), it just produces more of them — i.e. it
+    # degrades to the behaviour the engine shipped with. It cannot make any single sweep
+    # larger, which is the thing [3] actually forbids.
+    days_since_last_sweep: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.days_since_last_sweep is not None and self.days_since_last_sweep < 0:
+            raise ValueError(
+                f"days_since_last_sweep={self.days_since_last_sweep} cannot be negative"
+            )
 
 
 class Action(str, Enum):
@@ -262,6 +292,11 @@ class ReasonCode(str, Enum):
     # The money isn't there.
     NO_SURPLUS = "no_surplus"
     BELOW_MIN_SWEEP = "below_min_sweep"
+
+    # The money is there, and we are choosing not to move it *today*. Deliberately not a
+    # blocking gate: it is raised only after the forecast has run, so the day still carries
+    # a projection and stays gradeable. See decide() and decision-engine.md [9].
+    CADENCE_HOLD = "cadence_hold"
 
     # Why this amount, and not more.
     PROJECTION = "projection"

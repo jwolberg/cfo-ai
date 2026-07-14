@@ -40,6 +40,7 @@ SAMPLES: dict[ReasonCode, dict] = {
         "reserved": money("180.00"),
     },
     ReasonCode.BELOW_MIN_SWEEP: {"minimum": money("1.00")},
+    ReasonCode.CADENCE_HOLD: {"days_since": 3, "min_days": 7},
     ReasonCode.PROJECTION: {
         "low": money("3880.00"),
         "low_day": date(2026, 7, 15),
@@ -111,3 +112,20 @@ def test_explain_renders_a_whole_decision_in_order():
     assert len(lines) == 2
     assert "$3,880.00" in lines[0]
     assert "$300.00" in lines[1]
+
+
+def test_a_single_day_is_not_pluralised():
+    """ "We paid your card 1 days ago" shipped in the first draft of the cadence copy."""
+    text = render(Reason(ReasonCode.CADENCE_HOLD, {"days_since": 1, "min_days": 7}))
+
+    assert "1 day ago" in text
+    assert "1 days" not in text
+    assert "7 days apart" in text
+
+
+def test_a_cadence_hold_does_not_read_like_an_error():
+    """A refusal tells the user their money is staying put. It does not scold them."""
+    text = render(Reason(ReasonCode.CADENCE_HOLD, {"days_since": 3, "min_days": 7}))
+
+    assert "safe" in text
+    assert not any(w in text.lower() for w in ("error", "cannot", "failed", "denied", "invalid"))

@@ -311,9 +311,11 @@
        alt="resfi — responsible finance" width="259" height="88">
   <h1>How the engine decides</h1>
   <p class="lede">
-    Every day, move the cash a household genuinely doesn&rsquo;t need onto the debt that costs them
-    the most &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; The whole decision, top to
-    bottom. Deterministic: no clock, no network, no LLM, no randomness.
+    Move the cash a household genuinely doesn&rsquo;t need onto the debt that costs them the most
+    &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; The whole decision, top to bottom.
+    Deterministic: no clock, no network, no LLM, no randomness.
+    <b>The forecast runs every day; the money moves once a week</b> &mdash; the cadence limits what
+    the engine does, never what it knows.
   </p>
 </header>
 
@@ -357,9 +359,30 @@
   <tbody>
     <tr>
       <td><b>Decision engine</b><br><code>engine/</code></td>
-      <td>Pure Python 3.10+, <b>zero dependencies</b>. Frozen dataclasses, money as
-          <code>Decimal</code> &mdash; <code>money()</code> refuses a float outright. No clock, no
-          network, no LLM.</td>
+      <td>Python 3.10+
+    </tr>
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
+          dashboard and explain modal run in a browser.</td>
+    </tr>
+    <tr>
+      <td><b>API</b><br><code>backend/</code></td>
+      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
+          <b>No database and no write path.</b></td>
+    </tr>
+    <tr>
+      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
+      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
+          that costs money, and the only one with a rate cap. Every figure in its reply is checked
+          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
+          real number against the wrong day.</td>
+    </tr>
+    
+    <tr>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Google Cloud Run</b>, one worker instance for the demo &mdash; but scalable. <b>GitHub Actions</b>: ruff, the Python suite, and the
+          mobile typecheck and tests.</td>
     </tr>
     <tr>
       <td><b>The household</b><br><code>sim/</code></td>
@@ -371,33 +394,12 @@
       <td><b>Build step</b><br><code>backend/precompute.py</code></td>
       <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
           <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a test
-          regenerates it and asserts the bytes match, so a stale demo is a red build.</td>
+          regenerates it and asserts the bytes match, so a stale demo is a red build.
+          <b>Every day gets a decision; about one in eight is a sweep</b> &mdash; the cadence cap
+          alone allows at most one in seven, and the other gates take the rest. The remaining days
+          are refusals, and the held ones still carry their forecast so they stay gradeable.</td>
     </tr>
-    <tr>
-      <td><b>API</b><br><code>backend/</code></td>
-      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
-          <b>No database and no write path.</b> Dollars cross the wire as strings (<code>"400.00"</code>),
-          because JSON's only number is a double. Bad artifact or missing key &rarr; the process refuses
-          to start.</td>
-    </tr>
-    <tr>
-      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
-      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
-          that costs money, and the only one with a rate cap. Every figure in its reply is checked
-          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
-          real number against the wrong day.</td>
-    </tr>
-    <tr>
-      <td><b>Client</b><br><code>mobile/</code></td>
-      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
-          dashboard and explain modal run in a browser.</td>
-    </tr>
-    <tr>
-      <td><b>Hosting &amp; CI</b></td>
-      <td><b>Cloud Run</b>, one worker on purpose &mdash; the spend cap lives in process memory, and a
-          second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite, and the
-          mobile typecheck and tests.</td>
-    </tr>
+    
   </tbody>
 </table>
 </div>
@@ -520,6 +522,38 @@
 
   <div class="stage">
     <div class="node">
+      <span class="kicker">Cadence &middot; decide.py</span>
+      <h3>Is it simply too soon?</h3>
+      <p>Sweeps are spaced at least a <b>week</b> apart. Every sweep is an independent draw on the
+         tail the PRD says decides the company, so <i>how often</i> we act is a risk control, not a
+         UX detail.</p>
+      <p style="margin-top:.5rem">The engine used to sweep <b>daily</b>. Nobody ever argued for it
+         &mdash; it was inherited from the v0 advice product, whose output was a notification. When
+         it was finally measured, daily was worth about <b>$36/yr</b> of interest timing. That is
+         the whole case for it, and the cadence is <i>not</i> free.</p>
+      <p style="margin-top:.5rem">What buys it back is the guarantee: we reimburse sweep-caused
+         overdrafts, so every debit is a draw we pay for when it goes wrong. Daily takes ~142 draws
+         a year against weekly&rsquo;s ~45 &mdash; so daily only pays for itself if the per-sweep
+         overdraft rate is under <b>~1%</b>, and at a realistic cost per incident, under
+         <b>~0.1%</b>. <b>Nobody has measured it.</b> The cadence is insurance against a tail we
+         cannot yet size.</p>
+      <p style="margin-top:.5rem"><b>Note where this sits: after the forecast, not with the gates.</b>
+         A held day still carries its projected low, so it can still be graded. The cadence limits
+         what the engine <i>does</i> &mdash; never what it <i>knows</i>.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOT YET</span>
+      <div class="codes"><span class="code">CADENCE_HOLD</span></div>
+      <p>We paid the card recently. The spare cash is safe where it is until the next one &mdash;
+         one good payment beats several small ones.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
       <span class="kicker">Caps &middot; decide.py</span>
       <h3>What are we allowed to move?</h3>
       <p>Cut to the per-sweep cap, then the weekly cap, then the card balance. The engine may never
@@ -530,7 +564,8 @@
       <span class="verdict">NOT WORTH IT</span>
       <div class="codes"><span class="code">BELOW_MIN_SWEEP</span></div>
       <p>Under <b>$1.00</b>, the ACH risk and the noise of a notification cost more than the interest
-         saved.</p>
+         saved. <b>Still indefensible</b> at any cadence, and deliberately left alone &mdash; it is
+         its own money-rule change.</p>
     </div>
   </div>
 

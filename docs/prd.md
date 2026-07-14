@@ -34,12 +34,16 @@ This PRD is that product.
 
 ## [1] The product
 
-**Every day, we move the cash you do not need onto the debt that costs you the most — and we are
-right about "do not need."**
+**We move the cash you do not need onto the debt that costs you the most — and we are right about
+"do not need."**
 
 The user connects their checking, savings, and cards once. From then on the system forecasts their
-near-term cash position, decides what is genuinely surplus, and sweeps it to the highest-cost
-balance. The user does nothing. They are told what happened and why.
+near-term cash position **every day**, decides what is genuinely surplus, and sweeps it to the
+highest-cost balance. The user does nothing. They are told what happened and why.
+
+**We watch daily. We move weekly.** Those are two different things and the distinction is
+load-bearing — see [2.4]. This used to read "every day, we move the cash," which was inherited
+unexamined from the v0 advice product ([0]) and never survived being measured.
 
 > *"You had $220 sitting idle in checking, so I moved it to your card. That's $31 of interest you
 > won't pay."*
@@ -87,6 +91,7 @@ they are the feature working. Explicit refusal conditions:
 - A large or unusual pending debit not yet posted.
 - A user-configured blackout window (e.g. the 7 days before rent).
 - Any recent sweep still in flight and unsettled.
+- **A sweep too recently made** — see [2.4].
 
 ### [2.2] High cash-flow variance is a disqualifying condition, not an edge case
 
@@ -114,6 +119,51 @@ enforced by the income statement rather than by good intentions.
 DOJ, 2024), Brigit ($18M FTC settlement) — and never for model inaccuracy. Always for consent,
 fees, and harm. A visible, automatic, no-questions guarantee is our best defense against becoming
 the third.
+
+### [2.4] How often we act is itself a risk control
+
+*(Added 2026-07-14.)*
+
+[2] says we win this on the tail, not on expected value. **Every sweep is an independent draw from
+that tail, so how many draws we take is a lever on risk as directly as how large any one of them
+is** — and until now nobody had ever set it.
+
+The system swept **daily**, and no document in this repo ever argued for it. It was a fossil of the
+v0 advice product ([0]), whose output was a *notification* and which counted "daily engagement" as
+a virtue. When advice-only was killed the rhythm survived and the payload changed underneath it. So
+this document promised to win on the tail while taking three times as many draws on it, and
+promised "the absence of a decision" ([1.1]) while making thirty of them a month. The engine could
+not honour it in any case: it already refuses while a sweep is unsettled, so ACH settlement was
+suppressing most of those days anyway.
+
+Measured across the demo household with throughput held constant, daily sweeping bought about
+**$36/yr** of interest timing over weekly. That is the entire economic case for it.
+
+**Weigh it against the guarantee in [2.3], because that is what a draw actually costs us.** Daily
+takes ~142 debits a year; weekly takes ~45. Against 97 extra draws at a $35 reimbursement, daily
+pays for itself only if the **per-sweep overdraft probability is under ~1%** — a number nobody has
+measured, and precisely what [8]'s shadow mode exists to produce. And [2] says not to make this bet
+on expected value at all: the true cost of an incident is not $35, it is "a $35 fee, a missed rent
+payment, and a permanently lost customer who tells everyone." At a few hundred dollars all-in, the
+breakeven falls to ~0.1%.
+
+So the trade is **~$36/yr of the household's money to take a third as many draws on the tail, until
+calibration tells us what the tail is.** Cheap insurance, and the same posture we take everywhere
+else — not a free lunch. (An earlier draft of this section claimed daily also cost ~$48/yr in ACH
+fees and that the two "cancelled." That figure was assumed, not sourced, and is wrong under most
+processor pricing — see the learnings note. It is corrected rather than deleted because it was the
+second plugged-in number in this investigation to point the right way for the wrong reason.)
+
+**Sweeps are now spaced at least a week apart**, as a user policy value rather than a hardcoded
+constant. The forecast still runs every day and a held day is still graded: the cadence limits what
+we *do*, never what we *know*. Full measurement in
+[`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md);
+the engine's contract is [`decision-engine.md`](./decision-engine.md) §9.
+
+**Still wrong, and known:** a fixed weekly spacing is a proxy for what actually matters, which is
+the household's own cash cycle — surplus appears when they are *paid*, not every seventh day. The
+right rule decides once per pay cycle, which for a semimonthly earner is naturally twice a month
+and for a monthly earner once. It needs the recurring-income detector we have not built.
 
 ---
 
@@ -194,6 +244,26 @@ not a win. Reviewed independently of the growth team.
    Realistic options are a bill-pay partner, a deep-link handoff, or an FBO/custodial account via a
    banking partner. **Custody brings materially more compliance and reconciliation burden — avoid
    for as long as possible.**
+
+   **No rail is chosen, and nothing in the codebase assumes one.** `engine/` and `sim/` have zero
+   dependencies; the engine emits a `Decision` and something else moves the money
+   ([`decision-engine.md`](./decision-engine.md) [6.4]). Where processors are named anywhere in
+   these docs, they are illustrations of a *pricing shape*, never a vendor commitment — §2 cites
+   them to argue the rail is a commodity. Keep it that way: the ladder from renting origination →
+   owning orchestration on an FBO → a direct ODFI relationship is a **cost and control** decision,
+   not a capability one, and per-item cost only starts to matter at a volume we are nowhere near.
+
+   **The trap to avoid** is letting a processor's fee schedule leak into a decision rule. A sweep
+   cadence or a minimum-sweep floor tuned to someone's per-transaction price is a **risk parameter
+   set by a vendor**, and it has to be re-tuned the day the rail changes. ([2.4] was very nearly
+   argued this way and is not — it rests on the guarantee in [2.3], which is rail-agnostic.
+   `MIN_SWEEP` in `engine/decide.py` is the one constant still making an implicit cost claim, and
+   it is flagged as open.)
+
+   **And note the tension with [7.1]:** if distribution is embedded/B2B2C — a bank, an issuer, an
+   employer — then the *partner* very likely owns the rail, and owning it ourselves becomes moot.
+   Owning the rail and embedding in an institution pull in opposite directions. [7.1] should
+   therefore settle before any money is spent climbing that ladder.
 2. **Plaid does not reliably return APR**, minimum payment, or statement date for many issuers.
    Our "interest avoided" number and our allocation ranking both depend on APR. Decide the
    fallback: user-entered, estimated with visibly reduced confidence, or refuse to rank.
@@ -222,6 +292,15 @@ A direct-to-consumer funnel for this product is the half that has already failed
 plausible answers are an embedded/B2B2C channel (a bank, a card issuer, an employer) or a
 distribution insight not yet articulated. **This should be settled before headcount is spent on
 growth.**
+
+**It also settles [6.1], and whoever answers it should know that.** If the channel is embedded,
+the partner institution very likely owns the money-movement rail — and the whole
+rent-vs-own-the-rail ladder in [6.1] becomes moot before we ever climb it. Owning the rail and
+embedding in an institution pull in opposite directions. So this question is not merely *first in
+importance*, it is **first in sequence**: it forecloses an engineering decision that looks
+independent of it, and money spent on rail ownership before this lands is money spent on an option
+that distribution may simply delete. (This is why the rail is not a third question here. It is not
+open — it is *downstream*.)
 
 ### [7.2] Monetization
 

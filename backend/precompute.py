@@ -117,10 +117,17 @@ SAVINGS_BALANCE = money("2400.00")
 # misleading, it is an engine-side issue rather than a demo-side one, and it is not this
 # plan's to fix — so the policy is set wide enough that the household's actual cash position,
 # not an exhausted cap, is what does the refusing. See docs/implementation-notes.md.
+#
+# `max_sweep` was raised from $400 to meet `max_weekly_sweep` when the sweep cadence went
+# weekly. The ceiling on money moved is **unchanged** at $1,600/week; what changed is how many
+# ACH debits it takes to get there — one, not four. Leaving the per-sweep cap at $400 would
+# have quietly cut the household's throughput by 4x and disguised a cadence change as a
+# paydown regression. See docs/learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md.
 DEMO_POLICY = UserPolicy(
     buffer_floor=money("800.00"),
-    max_sweep=money("400.00"),
+    max_sweep=money("1600.00"),
     max_weekly_sweep=money("1600.00"),
+    min_days_between_sweeps=7,
 )
 
 # Close to `tests/test_outcome.py`'s household() helper, which already matches USERS.md's
@@ -412,6 +419,12 @@ def build(
             ZERO,
         )
 
+        # Spacing since the last sweep we actually decided. None until the first one, which is
+        # what makes a brand-new household eligible on day one rather than serving it a week of
+        # holds it did nothing to earn.
+        last_sweep = max(sweeps, default=None)
+        days_since_last_sweep = (today - last_sweep).days if last_sweep else None
+
         debt = Debt(
             debt_id=CARD_ID,
             balance=ledger.outstanding,
@@ -451,6 +464,7 @@ def build(
             history_days=(today - history.start).days + 1,
             sweeps_in_flight=ZERO,
             swept_this_week=swept_this_week,
+            days_since_last_sweep=days_since_last_sweep,
         )
 
         decision: Decision = decide(snapshot)

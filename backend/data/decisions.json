@@ -5,25 +5,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "6626.33"
+        "$dec": "5426.33"
       },
       "day": "2026-03-02",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "13252.15"
+        "$dec": "12051.36"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "5174.11"
+          "$dec": "3974.11"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -31,7 +38,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "5174.11"
+                "$dec": "3974.11"
               },
               "low_day": {
                 "$date": "2026-03-13"
@@ -39,23 +46,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "546.22"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -67,7 +57,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 61,
       "savings_balance": {
@@ -79,25 +69,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "6121.39"
+        "$dec": "5321.39"
       },
       "day": "2026-03-03",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12860.54"
+        "$dec": "12059.23"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "4783.19"
+          "$dec": "3983.19"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -105,7 +102,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "4783.19"
+                "$dec": "3983.19"
               },
               "low_day": {
                 "$date": "2026-03-13"
@@ -113,23 +110,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "507.30"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -141,7 +121,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 62,
       "savings_balance": {
@@ -153,25 +133,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "5721.39"
+        "$dec": "5321.39"
       },
       "day": "2026-03-04",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12468.67"
+        "$dec": "12067.09"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "4497.21"
+          "$dec": "4097.21"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -179,7 +166,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "4497.21"
+                "$dec": "4097.21"
               },
               "low_day": {
                 "$date": "2026-03-13"
@@ -187,23 +174,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "471.72"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -215,7 +185,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 63,
       "savings_balance": {
@@ -234,7 +204,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12076.53"
+        "$dec": "12074.95"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -247,10 +217,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "4211.23"
+              },
+              "low_day": {
+                "$date": "2026-03-13"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -274,7 +268,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12084.39"
+        "$dec": "12082.82"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -287,10 +281,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "4316.79"
+              },
+              "low_day": {
+                "$date": "2026-04-05"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -314,7 +332,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12092.26"
+        "$dec": "12090.68"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -327,10 +345,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "4316.79"
+              },
+              "low_day": {
+                "$date": "2026-04-06"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -354,13 +396,13 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "12100.12"
+        "$dec": "12098.54"
       },
       "debt_id": "card_demo",
       "decision": {
         "action": "sweep",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "1600.00"
         },
         "projected_low_balance": {
           "$dec": "4024.53"
@@ -387,7 +429,7 @@
             "code": "per_sweep_cap",
             "params": {
               "cap": {
-                "$dec": "400.00"
+                "$dec": "1600.00"
               }
             }
           },
@@ -395,7 +437,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "437.23"
+                "$dec": "1580.40"
               },
               "debt_id": "card_demo"
             }
@@ -421,25 +463,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4629.13"
+        "$dec": "3429.13"
       },
       "day": "2026-03-09",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "11707.72"
+        "$dec": "10505.35"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3624.53"
+          "$dec": "2424.53"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -447,7 +496,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3624.53"
+                "$dec": "2424.53"
               },
               "low_day": {
                 "$date": "2026-04-08"
@@ -455,23 +504,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "407.95"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -483,7 +515,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 68,
       "savings_balance": {
@@ -495,25 +527,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4229.13"
+        "$dec": "3429.13"
       },
       "day": "2026-03-10",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "11315.06"
+        "$dec": "10512.16"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3224.53"
+          "$dec": "2424.53"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -521,7 +560,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3224.53"
+                "$dec": "2424.53"
               },
               "low_day": {
                 "$date": "2026-04-09"
@@ -529,23 +568,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "380.22"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -557,7 +579,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 69,
       "savings_balance": {
@@ -569,25 +591,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3829.13"
+        "$dec": "3429.13"
       },
       "day": "2026-03-11",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10922.13"
+        "$dec": "10518.98"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3052.23"
+          "$dec": "2652.23"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -595,7 +624,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3052.23"
+                "$dec": "2652.23"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -603,23 +632,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "352.54"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -631,7 +643,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 70,
       "savings_balance": {
@@ -650,7 +662,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10528.94"
+        "$dec": "10525.79"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -663,10 +675,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "2758.66"
+              },
+              "low_day": {
+                "$date": "2026-04-10"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -690,7 +726,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10535.75"
+        "$dec": "10532.60"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -703,10 +739,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "5009.38"
+              },
+              "low_day": {
+                "$date": "2026-04-10"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -730,7 +790,7 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10542.57"
+        "$dec": "10539.41"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -743,10 +803,34 @@
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "2550.49"
+              },
+              "low_day": {
+                "$date": "2026-04-10"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -770,13 +854,13 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10549.38"
+        "$dec": "10546.22"
       },
       "debt_id": "card_demo",
       "decision": {
         "action": "sweep",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "1584.51"
         },
         "projected_low_balance": {
           "$dec": "2664.51"
@@ -800,18 +884,10 @@
             }
           },
           {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "326.82"
+                "$dec": "1167.03"
               },
               "debt_id": "card_demo"
             }
@@ -837,25 +913,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "5311.80"
+        "$dec": "4127.29"
       },
       "day": "2026-03-16",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "10155.93"
+        "$dec": "8967.48"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "2355.30"
+          "$dec": "1170.79"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -863,7 +946,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "2355.30"
+                "$dec": "1170.79"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -871,23 +954,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "304.47"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -899,7 +965,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 75,
       "savings_balance": {
@@ -911,25 +977,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4911.80"
+        "$dec": "4127.29"
       },
       "day": "2026-03-17",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "9762.21"
+        "$dec": "8973.25"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "2069.32"
+          "$dec": "1284.81"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -937,7 +1010,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "2069.32"
+                "$dec": "1284.81"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -945,23 +1018,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "281.28"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -973,7 +1029,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 76,
       "savings_balance": {
@@ -985,25 +1041,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4435.20"
+        "$dec": "4050.69"
       },
       "day": "2026-03-18",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "9368.23"
+        "$dec": "8979.02"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1706.74"
+          "$dec": "1322.23"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1011,7 +1074,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1706.74"
+                "$dec": "1322.23"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1019,23 +1082,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "262.49"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1047,7 +1093,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 77,
       "savings_balance": {
@@ -1059,14 +1105,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4021.38"
+        "$dec": "4036.87"
       },
       "day": "2026-03-19",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "8973.99"
+        "$dec": "8984.79"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1075,14 +1121,38 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1406.94"
+          "$dec": "1422.43"
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "1422.43"
+              },
+              "low_day": {
+                "$date": "2026-04-10"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -1099,14 +1169,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3571.38"
+        "$dec": "3586.87"
       },
       "day": "2026-03-20",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "8529.46"
+        "$dec": "8540.27"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1115,17 +1185,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1070.96"
+          "$dec": "1086.45"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1070.96"
+                "$dec": "1086.45"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1156,14 +1233,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3571.38"
+        "$dec": "3586.87"
       },
       "day": "2026-03-21",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "8535.07"
+        "$dec": "8545.88"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1172,14 +1249,38 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1786.78"
+          "$dec": "1802.27"
         },
         "reasons": [
           {
-            "code": "below_min_sweep",
+            "code": "cadence_hold",
             "params": {
-              "minimum": {
-                "$dec": "1.00"
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "1802.27"
+              },
+              "low_day": {
+                "$date": "2026-04-10"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
               }
             }
           }
@@ -1196,23 +1297,23 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3524.05"
+        "$dec": "3539.54"
       },
       "day": "2026-03-22",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "8540.67"
+        "$dec": "8551.50"
       },
       "debt_id": "card_demo",
       "decision": {
         "action": "sweep",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "781.37"
         },
         "projected_low_balance": {
-          "$dec": "1845.88"
+          "$dec": "1861.37"
         },
         "reasons": [
           {
@@ -1222,7 +1323,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1845.88"
+                "$dec": "1861.37"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1233,18 +1334,10 @@
             }
           },
           {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "240.70"
+                "$dec": "455.73"
               },
               "debt_id": "card_demo"
             }
@@ -1270,25 +1363,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3075.07"
+        "$dec": "2709.19"
       },
       "day": "2026-03-23",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "8146.02"
+        "$dec": "7775.23"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1503.33"
+          "$dec": "1137.45"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1296,7 +1396,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1503.33"
+                "$dec": "1137.45"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1304,23 +1404,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "223.77"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1332,7 +1415,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 82,
       "savings_balance": {
@@ -1344,25 +1427,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2675.07"
+        "$dec": "2709.19"
       },
       "day": "2026-03-24",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7751.10"
+        "$dec": "7780.33"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "129.76"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1209.76"
+          "$dec": "1243.88"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1370,7 +1460,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1209.76"
+                "$dec": "1243.88"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1378,15 +1468,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "68.97"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1398,7 +1479,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 83,
       "savings_balance": {
@@ -1410,25 +1491,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2521.56"
+        "$dec": "2685.44"
       },
       "day": "2026-03-25",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7626.33"
+        "$dec": "7785.43"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "82.68"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1162.68"
+          "$dec": "1326.56"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1436,7 +1524,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1162.68"
+                "$dec": "1326.56"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1444,15 +1532,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "42.33"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1464,7 +1543,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 84,
       "savings_balance": {
@@ -1476,25 +1555,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2363.76"
+        "$dec": "2610.32"
       },
       "day": "2026-03-26",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7548.59"
+        "$dec": "7790.52"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "31.31"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1111.31"
+          "$dec": "1357.87"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1502,7 +1588,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1111.31"
+                "$dec": "1357.87"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1510,15 +1596,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "15.99"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1530,7 +1607,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 85,
       "savings_balance": {
@@ -1542,25 +1619,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4990.27"
+        "$dec": "5268.14"
       },
       "day": "2026-03-27",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7522.20"
+        "$dec": "7795.62"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3844.25"
+          "$dec": "4122.12"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1568,7 +1652,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3844.25"
+                "$dec": "4122.12"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1576,23 +1660,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "196.15"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1604,7 +1671,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 86,
       "savings_balance": {
@@ -1616,14 +1683,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4497.08"
+        "$dec": "5174.95"
       },
       "day": "2026-03-28",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7126.86"
+        "$dec": "7800.72"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1632,17 +1699,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "935.49"
+          "$dec": "1613.36"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "935.49"
+                "$dec": "1613.36"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1673,33 +1747,33 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4402.89"
+        "$dec": "5080.76"
       },
       "day": "2026-03-29",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7131.52"
+        "$dec": "7805.82"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "refuse",
+        "action": "sweep",
         "amount": {
-          "$dec": "0.00"
+          "$dec": "545.60"
         },
         "projected_low_balance": {
-          "$dec": "947.73"
+          "$dec": "1625.60"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "947.73"
+                "$dec": "1625.60"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1707,6 +1781,15 @@
               "reserved": {
                 "$dec": "280.00"
               }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "276.45"
+              },
+              "debt_id": "card_demo"
             }
           },
           {
@@ -1718,7 +1801,7 @@
             }
           }
         ],
-        "target_debt_id": null
+        "target_debt_id": "card_demo"
       },
       "history_days": 88,
       "savings_balance": {
@@ -1730,14 +1813,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4389.62"
+        "$dec": "4521.89"
       },
       "day": "2026-03-30",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7136.17"
+        "$dec": "7264.96"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1746,17 +1829,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1040.89"
+          "$dec": "1173.16"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1040.89"
+                "$dec": "1173.16"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1787,14 +1877,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4307.50"
+        "$dec": "4439.77"
       },
       "day": "2026-03-31",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7140.83"
+        "$dec": "7269.71"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1803,17 +1893,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1080.10"
+          "$dec": "1212.37"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1080.10"
+                "$dec": "1212.37"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1844,14 +1941,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2362.09"
+        "$dec": "2494.36"
       },
       "day": "2026-04-01",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7145.49"
+        "$dec": "7274.45"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -1860,17 +1957,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "-760.37"
+          "$dec": "-628.10"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "-760.37"
+                "$dec": "-628.10"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1901,25 +2005,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2334.13"
+        "$dec": "2466.40"
       },
       "day": "2026-04-02",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "7150.14"
+        "$dec": "7279.19"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "216.61"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1296.61"
+          "$dec": "1428.88"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1927,7 +2038,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1296.61"
+                "$dec": "1428.88"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -1935,15 +2046,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "97.62"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -1955,7 +2057,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 92,
       "savings_balance": {
@@ -1967,25 +2069,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2050.93"
+        "$dec": "2399.81"
       },
       "day": "2026-04-03",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6938.05"
+        "$dec": "7283.93"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "113.60"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1193.60"
+          "$dec": "1542.48"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -1993,7 +2102,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1193.60"
+                "$dec": "1542.48"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -2001,15 +2110,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "50.51"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -2021,7 +2121,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 93,
       "savings_balance": {
@@ -2033,14 +2133,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1836.10"
+        "$dec": "2298.58"
       },
       "day": "2026-04-04",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6828.89"
+        "$dec": "7288.67"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2049,17 +2149,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1030.72"
+          "$dec": "1493.20"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1030.72"
+                "$dec": "1493.20"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -2090,23 +2197,23 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1825.77"
+        "$dec": "2288.25"
       },
       "day": "2026-04-05",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6833.33"
+        "$dec": "7293.41"
       },
       "debt_id": "card_demo",
       "decision": {
         "action": "sweep",
         "amount": {
-          "$dec": "41.62"
+          "$dec": "504.10"
         },
         "projected_low_balance": {
-          "$dec": "1121.62"
+          "$dec": "1584.10"
         },
         "reasons": [
           {
@@ -2116,7 +2223,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1121.62"
+                "$dec": "1584.10"
               },
               "low_day": {
                 "$date": "2026-04-10"
@@ -2130,7 +2237,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "17.80"
+                "$dec": "227.40"
               },
               "debt_id": "card_demo"
             }
@@ -2163,18 +2270,25 @@
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6796.12"
+        "$dec": "6793.72"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "38.73"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
           "$dec": "1118.73"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -2193,15 +2307,6 @@
             }
           },
           {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "16.02"
-              },
-              "debt_id": "card_demo"
-            }
-          },
-          {
             "code": "idle_cash_elsewhere",
             "params": {
               "amount": {
@@ -2210,7 +2315,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 96,
       "savings_balance": {
@@ -2222,14 +2327,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1589.54"
+        "$dec": "1628.27"
       },
       "day": "2026-04-07",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6761.78"
+        "$dec": "6798.13"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2238,17 +2343,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "857.34"
+          "$dec": "896.07"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "857.34"
+                "$dec": "896.07"
               },
               "low_day": {
                 "$date": "2026-05-07"
@@ -2279,14 +2391,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1391.82"
+        "$dec": "1430.55"
       },
       "day": "2026-04-08",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6766.17"
+        "$dec": "6802.54"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2295,17 +2407,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "461.62"
+          "$dec": "500.35"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "461.62"
+                "$dec": "500.35"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2336,14 +2455,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1391.82"
+        "$dec": "1430.55"
       },
       "day": "2026-04-09",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6770.55"
+        "$dec": "6806.95"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2352,17 +2471,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "764.56"
+          "$dec": "803.29"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "764.56"
+                "$dec": "803.29"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2393,25 +2519,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3978.79"
+        "$dec": "4017.52"
       },
       "day": "2026-04-10",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6774.94"
+        "$dec": "6811.36"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3456.47"
+          "$dec": "3495.20"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -2419,7 +2552,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3456.47"
+                "$dec": "3495.20"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2427,23 +2560,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "160.04"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -2455,7 +2571,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 100,
       "savings_balance": {
@@ -2467,14 +2583,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3427.75"
+        "$dec": "3866.48"
       },
       "day": "2026-04-11",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6379.07"
+        "$dec": "6815.77"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2483,17 +2599,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "448.14"
+          "$dec": "886.87"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "448.14"
+                "$dec": "886.87"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2524,14 +2647,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2978.14"
+        "$dec": "3416.87"
       },
       "day": "2026-04-12",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6383.19"
+        "$dec": "6820.18"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2540,7 +2663,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "-23.22"
+          "$dec": "415.51"
         },
         "reasons": [
           {
@@ -2550,7 +2673,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "-23.22"
+                "$dec": "415.51"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2581,14 +2704,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2964.60"
+        "$dec": "3403.33"
       },
       "day": "2026-04-13",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6387.31"
+        "$dec": "6824.59"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2597,7 +2720,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "74.60"
+          "$dec": "513.33"
         },
         "reasons": [
           {
@@ -2607,7 +2730,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "74.60"
+                "$dec": "513.33"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2638,14 +2761,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2921.79"
+        "$dec": "3360.52"
       },
       "day": "2026-04-14",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6391.44"
+        "$dec": "6829.00"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2654,7 +2777,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "143.15"
+          "$dec": "581.88"
         },
         "reasons": [
           {
@@ -2664,7 +2787,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "143.15"
+                "$dec": "581.88"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2695,14 +2818,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2921.79"
+        "$dec": "3360.52"
       },
       "day": "2026-04-15",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6395.56"
+        "$dec": "6833.41"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2711,7 +2834,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "367.90"
+          "$dec": "806.63"
         },
         "reasons": [
           {
@@ -2721,7 +2844,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "367.90"
+                "$dec": "806.63"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2752,14 +2875,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2921.79"
+        "$dec": "3360.52"
       },
       "day": "2026-04-16",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6399.69"
+        "$dec": "6837.82"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2768,7 +2891,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "474.33"
+          "$dec": "913.06"
         },
         "reasons": [
           {
@@ -2778,7 +2901,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "474.33"
+                "$dec": "913.06"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2809,14 +2932,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2850.12"
+        "$dec": "3288.85"
       },
       "day": "2026-04-17",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6403.81"
+        "$dec": "6842.23"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2825,7 +2948,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "509.09"
+          "$dec": "947.82"
         },
         "reasons": [
           {
@@ -2835,7 +2958,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "509.09"
+                "$dec": "947.82"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2866,14 +2989,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2784.03"
+        "$dec": "3222.76"
       },
       "day": "2026-04-18",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6407.94"
+        "$dec": "6846.64"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2882,7 +3005,7 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "549.43"
+          "$dec": "988.16"
         },
         "reasons": [
           {
@@ -2892,7 +3015,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "549.43"
+                "$dec": "988.16"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2923,33 +3046,33 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2768.06"
+        "$dec": "3206.79"
       },
       "day": "2026-04-19",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "6412.06"
+        "$dec": "6851.05"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "refuse",
+        "action": "sweep",
         "amount": {
-          "$dec": "0.00"
+          "$dec": "26.93"
         },
         "projected_low_balance": {
-          "$dec": "668.20"
+          "$dec": "1106.93"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "668.20"
+                "$dec": "1106.93"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -2957,6 +3080,15 @@
               "reserved": {
                 "$dec": "280.00"
               }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "10.80"
+              },
+              "debt_id": "card_demo"
             }
           },
           {
@@ -2968,7 +3100,7 @@
             }
           }
         ],
-        "target_debt_id": null
+        "target_debt_id": "card_demo"
       },
       "history_days": 109,
       "savings_balance": {
@@ -2980,14 +3112,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2199.27"
+        "$dec": "2611.07"
       },
       "day": "2026-04-20",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5965.89"
+        "$dec": "6378.21"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -2996,17 +3128,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "88.79"
+          "$dec": "500.59"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "88.79"
+                "$dec": "500.59"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3037,14 +3176,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2124.87"
+        "$dec": "2536.67"
       },
       "day": "2026-04-21",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5969.81"
+        "$dec": "6382.40"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3053,17 +3192,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "575.75"
+          "$dec": "987.55"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "575.75"
+                "$dec": "987.55"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3094,14 +3240,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2086.84"
+        "$dec": "2498.64"
       },
       "day": "2026-04-22",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5973.73"
+        "$dec": "6386.59"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3110,17 +3256,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "649.08"
+          "$dec": "1060.88"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "649.08"
+                "$dec": "1060.88"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3151,14 +3304,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2086.84"
+        "$dec": "2498.64"
       },
       "day": "2026-04-23",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5977.65"
+        "$dec": "6390.79"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3167,17 +3320,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "760.44"
+          "$dec": "1172.24"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "760.44"
+                "$dec": "1172.24"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3208,25 +3368,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4727.14"
+        "$dec": "5138.94"
       },
       "day": "2026-04-24",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5981.57"
+        "$dec": "6394.98"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3601.98"
+          "$dec": "4013.78"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -3234,7 +3401,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3601.98"
+                "$dec": "4013.78"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3242,23 +3409,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "141.88"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -3270,7 +3420,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 114,
       "savings_balance": {
@@ -3282,14 +3432,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4246.35"
+        "$dec": "5058.15"
       },
       "day": "2026-04-25",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5585.23"
+        "$dec": "6399.17"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3298,17 +3448,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "704.13"
+          "$dec": "1515.93"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "704.13"
+                "$dec": "1515.93"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3339,33 +3496,33 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4242.47"
+        "$dec": "5054.27"
       },
       "day": "2026-04-26",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5588.89"
+        "$dec": "6403.36"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "refuse",
+        "action": "sweep",
         "amount": {
-          "$dec": "0.00"
+          "$dec": "536.99"
         },
         "projected_low_balance": {
-          "$dec": "805.19"
+          "$dec": "1616.99"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "805.19"
+                "$dec": "1616.99"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3373,6 +3530,15 @@
               "reserved": {
                 "$dec": "280.00"
               }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "204.95"
+              },
+              "debt_id": "card_demo"
             }
           },
           {
@@ -3384,7 +3550,7 @@
             }
           }
         ],
-        "target_debt_id": null
+        "target_debt_id": "card_demo"
       },
       "history_days": 116,
       "savings_balance": {
@@ -3396,14 +3562,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4093.56"
+        "$dec": "4368.37"
       },
       "day": "2026-04-27",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5592.55"
+        "$dec": "5870.21"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3412,17 +3578,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "690.60"
+          "$dec": "965.41"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "690.60"
+                "$dec": "965.41"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3453,14 +3626,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4093.56"
+        "$dec": "4368.37"
       },
       "day": "2026-04-28",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5596.21"
+        "$dec": "5874.05"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3469,17 +3642,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "801.96"
+          "$dec": "1076.77"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "801.96"
+                "$dec": "1076.77"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3510,14 +3690,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4093.56"
+        "$dec": "4368.37"
       },
       "day": "2026-04-29",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5599.87"
+        "$dec": "5877.89"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3526,17 +3706,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "913.32"
+          "$dec": "1188.13"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "913.32"
+                "$dec": "1188.13"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3567,14 +3754,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4093.56"
+        "$dec": "4368.37"
       },
       "day": "2026-04-30",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5603.52"
+        "$dec": "5881.73"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3583,17 +3770,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1024.68"
+          "$dec": "1299.49"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1024.68"
+                "$dec": "1299.49"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3624,14 +3818,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2269.91"
+        "$dec": "2544.72"
       },
       "day": "2026-05-01",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5607.18"
+        "$dec": "5885.57"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3640,17 +3834,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "-687.61"
+          "$dec": "-412.80"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "-687.61"
+                "$dec": "-412.80"
               },
               "low_day": {
                 "$date": "2026-05-08"
@@ -3681,80 +3882,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2164.25"
+        "$dec": "2439.06"
       },
       "day": "2026-05-02",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5610.84"
-      },
-      "debt_id": "card_demo",
-      "decision": {
-        "action": "sweep",
-        "amount": {
-          "$dec": "159.45"
-        },
-        "projected_low_balance": {
-          "$dec": "1239.45"
-        },
-        "reasons": [
-          {
-            "code": "projection",
-            "params": {
-              "buffer": {
-                "$dec": "800.00"
-              },
-              "low": {
-                "$dec": "1239.45"
-              },
-              "low_day": {
-                "$date": "2026-06-01"
-              },
-              "reserved": {
-                "$dec": "280.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "52.47"
-              },
-              "debt_id": "card_demo"
-            }
-          },
-          {
-            "code": "idle_cash_elsewhere",
-            "params": {
-              "amount": {
-                "$dec": "2400.00"
-              }
-            }
-          }
-        ],
-        "target_debt_id": "card_demo"
-      },
-      "history_days": 122,
-      "savings_balance": {
-        "$dec": "2400.00"
-      }
-    },
-    {
-      "buffer_floor": {
-        "$dec": "800.00"
-      },
-      "checking_balance": {
-        "$dec": "1859.88"
-      },
-      "day": "2026-05-03",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5454.94"
+        "$dec": "5889.41"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3763,20 +3898,27 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "935.08"
+          "$dec": "1514.26"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "935.08"
+                "$dec": "1514.26"
               },
               "low_day": {
-                "$date": "2026-06-02"
+                "$date": "2026-06-01"
               },
               "reserved": {
                 "$dec": "280.00"
@@ -3794,6 +3936,72 @@
         ],
         "target_debt_id": null
       },
+      "history_days": 122,
+      "savings_balance": {
+        "$dec": "2400.00"
+      }
+    },
+    {
+      "buffer_floor": {
+        "$dec": "800.00"
+      },
+      "checking_balance": {
+        "$dec": "2294.14"
+      },
+      "day": "2026-05-03",
+      "debt_apr": {
+        "$dec": "0.2399"
+      },
+      "debt_balance": {
+        "$dec": "5893.25"
+      },
+      "debt_id": "card_demo",
+      "decision": {
+        "action": "sweep",
+        "amount": {
+          "$dec": "289.34"
+        },
+        "projected_low_balance": {
+          "$dec": "1369.34"
+        },
+        "reasons": [
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "1369.34"
+              },
+              "low_day": {
+                "$date": "2026-06-02"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "98.45"
+              },
+              "debt_id": "card_demo"
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
+              }
+            }
+          }
+        ],
+        "target_debt_id": "card_demo"
+      },
       "history_days": 123,
       "savings_balance": {
         "$dec": "2400.00"
@@ -3804,14 +4012,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1840.43"
+        "$dec": "1985.35"
       },
       "day": "2026-05-04",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5458.50"
+        "$dec": "5607.56"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3820,17 +4028,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "915.63"
+          "$dec": "1060.55"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "915.63"
+                "$dec": "1060.55"
               },
               "low_day": {
                 "$date": "2026-06-03"
@@ -3861,14 +4076,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1840.43"
+        "$dec": "1985.35"
       },
       "day": "2026-05-05",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5462.05"
+        "$dec": "5611.21"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3877,17 +4092,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "915.63"
+          "$dec": "1060.55"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "915.63"
+                "$dec": "1060.55"
               },
               "low_day": {
                 "$date": "2026-06-04"
@@ -3918,14 +4140,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1840.43"
+        "$dec": "1985.35"
       },
       "day": "2026-05-06",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5465.60"
+        "$dec": "5614.85"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3934,17 +4156,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "915.63"
+          "$dec": "1060.55"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "915.63"
+                "$dec": "1060.55"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -3975,14 +4204,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "1745.39"
+        "$dec": "1890.31"
       },
       "day": "2026-05-07",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5469.16"
+        "$dec": "5618.50"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -3991,17 +4220,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "931.95"
+          "$dec": "1076.87"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "931.95"
+                "$dec": "1076.87"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4032,25 +4268,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4156.06"
+        "$dec": "4300.98"
       },
       "day": "2026-05-08",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5472.71"
+        "$dec": "5622.15"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3453.98"
+          "$dec": "3598.90"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -4058,7 +4301,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3453.98"
+                "$dec": "3598.90"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4066,23 +4309,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "119.24"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -4094,7 +4320,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 128,
       "savings_balance": {
@@ -4106,14 +4332,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3729.24"
+        "$dec": "4274.16"
       },
       "day": "2026-05-09",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5076.00"
+        "$dec": "5625.80"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4122,17 +4348,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "814.52"
+          "$dec": "1359.44"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "814.52"
+                "$dec": "1359.44"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4163,33 +4396,33 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3678.69"
+        "$dec": "4223.61"
       },
       "day": "2026-05-10",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5079.29"
+        "$dec": "5629.45"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "refuse",
+        "action": "sweep",
         "amount": {
-          "$dec": "0.00"
+          "$dec": "340.25"
         },
         "projected_low_balance": {
-          "$dec": "875.33"
+          "$dec": "1420.25"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "875.33"
+                "$dec": "1420.25"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4197,6 +4430,15 @@
               "reserved": {
                 "$dec": "280.00"
               }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "105.79"
+              },
+              "debt_id": "card_demo"
             }
           },
           {
@@ -4208,7 +4450,7 @@
             }
           }
         ],
-        "target_debt_id": null
+        "target_debt_id": "card_demo"
       },
       "history_days": 130,
       "savings_balance": {
@@ -4220,14 +4462,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3656.77"
+        "$dec": "3861.44"
       },
       "day": "2026-05-11",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5082.58"
+        "$dec": "5292.63"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4236,17 +4478,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "964.77"
+          "$dec": "1169.44"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "964.77"
+                "$dec": "1169.44"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4277,14 +4526,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3615.97"
+        "$dec": "3820.64"
       },
       "day": "2026-05-12",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5085.87"
+        "$dec": "5296.05"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4293,17 +4542,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1035.33"
+          "$dec": "1240.00"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1035.33"
+                "$dec": "1240.00"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4334,14 +4590,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3490.58"
+        "$dec": "3695.25"
       },
       "day": "2026-05-13",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5089.16"
+        "$dec": "5299.48"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4350,17 +4606,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "864.67"
+          "$dec": "1069.34"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "864.67"
+                "$dec": "1069.34"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4391,14 +4654,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3345.12"
+        "$dec": "3549.79"
       },
       "day": "2026-05-14",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5092.45"
+        "$dec": "5302.90"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4407,17 +4670,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "823.74"
+          "$dec": "1028.41"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "823.74"
+                "$dec": "1028.41"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4448,14 +4718,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3183.30"
+        "$dec": "3387.97"
       },
       "day": "2026-05-15",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5095.74"
+        "$dec": "5306.33"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4464,17 +4734,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "642.11"
+          "$dec": "846.78"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "642.11"
+                "$dec": "846.78"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4505,14 +4782,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3176.28"
+        "$dec": "3380.95"
       },
       "day": "2026-05-16",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5099.04"
+        "$dec": "5309.75"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4521,17 +4798,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "760.48"
+          "$dec": "965.15"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "760.48"
+                "$dec": "965.15"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4562,14 +4846,80 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3161.95"
+        "$dec": "3366.62"
       },
       "day": "2026-05-17",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5102.33"
+        "$dec": "5313.18"
+      },
+      "debt_id": "card_demo",
+      "decision": {
+        "action": "sweep",
+        "amount": {
+          "$dec": "121.61"
+        },
+        "projected_low_balance": {
+          "$dec": "1201.61"
+        },
+        "reasons": [
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "1201.61"
+              },
+              "low_day": {
+                "$date": "2026-06-05"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "35.93"
+              },
+              "debt_id": "card_demo"
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
+              }
+            }
+          }
+        ],
+        "target_debt_id": "card_demo"
+      },
+      "history_days": 137,
+      "savings_balance": {
+        "$dec": "2400.00"
+      }
+    },
+    {
+      "buffer_floor": {
+        "$dec": "800.00"
+      },
+      "checking_balance": {
+        "$dec": "3232.47"
+      },
+      "day": "2026-05-18",
+      "debt_apr": {
+        "$dec": "0.2399"
+      },
+      "debt_balance": {
+        "$dec": "5194.91"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4578,17 +4928,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "996.94"
+          "$dec": "1186.25"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "996.94"
+                "$dec": "1186.25"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4609,72 +4966,6 @@
         ],
         "target_debt_id": null
       },
-      "history_days": 137,
-      "savings_balance": {
-        "$dec": "2400.00"
-      }
-    },
-    {
-      "buffer_floor": {
-        "$dec": "800.00"
-      },
-      "checking_balance": {
-        "$dec": "3149.41"
-      },
-      "day": "2026-05-18",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5105.62"
-      },
-      "debt_id": "card_demo",
-      "decision": {
-        "action": "sweep",
-        "amount": {
-          "$dec": "23.19"
-        },
-        "projected_low_balance": {
-          "$dec": "1103.19"
-        },
-        "reasons": [
-          {
-            "code": "projection",
-            "params": {
-              "buffer": {
-                "$dec": "800.00"
-              },
-              "low": {
-                "$dec": "1103.19"
-              },
-              "low_day": {
-                "$date": "2026-06-05"
-              },
-              "reserved": {
-                "$dec": "280.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "6.27"
-              },
-              "debt_id": "card_demo"
-            }
-          },
-          {
-            "code": "idle_cash_elsewhere",
-            "params": {
-              "amount": {
-                "$dec": "2400.00"
-              }
-            }
-          }
-        ],
-        "target_debt_id": "card_demo"
-      },
       "history_days": 138,
       "savings_balance": {
         "$dec": "2400.00"
@@ -4685,25 +4976,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3088.65"
+        "$dec": "3194.90"
       },
       "day": "2026-05-19",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "5085.70"
+        "$dec": "5198.26"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "81.22"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1161.22"
+          "$dec": "1267.47"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -4711,7 +5009,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1161.22"
+                "$dec": "1267.47"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4719,15 +5017,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "21.83"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -4739,7 +5028,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 139,
       "savings_balance": {
@@ -4751,14 +5040,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2557.43"
+        "$dec": "2744.90"
       },
       "day": "2026-05-20",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "4557.41"
+        "$dec": "4751.31"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4767,17 +5056,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "748.79"
+          "$dec": "936.26"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "748.79"
+                "$dec": "936.26"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4808,25 +5104,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "2518.17"
+        "$dec": "2705.64"
       },
       "day": "2026-05-21",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "4560.41"
+        "$dec": "4754.43"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "198.32"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1278.32"
+          "$dec": "1465.79"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -4834,7 +5137,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1278.32"
+                "$dec": "1465.79"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4842,15 +5145,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "51.98"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -4862,7 +5156,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 141,
       "savings_balance": {
@@ -4874,25 +5168,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4899.50"
+        "$dec": "5285.29"
       },
       "day": "2026-05-22",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "4364.95"
+        "$dec": "4757.56"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "400.00"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "3778.44"
+          "$dec": "4164.23"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -4900,7 +5201,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "3778.44"
+                "$dec": "4164.23"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -4908,23 +5209,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "per_sweep_cap",
-            "params": {
-              "cap": {
-                "$dec": "400.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "94.81"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -4936,7 +5220,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 142,
       "savings_balance": {
@@ -4948,14 +5232,14 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4499.50"
+        "$dec": "5285.29"
       },
       "day": "2026-05-23",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3967.55"
+        "$dec": "4760.68"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -4964,17 +5248,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "975.23"
+          "$dec": "1761.02"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "975.23"
+                "$dec": "1761.02"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5005,14 +5296,80 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4467.70"
+        "$dec": "5253.49"
       },
       "day": "2026-05-24",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3970.15"
+        "$dec": "4763.80"
+      },
+      "debt_id": "card_demo",
+      "decision": {
+        "action": "sweep",
+        "amount": {
+          "$dec": "768.01"
+        },
+        "projected_low_balance": {
+          "$dec": "1848.01"
+        },
+        "reasons": [
+          {
+            "code": "projection",
+            "params": {
+              "buffer": {
+                "$dec": "800.00"
+              },
+              "low": {
+                "$dec": "1848.01"
+              },
+              "low_day": {
+                "$date": "2026-06-05"
+              },
+              "reserved": {
+                "$dec": "280.00"
+              }
+            }
+          },
+          {
+            "code": "interest_avoided",
+            "params": {
+              "amount": {
+                "$dec": "191.86"
+              },
+              "debt_id": "card_demo"
+            }
+          },
+          {
+            "code": "idle_cash_elsewhere",
+            "params": {
+              "amount": {
+                "$dec": "2400.00"
+              }
+            }
+          }
+        ],
+        "target_debt_id": "card_demo"
+      },
+      "history_days": 144,
+      "savings_balance": {
+        "$dec": "2400.00"
+      }
+    },
+    {
+      "buffer_floor": {
+        "$dec": "800.00"
+      },
+      "checking_balance": {
+        "$dec": "4473.25"
+      },
+      "day": "2026-05-25",
+      "debt_apr": {
+        "$dec": "0.2399"
+      },
+      "debt_balance": {
+        "$dec": "3998.41"
       },
       "debt_id": "card_demo",
       "decision": {
@@ -5021,17 +5378,24 @@
           "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1062.22"
+          "$dec": "1186.56"
         },
         "reasons": [
           {
-            "code": "no_surplus",
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 1,
+              "min_days": 7
+            }
+          },
+          {
+            "code": "projection",
             "params": {
               "buffer": {
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1062.22"
+                "$dec": "1186.56"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5052,72 +5416,6 @@
         ],
         "target_debt_id": null
       },
-      "history_days": 144,
-      "savings_balance": {
-        "$dec": "2400.00"
-      }
-    },
-    {
-      "buffer_floor": {
-        "$dec": "800.00"
-      },
-      "checking_balance": {
-        "$dec": "4455.47"
-      },
-      "day": "2026-05-25",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3972.76"
-      },
-      "debt_id": "card_demo",
-      "decision": {
-        "action": "sweep",
-        "amount": {
-          "$dec": "88.78"
-        },
-        "projected_low_balance": {
-          "$dec": "1168.78"
-        },
-        "reasons": [
-          {
-            "code": "projection",
-            "params": {
-              "buffer": {
-                "$dec": "800.00"
-              },
-              "low": {
-                "$dec": "1168.78"
-              },
-              "low_day": {
-                "$date": "2026-06-05"
-              },
-              "reserved": {
-                "$dec": "280.00"
-              }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "19.06"
-              },
-              "debt_id": "card_demo"
-            }
-          },
-          {
-            "code": "idle_cash_elsewhere",
-            "params": {
-              "amount": {
-                "$dec": "2400.00"
-              }
-            }
-          }
-        ],
-        "target_debt_id": "card_demo"
-      },
       "history_days": 145,
       "savings_balance": {
         "$dec": "2400.00"
@@ -5128,25 +5426,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4358.05"
+        "$dec": "4464.61"
       },
       "day": "2026-05-26",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3886.52"
+        "$dec": "4001.03"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "110.15"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1190.15"
+          "$dec": "1296.71"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 2,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -5154,7 +5459,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1190.15"
+                "$dec": "1296.71"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5162,15 +5467,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "23.58"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -5182,7 +5478,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 146,
       "savings_balance": {
@@ -5194,25 +5490,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4247.90"
+        "$dec": "4464.61"
       },
       "day": "2026-05-27",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3778.84"
+        "$dec": "4003.65"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "118.79"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1198.79"
+          "$dec": "1415.50"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 3,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -5220,7 +5523,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1198.79"
+                "$dec": "1415.50"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5228,15 +5531,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "24.75"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -5248,7 +5542,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 147,
       "savings_balance": {
@@ -5260,25 +5554,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4106.92"
+        "$dec": "4442.42"
       },
       "day": "2026-05-28",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3662.45"
+        "$dec": "4006.26"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "96.60"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1176.60"
+          "$dec": "1512.10"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 4,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -5286,7 +5587,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1176.60"
+                "$dec": "1512.10"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5294,15 +5595,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "18.41"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -5314,7 +5606,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 148,
       "savings_balance": {
@@ -5326,25 +5618,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "4010.32"
+        "$dec": "4442.42"
       },
       "day": "2026-05-29",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3568.18"
+        "$dec": "4008.88"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "118.79"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1198.79"
+          "$dec": "1630.89"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 5,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -5352,7 +5651,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1198.79"
+                "$dec": "1630.89"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5360,15 +5659,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "22.55"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -5380,7 +5670,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 149,
       "savings_balance": {
@@ -5392,25 +5682,32 @@
         "$dec": "800.00"
       },
       "checking_balance": {
-        "$dec": "3847.41"
+        "$dec": "4398.30"
       },
       "day": "2026-05-30",
       "debt_apr": {
         "$dec": "0.2399"
       },
       "debt_balance": {
-        "$dec": "3451.64"
+        "$dec": "4011.50"
       },
       "debt_id": "card_demo",
       "decision": {
-        "action": "sweep",
+        "action": "refuse",
         "amount": {
-          "$dec": "74.67"
+          "$dec": "0.00"
         },
         "projected_low_balance": {
-          "$dec": "1154.67"
+          "$dec": "1705.56"
         },
         "reasons": [
+          {
+            "code": "cadence_hold",
+            "params": {
+              "days_since": 6,
+              "min_days": 7
+            }
+          },
           {
             "code": "projection",
             "params": {
@@ -5418,7 +5715,7 @@
                 "$dec": "800.00"
               },
               "low": {
-                "$dec": "1154.67"
+                "$dec": "1705.56"
               },
               "low_day": {
                 "$date": "2026-06-05"
@@ -5426,15 +5723,6 @@
               "reserved": {
                 "$dec": "280.00"
               }
-            }
-          },
-          {
-            "code": "interest_avoided",
-            "params": {
-              "amount": {
-                "$dec": "14.13"
-              },
-              "debt_id": "card_demo"
             }
           },
           {
@@ -5446,7 +5734,7 @@
             }
           }
         ],
-        "target_debt_id": "card_demo"
+        "target_debt_id": null
       },
       "history_days": 150,
       "savings_balance": {
@@ -5459,20 +5747,20 @@
       "$dec": "800.00"
     },
     "interest_avoided_total": {
-      "$dec": "6019.10"
+      "$dec": "4354.79"
     },
     "paid_off": false,
-    "refuse_count": 55,
-    "sweep_count": 35,
+    "refuse_count": 79,
+    "sweep_count": 11,
     "targeted_debt_apr": {
       "$dec": "0.2399"
     },
     "targeted_debt_balance": {
-      "$dec": "3451.64"
+      "$dec": "4011.50"
     },
     "targeted_debt_id": "card_demo",
     "total_swept": {
-      "$dec": "8924.27"
+      "$dec": "7098.71"
     }
   },
   "version": 1,
