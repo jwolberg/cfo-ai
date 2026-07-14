@@ -46,6 +46,13 @@ def facts_for(*records: art.DayRecord) -> Facts:
     return facts
 
 
+def explain_sentences(record: art.DayRecord) -> list[str]:
+    """The engine's own copy for a decision — the same sentences the tool payload carries."""
+    from engine.explain import explain
+
+    return list(explain(record.decision))
+
+
 # --- the fake model ------------------------------------------------------------------
 
 
@@ -415,3 +422,149 @@ class TestFacts:
         facts = facts_for(sweep_day)
 
         assert facts.amounts_for(date(2026, 4, 15)) == set()
+
+
+class TestSupportingDates:
+    """The projection horizon is data *inside* a decision, not a decision of its own.
+
+    `engine/explain.py` writes the horizon into its sentences ("heading for a low of $748.79
+    on 2026-06-05"). A model narrating the engine faithfully repeats that date — and the guard
+    used to reject it as fabricated, on 82 of the 90 served days. Every test here exists to
+    stop that from coming back.
+    """
+
+    def test_the_engines_own_copy_is_never_rejected(self, artifact: art.Artifact) -> None:
+        """The strongest form of the rule: the engine's own words must always survive.
+
+        Not a sample — every served day. If the guard ever rejects the very sentences the
+        backend handed the model, the assistant is broken for that day by construction.
+        """
+        for record in artifact.days:
+            facts = facts_for(record)
+            text = " ".join(explain_sentences(record))
+            assert verify(text, facts) is None, (
+                f"guard rejected the engine's own copy for {record.day}"
+            )
+
+    def test_the_real_models_answer_survives(self, artifact: art.Artifact) -> None:
+        """Verbatim output from a live claude-opus-4-8 call, which the guard used to reject.
+
+        Kept word for word rather than paraphrased: it is the actual failure, and a tidied-up
+        version of it would not have caught the bug.
+        """
+        record = artifact.by_day(date(2026, 5, 20))
+        assert record is not None, "the fixture artifact no longer serves 2026-05-20"
+
+        text = (
+            "On 2026-05-20 nothing moved because there was no spare cash to move: your "
+            "checking balance was projected to dip to $748.79 on 2026-06-05, and once your "
+            "$800.00 buffer and $280.00 in minimum payments were set aside, there was nothing "
+            "left over. Your money simply stayed put."
+        )
+        assert verify(text, facts_for(record)) is None
+
+    def test_a_supporting_date_may_be_mentioned_but_not_claimed_about(
+        self, artifact: art.Artifact
+    ) -> None:
+        """The hole the fix must not open.
+
+        Every ingredient here is real — 2026-06-05 was genuinely shown to the model, and the
+        amount is genuinely from the decision. Only the attribution is invented, which is
+        exactly the recombination the guard exists to catch.
+        """
+        record = artifact.by_day(date(2026, 5, 20))
+        assert record is not None
+        facts = facts_for(record)
+        assert date(2026, 6, 5) in facts.supporting, (
+            "fixture drift: 2026-06-05 is no longer a supporting date"
+        )
+
+        rejection = verify("On 2026-06-05 we swept $748.79 onto your card.", facts)
+        assert rejection is not None
+        assert "2026-06-05" in rejection.reason
+
+    def test_an_unfetched_date_is_still_rejected(self, refuse_day: art.DayRecord) -> None:
+        """The original rule is intact: a date we never fetched in any form carries nothing."""
+        facts = facts_for(refuse_day)
+        rejection = verify("On 2019-01-03 we swept $400.00 onto your card.", facts)
+        assert rejection is not None
+        assert "never fetched" in rejection.reason
+
+
+class TestNegatedSweepVerbs:
+    """ "No money moved" describes a refusal. The guard used to call it a payment claim.
+
+    `_SWEEP_WORDS` matches the verb; `_REFUSE_WORDS` knows "no payment" but not "no money". So
+    the plainest description of a refusal read as an assertion that money moved, and truthful
+    answers were rejected — intermittently, depending on which phrasing the model reached for.
+    Every string below is verbatim output from a live claude-opus-4-8 call.
+    """
+
+    def test_the_models_real_refusal_phrasings_pass(self, refuse_day: art.DayRecord) -> None:
+        facts = facts_for(refuse_day)
+        day = refuse_day.day
+        for text in (
+            f"On {day}, no money moved — the amount was $0.00.",
+            f"On {day}, no money was moved — your cash stayed where it was.",
+            f"On {day}, no money was moved — the amount was $0.00.",
+        ):
+            assert verify(text, facts) is None, f"guard rejected a truthful refusal: {text!r}"
+
+    def test_a_negated_sweep_about_a_payment_day_is_still_caught(
+        self, sweep_day: art.DayRecord
+    ) -> None:
+        """The other direction, and the hole this must not open.
+
+        The same sentence about a day money *did* move is a false denial. Treating negation as
+        a refusal assertion is what lets the guard catch it rather than shrug at it.
+        """
+        facts = facts_for(sweep_day)
+        rejection = verify(f"On {sweep_day.day}, no money moved.", facts)
+        assert rejection is not None
+        assert "payment, not a refusal" in rejection.reason
+
+    def test_an_unnegated_payment_claim_about_a_refusal_is_still_caught(
+        self, refuse_day: art.DayRecord
+    ) -> None:
+        """AE4 stays caught: "paid $0.00 toward your card" asserts a payment that never was."""
+        facts = facts_for(refuse_day)
+        rejection = verify(f"On {refuse_day.day} we paid $0.00 toward your card.", facts)
+        assert rejection is not None
+        assert "refusal" in rejection.reason
+
+
+class TestMoneyParsing:
+    """A dollar figure must be read whole, or the guard rejects the truth as a fabrication.
+
+    `$12092.26` used to parse as `$120`: the pattern's first branch took three digits, found no
+    comma and no decimal point, and succeeded — and a regex alternation does not backtrack once
+    a branch matches. Any figure over $1,000 written without a thousands separator was silently
+    truncated, matched no real amount, and got a correct answer thrown away. The card balances
+    in this artifact are $4,557.41 and $12,092.26, so this fired constantly.
+    """
+
+    def test_unseparated_thousands_are_read_whole(self) -> None:
+        for text, expected in (
+            ("$5321.39", "5321.39"),
+            ("$12092.26", "12092.26"),
+            ("$5,321.39", "5,321.39"),
+            ("$400.00", "400.00"),
+            ("$0.00", "0.00"),
+        ):
+            assert assistant._MONEY.findall(text) == [expected], f"misparsed {text!r}"
+
+    def test_a_correctly_quoted_balance_passes(self, refuse_day: art.DayRecord) -> None:
+        """The figure the model quotes is real; only the regex made it look invented."""
+        facts = facts_for(refuse_day)
+        balance = refuse_day.debt_balance  # e.g. Decimal("12092.26")
+        text = f"On {refuse_day.day} nothing moved. Your card balance stood at ${balance}."
+
+        assert verify(text, facts) is None
+
+    def test_an_invented_four_figure_amount_is_still_caught(
+        self, refuse_day: art.DayRecord
+    ) -> None:
+        """Reading the number whole must not mean waving it through."""
+        facts = facts_for(refuse_day)
+        rejection = verify(f"On {refuse_day.day} your card balance stood at $9999.99.", facts)
+        assert rejection is not None

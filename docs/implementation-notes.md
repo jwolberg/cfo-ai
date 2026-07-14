@@ -389,3 +389,80 @@ Anthropic spend just as a second instance would. One process, one counter.
 The deploy itself. Placeholders (project, region, service) are unset, and no live Anthropic
 smoke test has run — see the "Blocked: no live LLM verification" note above, which is now
 unblocked (a key exists) but still unexercised.
+
+## 2026-07-14 — the first live Anthropic call, and the three bugs it found
+
+The "Blocked: no live LLM verification" note above is now closed. A real key went in, and the
+very first live call broke the assistant. Everything below was invisible to the fake-client
+suite — not because the tests were careless, but because a fake client cannot produce the one
+thing that mattered: *the sentences a real model actually writes.* The scripted responses were
+adversarial and well-chosen; they simply never happened to phrase a truthful answer the way
+Opus does.
+
+Every fix here is verified against live output, and every regression test quotes it verbatim.
+
+### 1. The guard rejected the engine's own copy — on 82 of 90 days
+
+`engine/explain.py` names the projection horizon inside its sentences ("heading for a low of
+$748.79 **on 2026-06-05**"). A model narrating faithfully repeats that date. `verify()` treated
+every date in the text as a date whose *decision* was being claimed, so the horizon read as a
+day that was "never fetched" — and a perfectly honest answer was thrown away.
+
+`Facts` now tracks **supporting dates** (dates appearing *inside* a fetched decision) as
+distinct from **decision dates**. A supporting date may be *mentioned*; nothing may be
+*attributed* to it. Amount-binding still keys off decision dates only, so the recombination
+case (a real figure against the wrong day) is caught exactly as before.
+
+### 2. "No money moved" read as a payment claim
+
+`_SWEEP_WORDS` matches `moved`. `_REFUSE_WORDS` knows `no payment` but not `no money`. So the
+single most natural way to describe a refusal — "On 2026-03-13, no money moved" — asserted a
+payment to the guard, and got rejected 6 times out of 6.
+
+A *negated* sweep verb is now a refusal assertion, not a payment one. Both directions hold: the
+same sentence about a day money *did* move is a false denial and is still caught.
+
+**A wrong turn worth recording.** The first attempt keyed this off the amount — "paid $0.00 is
+true, so allow it" — which broke `test_calling_a_refusal_a_payment_is_caught` (AE4). That test
+is right and the change was wrong: "we paid $0.00 toward your card" asserts a payment that
+never happened, and the *outcome* must be true, not merely the number. The failing test caught
+a fix built on a guess instead of on evidence. Lesson: capture the model's actual words before
+theorizing about them.
+
+### 3. `$12092.26` parsed as `$120`
+
+The worst of the three, and pure regex. `_MONEY`'s first branch is
+`\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?` — against "12092.26" it takes three digits, finds no comma,
+finds no decimal point (the next char is "9"), and *succeeds*. An alternation never backtracks
+once a branch matches, so the second branch never ran. Every figure over $1,000 written without
+a thousands separator was truncated to its first three digits, matched no real amount, and was
+rejected as fabricated. The card balances here are $4,557.41 and $12,092.26.
+
+`*` → `+` on the comma group. An un-separated number now falls through to the branch that
+consumes all of it. This makes the guard *more* accurate, not laxer: an invented `$9999.99` now
+parses whole and still fails the amount check.
+
+### 4. Two silent failures made all of this hard to see
+
+- The bare `except Exception` around the Anthropic call returned the friendly "I couldn't reach
+  the assistant just then — try asking again" for *every* failure, including a permanent
+  `AuthenticationError`. A bad key looked exactly like a network blip and invited infinite
+  retries. The exception type is now logged.
+- `verify()`'s rejection reason was computed, `del`-ed, and discarded — while the comment
+  claimed it was "for our logs". It never reached them. A guard that rejects silently is
+  indistinguishable from a guard that is wrong, and this one *was* wrong, on 91% of days, with
+  nothing anywhere saying so. Now logged.
+
+### Verification
+
+16 of 16 live questions across real sweep and refusal days now answer (previously ~0). The
+out-of-window date is still declined honestly, the adversarial prompt (future projections,
+credit score) is still refused, and 242 tests pass — including the two AE4 adversarial cases,
+which were the guard rails that caught my own bad fix.
+
+### Still open
+
+The **key-in-keychain** hazard is real and bit us: `security -w` returns hex, not a string, when
+the stored bytes aren't clean ASCII — which happens the moment a trailing newline gets stored
+with the secret. That is the same newline hazard `DEPLOY.local.md` §3 warns about for
+`gcloud secrets create`. Worth a line in the runbook that the *storage* step has it too.
