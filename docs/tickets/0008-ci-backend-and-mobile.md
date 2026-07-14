@@ -2,7 +2,7 @@
 id: "0008"
 title: "CI: lint/test backend + typecheck mobile"
 type: dx
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: infra-devops-agent

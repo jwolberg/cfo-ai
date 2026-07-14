@@ -1,10 +1,24 @@
-# CI for the decision engine.
+# CI for the decision engine and the service around it.
 #
-# `quality` is the fast, always-on gate: lint, format, and the full test suite.
+# `quality` is the fast, always-on gate: lint, format, and the full Python test suite.
 #
 # The suite is not a coverage exercise — it is the spec. Most of it asserts that the
 # engine REFUSES to move money under conditions where moving it would be unsafe, so a
 # red build here means the engine may have become willing to overdraft someone.
+#
+# Two things this gate now also catches, both of which are silent failures otherwise:
+#
+#   - **A stale artifact.** `backend/data/decisions.json` is committed rather than built at
+#     deploy time, so it can drift from the code that generates it. `tests/test_precompute.py`
+#     regenerates it and asserts the bytes match, which turns a drifted demo into a red build
+#     rather than a strange number nobody notices.
+#   - **A guard that stopped guarding.** `tests/test_assistant.py` is mostly an attempt to get
+#     a false financial claim past the assistant's verification guard. If those go green while
+#     the guard is broken, the product will confidently tell a household something untrue about
+#     their own money.
+#
+# `mobile` is a typecheck and the component suite. Nothing here builds a native binary or
+# touches a device — that is not what this gate is for.
 name: CI
 
 on:
@@ -28,10 +42,40 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Lint
-        run: ruff check engine tests
+        run: ruff check engine sim backend tests
 
       - name: Format check
-        run: ruff format --check engine tests
+        run: ruff format --check engine sim backend tests
 
       - name: Tests
         run: pytest
+        env:
+          # The service refuses to start without these, which is the point — a deploy missing
+          # a secret should fail at startup, not the first time a user asks a question. Neither
+          # value is ever used to call anything: the Anthropic client is replaced by a fake in
+          # every test that exercises the assistant.
+          RESFI_API_KEY: ci-not-a-real-key
+          ANTHROPIC_API_KEY: sk-ant-ci-not-a-real-key
+
+  mobile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test -- --ci
