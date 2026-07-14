@@ -244,6 +244,26 @@ not a win. Reviewed independently of the growth team.
    Realistic options are a bill-pay partner, a deep-link handoff, or an FBO/custodial account via a
    banking partner. **Custody brings materially more compliance and reconciliation burden — avoid
    for as long as possible.**
+
+   **No rail is chosen, and nothing in the codebase assumes one.** `engine/` and `sim/` have zero
+   dependencies; the engine emits a `Decision` and something else moves the money
+   ([`decision-engine.md`](./decision-engine.md) [6.4]). Where processors are named anywhere in
+   these docs, they are illustrations of a *pricing shape*, never a vendor commitment — §2 cites
+   them to argue the rail is a commodity. Keep it that way: the ladder from renting origination →
+   owning orchestration on an FBO → a direct ODFI relationship is a **cost and control** decision,
+   not a capability one, and per-item cost only starts to matter at a volume we are nowhere near.
+
+   **The trap to avoid** is letting a processor's fee schedule leak into a decision rule. A sweep
+   cadence or a minimum-sweep floor tuned to someone's per-transaction price is a **risk parameter
+   set by a vendor**, and it has to be re-tuned the day the rail changes. ([2.4] was very nearly
+   argued this way and is not — it rests on the guarantee in [2.3], which is rail-agnostic.
+   `MIN_SWEEP` in `engine/decide.py` is the one constant still making an implicit cost claim, and
+   it is flagged as open.)
+
+   **And note the tension with [7.1]:** if distribution is embedded/B2B2C — a bank, an issuer, an
+   employer — then the *partner* very likely owns the rail, and owning it ourselves becomes moot.
+   Owning the rail and embedding in an institution pull in opposite directions. [7.1] should
+   therefore settle before any money is spent climbing that ladder.
 2. **Plaid does not reliably return APR**, minimum payment, or statement date for many issuers.
    Our "interest avoided" number and our allocation ranking both depend on APR. Decide the
    fallback: user-entered, estimated with visibly reduced confidence, or refuse to rank.

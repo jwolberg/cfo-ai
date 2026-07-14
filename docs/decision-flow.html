@@ -359,9 +359,31 @@
   <tbody>
     <tr>
       <td><b>Decision engine</b><br><code>engine/</code></td>
-      <td>Pure Python 3.10+, <b>zero dependencies</b>. Frozen dataclasses, money as
-          <code>Decimal</code> &mdash; <code>money()</code> refuses a float outright. No clock, no
-          network, no LLM.</td>
+      <td>Python 3.10+
+    </tr>
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
+          dashboard and explain modal run in a browser.</td>
+    </tr>
+    <tr>
+      <td><b>API</b><br><code>backend/</code></td>
+      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
+          <b>No database and no write path.</b></td>
+    </tr>
+    <tr>
+      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
+      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
+          that costs money, and the only one with a rate cap. Every figure in its reply is checked
+          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
+          real number against the wrong day.</td>
+    </tr>
+    
+    <tr>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Cloud Run</b>, one worker instance for the demo &mdash; the spend cap lives in process memory, and a
+          second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite, and the
+          mobile typecheck and tests.</td>
     </tr>
     <tr>
       <td><b>The household</b><br><code>sim/</code></td>
@@ -378,31 +400,7 @@
           alone allows at most one in seven, and the other gates take the rest. The remaining days
           are refusals, and the held ones still carry their forecast so they stay gradeable.</td>
     </tr>
-    <tr>
-      <td><b>API</b><br><code>backend/</code></td>
-      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
-          <b>No database and no write path.</b> Dollars cross the wire as strings (<code>"400.00"</code>),
-          because JSON's only number is a double. Bad artifact or missing key &rarr; the process refuses
-          to start.</td>
-    </tr>
-    <tr>
-      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
-      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
-          that costs money, and the only one with a rate cap. Every figure in its reply is checked
-          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
-          real number against the wrong day.</td>
-    </tr>
-    <tr>
-      <td><b>Client</b><br><code>mobile/</code></td>
-      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
-          dashboard and explain modal run in a browser.</td>
-    </tr>
-    <tr>
-      <td><b>Hosting &amp; CI</b></td>
-      <td><b>Cloud Run</b>, one worker on purpose &mdash; the spend cap lives in process memory, and a
-          second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite, and the
-          mobile typecheck and tests.</td>
-    </tr>
+    
   </tbody>
 </table>
 </div>

@@ -81,13 +81,23 @@ investigation that a plugged-in figure pointed the right way for the wrong reaso
 Per-transaction ACH cost depends on the **shape** of the processor's pricing, not just its level,
 and only one of the three common shapes rewards batching at all:
 
-| Pricing shape | Example | Does spacing sweeps out save fees? |
+| Pricing shape | Typical | Does spacing sweeps out save fees? |
 |---|---|---|
 | Flat per transaction | $0.25–$1.00/debit | **Yes** — you pay per transfer |
-| Percentage of amount | [Dwolla pay-as-you-go: 0.5%, capped at $5](https://www.dwolla.com/pricing) | **Barely** — you pay per *dollar*. Only the cap helps: one $1,600 sweep costs $5 (0.31%); four $400 sweeps cost $8 (0.5%). |
-| Flat monthly plan | Dwolla plans from ~$250/mo | **No** — marginal cost per transfer is zero |
+| Percentage of amount | ~0.5%, often capped (e.g. [Dwolla pay-as-you-go: 0.5%, cap $5](https://www.dwolla.com/pricing)) | **Barely** — you pay per *dollar*. Only the cap helps: one $1,600 sweep costs $5 (0.31%); four $400 sweeps cost $8 (0.5%). |
+| Flat monthly plan | from ~$250/mo | **No** — marginal cost per transfer is zero |
+| Direct ODFI (own the rail) | fractions of a cent | **Irrelevant** — the fee stops mattering entirely |
 
-The network itself is a rounding error (FedACH/NACHA per-item fees are fractions of a cent).
+The network itself is a rounding error either way (FedACH/NACHA per-item fees are fractions of a
+cent). **The processors named are illustrations of a pricing *shape*, not a chosen vendor** —
+nothing in this repo depends on any of them, and [`prd.md`](../prd.md) §2 cites them precisely to
+argue the rail is a *commodity*. See [`prd.md`](../prd.md) §6.1 for the rail decision itself,
+which is unmade and should stay that way until §7.1 (distribution) is settled.
+
+**Which is the deeper reason not to have made this argument in the first place.** A cadence tuned
+to a fee schedule is a **risk parameter set by a vendor** — and one we would have to re-tune the
+day we changed processors or moved onto our own rail. The framing below survives that, because it
+never mentions a fee.
 
 **What genuinely scales with the number of debits, under every pricing shape, is returns.**
 [Return fees run $2–$5 and up to $20+, and the receiving bank adds an NSF fee of $15–$35](https://stripe.com/resources/more/ach-returns-101-what-they-are-and-how-to-manage-them).
