@@ -38,16 +38,6 @@ export default function App() {
     <View style={styles.app}>
       <StatusBar style="dark" />
 
-      {/* Both screens stay mounted. Switching tabs is not a reason to re-fetch, and a
-          half-scrolled feed that resets every time you glance at your spending is the kind of
-          small betrayal that makes an app feel cheap. */}
-      <View style={[styles.screen, tab === 'decisions' ? null : styles.hidden]}>
-        <Dashboard onExplain={setExplaining} />
-      </View>
-      <View style={[styles.screen, tab === 'spending' ? null : styles.hidden]}>
-        <Spending />
-      </View>
-
       <View style={styles.tabs}>
         <TabButton
           label="Decisions"
@@ -59,6 +49,16 @@ export default function App() {
           active={tab === 'spending'}
           onPress={() => setTab('spending')}
         />
+      </View>
+
+      {/* Both screens stay mounted. Switching tabs is not a reason to re-fetch, and a
+          half-scrolled feed that resets every time you glance at your spending is the kind of
+          small betrayal that makes an app feel cheap. */}
+      <View style={[styles.screen, tab === 'decisions' ? null : styles.hidden]}>
+        <Dashboard onExplain={setExplaining} />
+      </View>
+      <View style={[styles.screen, tab === 'spending' ? null : styles.hidden]}>
+        <Spending />
       </View>
 
       <ExplainModal decision={explaining} onClose={() => setExplaining(null)} />
@@ -78,7 +78,7 @@ function TabButton({
   return (
     <Pressable
       onPress={onPress}
-      style={styles.tab}
+      style={[styles.tab, active ? styles.tabActive : null]}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       testID={`tab-${label.toLowerCase()}`}
@@ -93,10 +93,11 @@ const styles = StyleSheet.create({
   screen: { flex: 1 },
   // `display: none` rather than unmounting: see the note above. State survives the switch.
   hidden: { display: 'none' },
+  // At the top now, so the border that separates the bar from the content is beneath it.
   tabs: {
     flexDirection: 'row',
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
     backgroundColor: colors.card,
   },
   tab: {
@@ -106,6 +107,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: space.sm,
   },
-  tabLabel: { ...type.label, color: colors.muted },
-  tabLabelActive: { color: colors.greenText },
+  // The active tab is *filled*, not just recoloured — but the shape is untouched: still the
+  // full-width rectangle it always was, not the pill the brand button is.
+  tabActive: { backgroundColor: colors.tabActive },
+  // 17px, not `type.label`'s 13. These are the app's primary navigation, not a caption on a
+  // stat.
+  //
+  // It does **not** rescue the contrast, and it is worth being precise about why: WCAG's
+  // relaxed 3:1 bar applies to "large" text, which means >=18.66px *and* bold (700+). At 17px
+  // / weight 600 this is still normal text, so white-on-`tabActive` (2.6:1) is still short of
+  // the 4.5:1 it needs. 19px and weight 700 would qualify; `ink` on the fill (6.2:1) passes
+  // outright at any size. See `theme.ts`.
+  tabLabel: { ...type.label, fontSize: 17, color: colors.muted },
+  tabLabelActive: { color: '#FFFFFF' },
 });

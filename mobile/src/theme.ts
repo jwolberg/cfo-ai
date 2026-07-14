@@ -25,6 +25,15 @@ export const colors = {
   deepGreen: '#085041',
   leafGreen: '#1D9E75',
 
+  // The active-tab fill, sampled from the brand's own "Join Waitlist" button. It is a softer
+  // blue than `brandBlue` and is deliberately its own token rather than an alias: it came from
+  // the button, and if the button moves, this moves with it.
+  //
+  // **White type on this sits at 2.6:1**, which is below WCAG AA (4.5:1 for 13px). The brand's
+  // own button does exactly this, so the tab matches it rather than silently disagreeing with
+  // it — but the honest fix is `ink` on the fill (6.2:1), and it is one line away.
+  tabActive: '#62ABC3',
+
   // Text-safe companions. Never use the fills above for type.
   blueText: '#217E96',
   greenText: '#085041', // already dark enough to read as body text

@@ -194,7 +194,12 @@ describe('the dashboard', () => {
   });
 
   it('a paid-off card is a banner, not a $0.00 stat', async () => {
-    // $0.00 next to "Card balance" reads like a bug on the one day it is good news.
+    // $0.00 reads like a bug on the one day it is unambiguously good news.
+    //
+    // The "Card balance" panel that used to carry this is gone, so the state moved into the
+    // hero — and it moved rather than being deleted. A paid-off card with no indication
+    // anywhere that it is paid off is the failure this test exists to prevent, and removing a
+    // panel is exactly how it would have happened.
     getDecisions.mockResolvedValue(
       body({
         summary: {
@@ -208,8 +213,10 @@ describe('the dashboard', () => {
 
     await render(<Dashboard onExplain={jest.fn()} />);
 
-    await waitFor(() => expect(screen.getByText('Paid off')).toBeTruthy());
+    await waitFor(() => expect(screen.getByText('Card paid off 🎉')).toBeTruthy());
     expect(screen.queryByText('$0')).toBeNull();
+    // And no progress bar: there is nothing left to be partway through.
+    expect(screen.queryByText('Card paid down')).toBeNull();
   });
 
   it('tapping a decision asks for an explanation', async () => {

@@ -119,9 +119,14 @@ export function Spending() {
           </View>
         )}
 
-        {/* --- Your worst month: the reserve, made legible ----------------------------- */}
+        {/* --- The biggest month: the reserve, made legible ----------------------------- */}
+        {/* "Worst" is the engine's word for this number and it stays the engine's word — the
+            field is still `worst_30d_cash`, and the reserve really is built against a bad
+            case. But it is the household's *own* spending, and telling someone their life is
+            the worst kind of it is a judgement we have not earned and do not mean. Highest is
+            the same fact without the verdict. */}
         <View style={styles.card} testID="worst-month">
-          <Text style={styles.label}>YOUR WORST 30 DAYS</Text>
+          <Text style={styles.label}>YOUR HIGHEST 30 DAYS</Text>
           <Text style={styles.stat}>{formatMoneyRounded(normal.worst_30d_cash)}</Text>
           <Text style={styles.body}>We reserve against months like that one.</Text>
 
@@ -129,7 +134,7 @@ export function Spending() {
 
           <Text style={styles.small}>
             Every overlapping 30-day total from your own history — not an average, and not a
-            guess at your worst case.
+            guess at your biggest month.
           </Text>
         </View>
       </View>
