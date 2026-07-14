@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -147,3 +148,112 @@ class TestDecisions:
         body = client.get("/decisions", headers=auth).json()
 
         assert all(d["reason_codes"] for d in body["decisions"])
+
+
+class TestSummary:
+    def test_the_headline_stats_are_there(self, client: TestClient, auth: dict[str, str]) -> None:
+        summary = client.get("/decisions", headers=auth).json()["summary"]
+
+        assert summary["sweep_count"] > 0
+        assert summary["refuse_count"] > 0
+        assert Decimal(summary["interest_avoided_total"]) > 0
+        assert Decimal(summary["current_buffer"]) > 0
+        assert summary["paid_off"] is False
+
+    def test_the_counts_account_for_every_day(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        body = client.get("/decisions", headers=auth).json()
+        summary = body["summary"]
+
+        assert summary["sweep_count"] + summary["refuse_count"] == len(body["decisions"])
+
+    def test_interest_avoided_is_the_engines_own_claim(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """Summed from the reasons the engine emitted, never recomputed here.
+
+        `engine/interest.py` declines to make the claim when it cannot stand behind it. A
+        second implementation of the number the company is graded on would eventually
+        disagree with the first, and nobody would know which one was in the UI.
+        """
+        body = client.get("/decisions", headers=auth).json()
+        claimed = sum(
+            Decimal(reason["text"].split("about $")[1].split(" of interest")[0].replace(",", ""))
+            for decision in body["decisions"]
+            for reason in decision["reasons"]
+            if reason["code"] == "interest_avoided"
+        )
+
+        assert Decimal(body["summary"]["interest_avoided_total"]) == claimed
+
+
+class TestExplain:
+    def sweep_date(self, client: TestClient, auth: dict[str, str]) -> str:
+        body = client.get("/decisions", headers=auth).json()
+        return next(d["date"] for d in body["decisions"] if d["action"] == "sweep")
+
+    def refusal_date(self, client: TestClient, auth: dict[str, str]) -> str:
+        body = client.get("/decisions", headers=auth).json()
+        return next(d["date"] for d in body["decisions"] if d["action"] == "refuse")
+
+    def test_a_refusal_reads_as_english_not_as_a_code(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """Covers AE2. A refusal is not an error and must not read like one — the user is
+        being told their money is staying put, and why."""
+        day = self.refusal_date(client, auth)
+
+        body = client.get(f"/decisions/{day}/explain", headers=auth).json()
+
+        assert body["narration"]
+        assert all(len(sentence.split()) > 3 for sentence in body["narration"])
+        # No raw ReasonCode leaks into the prose.
+        assert not any("_" in sentence for sentence in body["narration"])
+
+    def test_every_served_day_narrates(self, client: TestClient, auth: dict[str, str]) -> None:
+        """Not a spot check: every date in the window has to resolve to real copy, because
+        every one of them is tappable in the feed."""
+        body = client.get("/decisions", headers=auth).json()
+
+        for decision in body["decisions"]:
+            narration = client.get(f"/decisions/{decision['date']}/explain", headers=auth).json()
+            assert narration["narration"], f"{decision['date']} narrated to nothing"
+
+    def test_a_sweep_says_what_it_saved(self, client: TestClient, auth: dict[str, str]) -> None:
+        day = self.sweep_date(client, auth)
+
+        body = client.get(f"/decisions/{day}/explain", headers=auth).json()
+
+        assert body["action"] == "sweep"
+        assert "interest_avoided" in body["reason_codes"]
+        assert any("interest you won't pay" in s for s in body["narration"])
+
+    def test_a_day_outside_the_window_is_no_record_not_an_error(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """Same posture as the assistant's tools: we have nothing on record, and that is an
+        answer, not a failure. A 500 would say the service is broken. It is not."""
+        response = client.get("/decisions/2025-01-01/explain", headers=auth)
+
+        assert response.status_code == 404
+        assert response.json()["error"] == "no_record"
+
+    def test_a_warm_up_day_is_no_record_too(self, client: TestClient, auth: dict[str, str]) -> None:
+        """The warm-up runway was decided but never served. To the user it is simply a day we
+        have nothing on — indistinguishable from any other day outside the window."""
+        response = client.get("/decisions/2026-02-01/explain", headers=auth)
+
+        assert response.status_code == 404
+        assert response.json()["error"] == "no_record"
+
+    def test_a_nonsense_date_is_no_record_too(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        response = client.get("/decisions/not-a-date/explain", headers=auth)
+
+        assert response.status_code == 404
+        assert response.json()["error"] == "no_record"
+
+    def test_narration_still_needs_a_key(self, client: TestClient) -> None:
+        assert client.get("/decisions/2026-03-02/explain").status_code == 401

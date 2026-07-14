@@ -25,14 +25,17 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend import artifact as art
 from backend.auth import expected_key, require_api_key
+from engine.explain import explain, render
 
 # The Expo web target runs in a browser, on a different origin from the API — so without
 # CORS the whole `expo start --web` verification path fails while native targets work fine.
@@ -91,9 +94,11 @@ def usd(amount: Decimal | None) -> str | None:
 def decision_json(record: art.DayRecord) -> dict[str, Any]:
     """One day, as the client sees it.
 
-    The reason *codes* travel with the decision. They are the stable fact — the sentence is
-    one rendering of it (`engine/explain.py`) — and the client is given both rather than
-    being left to infer the outcome from prose.
+    Both the reason *codes* and their rendered sentences travel with the decision. The code
+    is the stable fact; the sentence is one rendering of it. The client gets both rather than
+    being left to infer the outcome from prose — and, just as importantly, the backend never
+    writes a sentence of its own. All product copy lives in `engine/explain.py` and nowhere
+    else, which is what lets a copy edit be a copy edit rather than a financial change.
     """
     decision = record.decision
     return {
@@ -103,6 +108,9 @@ def decision_json(record: art.DayRecord) -> dict[str, Any]:
         "target_debt_id": decision.target_debt_id,
         "projected_low_balance": usd(decision.projected_low_balance),
         "reason_codes": [code.value for code in decision.codes],
+        "reasons": [
+            {"code": reason.code.value, "text": render(reason)} for reason in decision.reasons
+        ],
         # "Paid off" is a REFUSE carrying NO_DEBT, never a third action. Derived in one place
         # (`DayRecord.paid_off`) so the UI cannot invent a different rule for it.
         "paid_off": record.paid_off,
@@ -112,6 +120,47 @@ def decision_json(record: art.DayRecord) -> dict[str, Any]:
         "debt_balance": usd(record.debt_balance),
         "debt_id": record.debt_id,
     }
+
+
+def summary_json(summary: art.Summary) -> dict[str, Any]:
+    """The dashboard's headline stats (R3).
+
+    `interest_avoided_total` sums the `INTEREST_AVOIDED` reasons the engine itself chose to
+    emit. It is not recomputed here — `engine/interest.py` declines to make that claim when
+    it cannot stand behind it, and summing only the claims it *did* make inherits that
+    discipline instead of reimplementing it.
+    """
+    return {
+        "interest_avoided_total": usd(summary.interest_avoided_total),
+        "total_swept": usd(summary.total_swept),
+        "current_buffer": usd(summary.current_buffer),
+        "targeted_debt_id": summary.targeted_debt_id,
+        "targeted_debt_balance": usd(summary.targeted_debt_balance),
+        "sweep_count": summary.sweep_count,
+        "refuse_count": summary.refuse_count,
+        "paid_off": summary.paid_off,
+    }
+
+
+def no_record(day: str) -> JSONResponse:
+    """The one answer for every date we cannot speak to.
+
+    Before the window, after it, or inside the warm-up runway that was never served — all
+    the same response, deliberately. The user asked whether we did something on a day, and
+    the honest answer is that we have nothing on record. Which of the three reasons it was
+    is our business, not theirs, and distinguishing them would leak the shape of the demo.
+
+    A 404, not a 500: there is nothing wrong with the service, and nothing wrong with the
+    question.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "error": "no_record",
+            "date": day,
+            "message": "We don't have a decision on record for that day.",
+        },
+    )
 
 
 @app.get("/healthz", include_in_schema=False)
@@ -135,5 +184,36 @@ async def decisions(artifact: ArtifactDep) -> dict[str, Any]:
             # ("last Tuesday") against it.
             "today": artifact.window_end.isoformat(),
         },
+        "summary": summary_json(artifact.summary),
         "decisions": [decision_json(record) for record in reversed(artifact.days)],
+    }
+
+
+@app.get("/decisions/{day}/explain", dependencies=[Depends(require_api_key)])
+async def explain_decision(day: str, artifact: ArtifactDep) -> Any:
+    """Why the engine did what it did on `day`, in plain language. No LLM in this path.
+
+    This is the whole of R4. `engine/explain.py` already turns the decision's reason codes
+    into sentences, deterministically and with a test asserting every code has copy — so
+    tapping a decision costs one in-memory lookup and zero network calls. The assistant
+    (U4) is for the *follow-up* question, not for reading back what the engine decided;
+    routing base narration through a model would mean the most-viewed text in the product
+    was the one thing that could hallucinate.
+
+    An unparseable date gets the same "no record" answer as a real date we have nothing for.
+    A 422 on the malformed one would tell a caller which of the two they sent, and there is
+    no reason for the two to be distinguishable here.
+    """
+    try:
+        when = date.fromisoformat(day)
+    except ValueError:
+        return no_record(day)
+
+    record = artifact.by_day(when)
+    if record is None:
+        return no_record(day)
+
+    return {
+        **decision_json(record),
+        "narration": list(explain(record.decision)),
     }
