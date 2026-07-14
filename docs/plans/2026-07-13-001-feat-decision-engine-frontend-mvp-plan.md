@@ -22,6 +22,68 @@ handles only follow-up conversation, retrieving from the artifact via two struct
 
 ---
 
+## Build Progress
+
+*Last updated 2026-07-14.*
+
+**Everything in this plan is built and on `main` except the deploy itself.** All eight
+implementation units are done. What remains is U8's deployment half (ticket `0009`): the
+build config is committed, but no GCP project exists and `gcloud run deploy` has never run.
+
+| Unit | Ticket | Status | Landed in |
+|------|--------|--------|-----------|
+| U1 Household decision-history precompute | `0001` | done | #13 |
+| U2 FastAPI service scaffold | `0002` | done | #13 |
+| U3 Base narration endpoint | `0003` | done | #13 |
+| U4 Explain-assistant LLM endpoint | `0004` | done | #13, fixed in #19 |
+| U5 Expo app scaffold | `0005` | done | #16 |
+| U6 Dashboard screen | `0006` | done | #16 |
+| U7 Explain assistant modal | `0007` | done | #16 |
+| U8a CI (backend + mobile) | `0008` | done | #17 |
+| U8b Cloud Run deployment | `0009` | **open** | build config in #18; **deploy not run** |
+
+### The LLM path is now verified against a real model — and it was broken
+
+The plan's biggest open risk was that U4 had never made a live Anthropic call: the whole
+suite runs against a fake client, and the implementation notes flagged both the request shape
+and the guard's real-world behaviour as unverified. Both were exercised for the first time on
+2026-07-14, and the guard turned out to be **rejecting truthful answers on 82 of 90 days** —
+the endpoint answered "I don't have that on record" to legitimate questions about 91% of the
+demo. Three distinct false positives, all fixed in #19:
+
+1. The guard treated the projection horizon that `engine/explain.py` writes into its own copy
+   ("a low of $748.79 **on 2026-06-05**") as a claim about an unfetched day.
+2. "No money moved" — the most natural way to describe a refusal — parsed as an *assertion of
+   payment*, because `_SWEEP_WORDS` matches `moved` and `_REFUSE_WORDS` knew "no payment" but
+   not "no money".
+3. `$12092.26` parsed as `$120`. Any figure over $1,000 written without a thousands separator
+   was truncated by `_MONEY` and then rejected as fabricated. The card balances in the demo
+   artifact are $4,557.41 and $12,092.26.
+
+**None of these were reachable from the fake client** — not because the tests are weak (two of
+them caught a bad fix mid-flight) but because a fake client cannot produce the one thing that
+mattered: the sentences a real model actually writes. Live verification is now the acceptance
+bar for anything touching `verify()`, not an optional extra. 16/16 live questions across real
+sweep and refusal days now answer; the out-of-window date is still declined and the
+adversarial prompt still refused, so nothing was loosened.
+
+The risks table's "LLM asserts an untraceable claim" row held up — the guard never let a
+fabrication through. The failure was the opposite one the plan never listed: **a guard so
+strict it rejected the engine's own words.** Worth carrying into any future guard work.
+
+### What is left
+
+- **Ticket `0009` — the deploy.** `Procfile`, root `requirements.txt` and `.gcloudignore`
+  landed in #18, so `gcloud run deploy --source .` has what it needs. Not yet run: no GCP
+  project, no region, no service. The runbook with the exact commands is `DEPLOY.local.md`
+  (gitignored, carries real infra values once filled in); it should graduate to
+  `docs/runbooks/deploy.md` once it has been executed end to end.
+- Deployment remains **unverified by definition** until there is a project to deploy into.
+  The Phase C acceptance check — a Cloud Run URL answering `/healthz` and, with the API key,
+  `/decisions` — has not been performed.
+
+---
+
 ## Problem Frame
 
 The origin requirements doc (linked below) establishes the product shape: a single
@@ -876,14 +938,18 @@ and no dead-end UI state on failure.
 
 ## Phased Delivery
 
-### Phase A — Backend & decision data
-- U1 (precompute), U2 (service scaffold), U3 (base narration), U4 (assistant endpoint)
+See **Build Progress** at the top for current status and the PRs each unit landed in.
 
-### Phase B — Frontend
+### Phase A — Backend & decision data — **done**
+- U1 (precompute), U2 (service scaffold), U3 (base narration), U4 (assistant endpoint)
+- U4's guard needed three fixes after its first live model call; see Build Progress.
+
+### Phase B — Frontend — **done**
 - U5 (Expo scaffold), U6 (dashboard), U7 (assistant modal)
 
-### Phase C — Deployment
-- U8 (Cloud Run + CI)
+### Phase C — Deployment — **partly done**
+- U8 splits in two. CI (`0008`) is done. The Cloud Run deploy (`0009`) is **not**: the build
+  config is committed, but no GCP project exists and the deploy has never been run.
 
 ---
 
