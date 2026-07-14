@@ -611,11 +611,26 @@ class Snapshot:
     portfolio: CardPortfolio
     policy: UserPolicy
     # p90 of daily discretionary spend — the high end, deliberately.
+    #
+    # `forecast.py` charges this against **every** remaining day of the horizon, which is the
+    # documented bug: variance grows with sqrt(t) and this model grows it with t. A 30-day sum
+    # has 30x the mean but only ~5.5x the standard deviation, so applying the daily quantile's
+    # whole deviation on all 30 days inflates the padding by about 5.5x. Measured over-reserve:
+    # $400-970, against a $750 default buffer. See docs/learnings/2026-07-13-*.
     daily_discretionary_high: Decimal
     # Coefficient of variation of observed monthly income. High = unforecastable.
     income_variation: float
     # Days of transaction history we actually have.
     history_days: int
+    # The household's own worst plausible 30-day spend, read straight off their **own**
+    # enumerated rolling windows — non-parametric, no distributional assumption, using their
+    # real skew and autocorrelation. `None` means we have not measured it and the forecast
+    # falls back to `daily_discretionary_high` (the old, over-reserving model).
+    #
+    # This is the fix for the bug above, and it is the one change in this engine that
+    # **loosens** — so it ships behind a measured breach rate and not before. See
+    # `backend/calibrate.py` and `engine/forecast.py`.
+    spend_30d_high: Decimal | None = None
     # Sum of sweeps initiated but not yet settled — money already gone that the
     # bank may not have subtracted from the balance yet.
     sweeps_in_flight: Decimal = ZERO

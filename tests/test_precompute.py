@@ -16,11 +16,13 @@ import pytest
 from backend import artifact as art
 from backend.precompute import (
     CHECKING_ID,
+    DEMO_POLICY,
     DEMO_SPEC,
     SAVINGS_BALANCE,
     STATEMENT_DAY,
     WINDOW_START,
     DebtLedger,
+    assemble_snapshot,
     build,
     classify_behavior,
     daily_discretionary_high,
@@ -32,6 +34,7 @@ from backend.precompute import (
     income_variation,
     infer_close_day,
     observed_monthly_payment,
+    spend_30d_high,
 )
 from engine.models import (
     ZERO,
@@ -771,3 +774,101 @@ class TestTheSpendSnapshot:
 
         assert "rolling_30d" not in body
         assert "SpendProfile" not in body
+
+
+class TestTodayIsNotForecastTwice:
+    """The payday double-count. A live bug, and an expensive one.
+
+    `Snapshot.accounts[].balance` is the balance at the **end of today**, so everything that
+    happened today is already inside it. `derive_cash_events` used to emit today's events as
+    *future* ones as well — so on a payday the forecast counted that paycheck twice.
+
+    A $2,600 phantom inflow. The engine projected a low thousands of dollars too high, swept
+    against money that was never there, and overdrew the household. Across a 60-household
+    population it caused **43 sweep-caused overdrafts** — `prd.md` §5.2's guardrail, breached —
+    and the single-household demo showed **zero**, because whether it bites depends on the cash
+    position on whichever paydays a given seed happens to produce.
+
+    It is the exact inverse of the rule the forecast is built on: money arrives **late and
+    small**. Counting a paycheck that has already landed as though it were still coming makes it
+    arrive *twice*.
+    """
+
+    def test_no_event_is_emitted_for_today(self) -> None:
+        payday = date(2026, 1, 2)  # DEMO_SPEC's first payday
+        events = derive_cash_events(DEMO_SPEC, payday)
+
+        assert events, "the horizon should still hold future events"
+        assert all(e.expected_date > payday for e in events), (
+            "an event on `today` is already in the balance — emitting it again forecasts it twice"
+        )
+
+    def test_a_payday_today_is_not_counted_as_future_income(self) -> None:
+        payday = date(2026, 1, 2)
+        payroll = [e for e in derive_cash_events(DEMO_SPEC, payday) if e.label == "payroll"]
+
+        assert payroll, "later paydays are still forecast"
+        assert all(e.expected_date > payday for e in payroll)
+
+    def test_a_bill_due_today_is_not_counted_as_a_future_outflow(self) -> None:
+        """The same bug in the safe direction — but a *phantom* outflow is still a phantom.
+
+        It would make the engine refuse for money that had already left, which is a smaller sin
+        than overdrafting someone and still a lie about their balance.
+        """
+        rent_day = date(2026, 2, 1)  # DEMO_SPEC's rent falls on the 1st
+        rent = [e for e in derive_cash_events(DEMO_SPEC, rent_day) if e.label == "rent"]
+
+        assert all(e.expected_date > rent_day for e in rent)
+
+
+class TestTheSpendDial:
+    """`spend_30d_high` — the empirical spend model, shipped **inert**.
+
+    `SPEND_QUANTILE = None` means `forecast.py` falls back to `daily_discretionary_high`, which
+    is today's behaviour exactly. The structure ships; the loosening does not — the measurement
+    refused it. See `backend/calibrate.py` and
+    `docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`.
+    """
+
+    def test_the_dial_is_off_and_the_engine_behaves_exactly_as_it_did(self) -> None:
+        """If this ever fails, someone has loosened the forecast — and that needs a measurement,
+        not a commit."""
+        from backend.precompute import SPEND_QUANTILE
+
+        assert SPEND_QUANTILE is None
+
+    def test_with_the_dial_off_no_snapshot_carries_an_empirical_reserve(self) -> None:
+        history = generate(DEMO_SPEC, WINDOW_START, 120, seed=7)
+        snapshot = assemble_snapshot(
+            history=history,
+            today=WINDOW_START + timedelta(days=90),
+            spec=DEMO_SPEC,
+            policy=DEMO_POLICY,
+            ledger_balance=money("9000.00"),
+            checking=money("3000.00"),
+        )
+        assert snapshot.spend_30d_high is None
+
+    def test_the_dial_reads_the_households_own_worst_window(self) -> None:
+        """Non-parametric: no distributional assumption, their real skew and autocorrelation."""
+        history = generate(DEMO_SPEC, WINDOW_START, 200, seed=7)
+        today = WINDOW_START + timedelta(days=180)
+
+        worst = spend_30d_high(history, today, quantile=1.0)
+        median = spend_30d_high(history, today, quantile=0.5)
+
+        assert worst is not None and median is not None
+        assert worst > median, "the worst window is worse than the median one"
+
+    def test_a_quantile_above_one_scales_past_their_own_history(self) -> None:
+        """The only way an empirical model can be as conservative as the parametric one it
+        replaces — see the calibration. Their worst month is not the worst month they can have."""
+        history = generate(DEMO_SPEC, WINDOW_START, 200, seed=7)
+        today = WINDOW_START + timedelta(days=180)
+
+        worst = spend_30d_high(history, today, quantile=1.0)
+        scaled = spend_30d_high(history, today, quantile=1.5)
+
+        assert worst is not None and scaled is not None
+        assert scaled == money(worst * Decimal("1.5"))

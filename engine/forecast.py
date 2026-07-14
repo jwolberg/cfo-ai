@@ -30,6 +30,42 @@ def funding_account(snapshot: Snapshot) -> Account | None:
     return None
 
 
+def _spend_per_day(snapshot: Snapshot) -> Decimal:
+    """What we charge against each remaining day of the horizon.
+
+    ## The old model, and why it over-reserves
+
+    `daily_discretionary_high` is a p90 of *daily* spend, and the forecast charged it against
+    every one of the 30 days — an effective reserve of `30 x p90_daily`. That is wrong, and it is
+    wrong by about 5.5x of the padding: **variance grows with sqrt(t), and that model grows it
+    with t.** A 30-day sum has 30x the mean but only ~sqrt(30) ~ 5.5x the standard deviation.
+
+    Measured over three years of daily spend for three household shapes, it reserved **more than
+    the household's worst 30-day stretch had ever been** — not a conservative estimate of a bad
+    month, a month worse than any they have ever had. The over-reserve was **$400-970** against a
+    $750 default buffer, so on a large share of days this single error was the entire difference
+    between sweeping and refusing (`docs/learnings/2026-07-13-the-spend-model-over-reserves.md`).
+
+    ## The new model
+
+    `spend_30d_high` is the household's own worst plausible 30-day total, read straight off their
+    **own** enumerated rolling windows. Non-parametric by construction: no distributional
+    assumption, their real skew and autocorrelation, and explainable in one sentence — *"your
+    worst 30-day stretch last year was $2,231."* Deterministic, because the "sampling" is their
+    own history, which is already in the `Snapshot`.
+
+    It is amortized flat across the horizon rather than front-loaded. The **total** is what the
+    reserve is about; the daily shape only decides which day the projected low lands on, and a
+    flat charge makes no claim about *when* in the month they spend that we cannot support.
+
+    `None` falls back to the old model. That fallback is not a nicety — it is what lets this ship
+    inert and be turned on against a measured breach rate rather than an argument.
+    """
+    if snapshot.spend_30d_high is None:
+        return snapshot.daily_discretionary_high
+    return snapshot.spend_30d_high / HORIZON_DAYS
+
+
 def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
     """Return (low_balance, day_it_occurs) for the *funding account* over the horizon.
 
@@ -95,9 +131,7 @@ def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
         day = snapshot.today + timedelta(days=offset)
         balance += daily.get(day, ZERO)
         if offset > 0:
-            # Assume the user spends at the high end of their discretionary range,
-            # every remaining day of the horizon.
-            balance -= snapshot.daily_discretionary_high
+            balance -= _spend_per_day(snapshot)
 
         if balance < low:
             low = balance

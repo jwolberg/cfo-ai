@@ -108,6 +108,20 @@ SERVED_DAYS = 90
 WINDOW_START = date(2026, 1, 1)
 SEED = 7
 
+# --- the spend-model dial -------------------------------------------------------------
+#
+# `None` = the old model: `forecast.py` charges p90-of-daily against all 30 days, an effective
+# `30 x p90_daily`. Measured to over-reserve by $400-970 against a $750 buffer, and to reserve
+# more than the household's worst 30-day stretch in three years.
+#
+# A float = the quantile of the household's **own** enumerated 30-day windows to reserve against.
+# 1.0 is the worst month they have ever actually had.
+#
+# **This dial only ever loosens**, which is the one direction `decision-engine.md` §3 forbids
+# without evidence. It is set from a measured breach rate over a population — see
+# `backend/calibrate.py`. Do not move it from an argument.
+SPEND_QUANTILE: float | None = None
+
 # Trailing windows for the rolling statistics the engine reads.
 SPEND_LOOKBACK_DAYS = 90
 # The spend profile looks back a year and reads its quantile off overlapping 30-day windows —
@@ -311,7 +325,23 @@ def derive_cash_events(
     through = today + timedelta(days=horizon)
     events: list[CashEvent] = []
 
-    for day in _paydays(spec.payroll, today, through):
+    # **Strictly after today.** `Snapshot.accounts[].balance` is the balance at the *end* of
+    # today, so everything that happened today is already inside it. Emitting today's events as
+    # *future* ones adds them a second time.
+    #
+    # This was a live bug, and an expensive one. On a payday the forecast counted that day's
+    # paycheck twice — a $2,600 phantom inflow — projected a low that was thousands of dollars
+    # too high, and swept against money that was never there. Across a 60-household population
+    # it produced **43 sweep-caused overdrafts**, which is `prd.md` §5.2's guardrail, breached.
+    # The single-household demo never showed it, because whether it bites depends on the
+    # household's cash position on the paydays a given seed happens to produce.
+    #
+    # It is the exact inverse of the rule this engine is built on: money must arrive **late and
+    # small**. Counting a paycheck that has already landed as though it were still coming makes
+    # it arrive *twice*.
+    tomorrow = today + timedelta(days=1)
+
+    for day in _paydays(spec.payroll, tomorrow, through):
         # Payroll lands on the day it lands; the range covers ordinary overtime/benefits
         # drift, and the one-day jitter covers a bank holiday pushing a deposit out.
         net = spec.payroll.net_pay
@@ -329,7 +359,7 @@ def derive_cash_events(
         )
 
     for bill in spec.bills:
-        for day in _monthly(today, bill.day_of_month, through):
+        for day in _monthly(tomorrow, bill.day_of_month, through):
             mean = bill.mean
             events.append(
                 CashEvent(
@@ -345,7 +375,7 @@ def derive_cash_events(
             )
 
     for card in spec.cards:
-        for day in _monthly(today, card.payment_day_of_month, through):
+        for day in _monthly(tomorrow, card.payment_day_of_month, through):
             # Tagged CARD_PAYMENT, so `forecast.py` skips it: the reserve is the authoritative
             # source for what this card takes out of checking. Counting it here as well would
             # subtract the same payment twice.
@@ -521,6 +551,43 @@ def observed_monthly_payment(history: History, card: CardSpec, today: date) -> D
         # sweep on these days anyway.
         return None
     return money(sum(payments, ZERO) / len(payments))
+
+
+def spend_30d_high(history: History, today: date, quantile: float | None) -> Decimal | None:
+    """The household's worst plausible 30-day spend, off their **own** enumerated windows.
+
+    `quantile` is **the dial**. `None` means the empirical model is off and `forecast.py` falls
+    back to `daily_discretionary_high` — today's behaviour, exactly.
+
+    Non-parametric on purpose. The 2026-07-13 learning is explicit about why a parametric
+    `mu + z*sigma*sqrt(t)` is the wrong instrument: real spend is zero-inflated and right-skewed,
+    so sigma flatters the tail. The counter-intuitive detail is that the *fat-tailed* household
+    sits only 3.4 sigma into its tail while the *steady* one sits 7.2 sigma into its — skew
+    inflates sigma, so "sigma into the tail" is exactly backwards as a safety measure.
+
+    Enumerating their own windows makes no distributional assumption at all, uses their real skew
+    and autocorrelation, and is explainable in one sentence.
+    """
+    if quantile is None:
+        return None
+
+    windows = _rolling_30d(list(history.as_of(today).discretionary_series()))
+    if not windows:
+        # Not enough history to enumerate a single 30-day window. Fall back rather than invent —
+        # and `INSUFFICIENT_HISTORY` is already refusing to sweep on these days anyway.
+        return None
+
+    ordered = sorted(windows)
+    # Nearest-rank, and it must round **up**: the reserve may never be smaller than the quantile
+    # the dial asked for. q=1.0 is the worst window they have ever actually had.
+    #
+    # A quantile above 1.0 means "the worst window, scaled" — the dial can reach *past* their own
+    # history, which is the only way an empirical model can be as conservative as the parametric
+    # one it replaces. See backend/calibrate.py.
+    scale = Decimal(str(max(quantile, 1.0)))
+    q = min(quantile, 1.0)
+    rank = max(1, -(-int(len(ordered) * q * 100) // 100))
+    return money(ordered[min(rank, len(ordered)) - 1] * scale)
 
 
 def observed_monthly_charges(history: History, card: CardSpec, today: date) -> Decimal | None:
@@ -728,6 +795,7 @@ def assemble_snapshot(
     checking: Decimal,
     swept_this_week: Decimal = ZERO,
     days_since_last_sweep: int | None = None,
+    spend_quantile: float | None = SPEND_QUANTILE,
 ) -> Snapshot:
     """The `Snapshot` the engine sees on `today`, given the walk's state.
 
@@ -773,6 +841,7 @@ def assemble_snapshot(
         daily_discretionary_high=daily_discretionary_high(history, today),
         income_variation=income_variation(history, today),
         history_days=(today - history.start).days + 1,
+        spend_30d_high=spend_30d_high(history, today, spend_quantile),
         sweeps_in_flight=ZERO,
         swept_this_week=swept_this_week,
         days_since_last_sweep=days_since_last_sweep,
