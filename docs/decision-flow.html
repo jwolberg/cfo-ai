@@ -318,11 +318,107 @@
     .exit.empty { display: none; }
     .gap { display: none; }
   }
+
+  /* --- presentation mode ------------------------------------------------
+     The same markup, read two ways. In document mode a .slide is an ordinary
+     block and the page is one continuous scroll — identical to before this
+     existed. Adding `deck` to <body> turns each .slide into a snapped, full-
+     viewport panel. No content is duplicated and nothing is hidden: a deck is
+     a *layout* of this document, not a second copy of it that can drift. */
+
+  .deck-toggle {
+    position: fixed;
+    top: 1rem; right: 1rem;
+    z-index: 50;
+    font: 600 .72rem/1 var(--mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--go);
+    background: var(--panel);
+    border: 1px solid var(--go-rule);
+    border-radius: 999px;
+    padding: .6rem 1rem;
+    cursor: pointer;
+    box-shadow: var(--shadow);
+  }
+  .deck-toggle:hover { background: var(--go-bg); }
+
+  /* Slide counter — only ever visible in deck mode. */
+  .deck-count {
+    position: fixed;
+    bottom: 1.1rem; right: 1.25rem;
+    z-index: 50;
+    display: none;
+    font: 600 .72rem/1 var(--mono);
+    color: var(--faint);
+  }
+  body.deck .deck-count { display: block; }
+
+  body.deck {
+    padding: 0;
+    height: 100vh;
+    overflow-y: scroll;
+    scroll-snap-type: y mandatory;
+    scroll-behavior: smooth;
+  }
+  body.deck .wrap { max-width: none; }
+
+  body.deck .slide {
+    /* A fixed height, not min-height: min-height lets a tall slide simply grow,
+       which silently defeats the overflow below and leaves the diagram running
+       off the bottom of the screen mid-presentation. */
+    height: 100vh;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    /* The one genuinely tall slide (the decision-flow diagram) scrolls inside
+       itself. `safe center` centers short slides but falls back to top-aligned
+       for overflowing ones — plain `center` would push their first line up out
+       of reach, unscrollable. */
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: safe center;
+    padding: 4.5rem clamp(1.25rem, 6vw, 5rem) 4rem;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* Slides carry their own top margin in deck mode, so the document-mode
+     margins that create rhythm in a scroll would double it here. */
+  body.deck .slide > :first-child { margin-top: 0; }
+  body.deck .slide h2 { margin-top: 0; }
+  body.deck .slide .subhead { margin-top: 0; }
+
+  /* Presenting is a further-away read, so type comes up — but only as far as a
+     slide can afford. A projector's viewport is short, and type that overflows
+     a slide costs more legibility than it buys. */
+  body.deck .lede, body.deck .lede-list { font-size: 1.1rem; max-width: 74ch; }
+  body.deck .thesis { font-size: 1.15rem; max-width: 74ch; }
+  body.deck h1 { font-size: clamp(2rem, 5vw, 3.2rem); }
+  body.deck .loop { gap: 1rem; }
+
+  /* The tall slides get *less* chrome, not more, so they fit rather than scroll.
+     The !important is load-bearing: several .thesis blocks carry inline margins
+     from document mode, and those would otherwise win and push the slide over. */
+  body.deck .slide { --shadow: 0 1px 2px rgba(22,38,46,.04), 0 6px 18px -8px rgba(22,38,46,.10); }
+  body.deck .callout { padding: .95rem 1.2rem; margin-top: .85rem; }
+  body.deck .thesis { margin: 1rem 0 !important; }
+  body.deck .rules { padding: .25rem 1rem; }
+  body.deck th, body.deck td { padding: .45rem .6rem; }
+
+  /* Short viewports (a projector at 720p, a laptop with browser chrome) — give
+     the padding back to the content. */
+  @media (max-height: 900px) {
+    body.deck .slide { padding: 3rem clamp(1.25rem, 5vw, 3.5rem) 2.5rem; }
+  }
+
+  /* No hover/tap affordance for scrolling in a deck — hide the cursor hint. */
+  @media print { .deck-toggle, .deck-count { display: none; } }
 </style>
 </head>
 <body>
 <div class="wrap">
 
+<section class="slide">
 <header>
   <img class="brand" src="./design/logos/resfi-brand.svg"
        alt="resfi — responsible finance" width="259" height="88">
@@ -340,7 +436,9 @@
         top of my own list</li>
   </ol>
 </header>
+</section>
 
+<section class="slide">
 <h2><span class="section-num">01</span>The bet</h2>
 
 <div class="loop">
@@ -364,7 +462,9 @@
        automatically when we're wrong.</p>
   </div>
 </div>
+</section>
 
+<section class="slide">
 <div class="callout">
   <strong>This is a service people want.</strong> Tally: ~$172M raised, $855M valuation, shut down 2024
   &mdash; on CAC, not the model, the technology, or the product. Users liked it: <b>4.5 stars</b> across
@@ -373,6 +473,8 @@
   The estate split on the CAC line &mdash; LendingClub took the consumer app, while Pagaya took the
   decisioning platform, presumably to embed into partners it already serves at scale.
 </div>
+</section>
+<section class="slide">
 <div class="callout">
   <strong>Conservative estimates and auditability are must-haves from day one.</strong> Every scaled competitor in this category has ended up in front of a
   regulator. Dave: FTC + DOJ, 2024. Brigit: $18M FTC settlement.
@@ -385,7 +487,9 @@
   been rewritten three times. The record exists in the right form; nothing yet persists it. Reg E,
   NACHA, KYC/AML, and GLBA sign-off comes before any real rail connects &mdash; and so does that log.
 </div>
+</section>
 
+<section class="slide">
 <div class="callout">
   <strong>A bank won't build this &mdash; sweeping deposits onto a card it issues itself destroys the interest income it earns.</strong> Bank ROE has
   recovered somewhat over the past year, but the industry still trades near <b>1.0x book,
@@ -395,9 +499,11 @@
   them: B2B2C, not direct-to-consumer &mdash; embedded in a deposit-only neobank, a credit union,
   an employer benefits channel, or a specialty-finance network, not sold app-by-app to households.
 </div>
+</section>
 
 
 
+<section class="slide">
 <h2><span class="section-num">02</span>The engineering approach</h2>
 
 <h3 class="subhead">What I built</h3>
@@ -418,7 +524,9 @@
   <b>Method Financial</b> exists to sell. The second leg is the hard one, and it is the one every
   Tally-shaped product actually depends on. Neither is wired here.
 </div>
+</section>
 
+<section class="slide">
 <p class="lede" style="margin-bottom:1.25rem">
   Below is an outline of the deployed tech stack:
 </p>
@@ -474,7 +582,9 @@
   The dashboard and base explanations never call the model at all, so a provider outage can't take
   the product down.
 </div>
+</section>
 
+<section class="slide">
 <h3 class="subhead">The Decision Engine</h3>
 
 <p class="thesis" style="margin: 0 0 1.75rem">
@@ -639,125 +749,25 @@
   </div>
 
 </div>
+</section>
 
+<section class="slide">
 <h3 class="subhead">The one rule inside the forecast</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
   Before it moves a dollar, the engine has to answer one question: <em>how low does this household&rsquo;s
-  checking account get over the next 30 days?</em> That is a guess about the future, and it is built out
-  of a dozen smaller guesses &mdash; when the paycheck lands, how big rent is, what they&rsquo;ll spend
-  on a Saturday. <strong>Every one of those guesses is deliberately resolved against us.</strong>
+  checking account get over the next 30 days?</em> That is a guess about the future, built out of a dozen
+  smaller guesses &mdash; when the paycheck lands, how big rent is, what they&rsquo;ll spend on a Saturday.
+  <strong>Every one of them is deliberately resolved against us.</strong>
 </p>
 
-<p class="thesis" style="margin: 0 0 1.5rem">
+<p class="thesis" style="margin: 0">
   <em>Money arrives late and small. It leaves early and large.</em><br>
   <strong>A forecast that is right on average overdrafts half its users half the time.</strong>
 </p>
+</section>
 
-<p class="lede" style="margin-bottom:1.25rem">
-  That sentence is the whole safety argument. A forecast tuned for <em>accuracy</em> is wrong in both
-  directions equally &mdash; and being wrong in one of those directions means we swept money a household
-  turned out to need. So the engine is not tuned for accuracy. It is tuned to be wrong in the
-  <em>harmless</em> direction, on purpose, on every input:
-</p>
-
-<div class="rules">
-<table>
-  <thead><tr><th>What we&rsquo;re unsure about</th><th>What the engine assumes instead</th></tr></thead>
-  <tbody>
-    <tr>
-      <td><b>When their paycheck lands</b></td>
-      <td>Later than expected. Payroll slips; it rarely rushes.</td>
-    </tr>
-    <tr>
-      <td><b>How big the paycheck is</b></td>
-      <td>The low end of what we&rsquo;ve seen from them.</td>
-    </tr>
-    <tr>
-      <td><b>Income we&rsquo;re less than 80% sure of</b></td>
-      <td><b>Not money at all.</b> An expected deposit we can&rsquo;t vouch for is a hope, and you
-          cannot spend a hope.</td>
-    </tr>
-    <tr>
-      <td><b>When a bill hits</b></td>
-      <td>Earlier than expected &mdash; the mirror image of the paycheck.</td>
-    </tr>
-    <tr>
-      <td><b>How big the bill is</b></td>
-      <td>The high end.</td>
-    </tr>
-    <tr>
-      <td><b>Bills we&rsquo;re unsure of</b></td>
-      <td><b>Counted anyway.</b> An uncertain bill is still a bill.</td>
-    </tr>
-    <tr>
-      <td><b>Charges still settling</b></td>
-      <td>Money out is <b>already gone</b>. Money in is <b>not there yet</b>.</td>
-    </tr>
-    <tr>
-      <td><b>Our own sweep, not yet cleared</b></td>
-      <td><b>Already gone</b> &mdash; we never give ourselves the benefit of the doubt that the bank
-          hasn&rsquo;t taken it.</td>
-    </tr>
-    <tr>
-      <td><b>What they&rsquo;ll spend day to day</b></td>
-      <td>A <b>heavy day &mdash; every single day</b>. Not their average day: roughly their 90th-percentile
-          day, repeated for thirty days straight.</td>
-    </tr>
-  </tbody>
-</table>
-</div>
-
-
-<p class="thesis" style="margin: 1.75rem 0 1.5rem">
-  <strong>Nothing ships here because it is clever. It ships because it survived measurement on a
-  population.</strong><br>
-  Two things follow from that rule, and both look like mistakes until you see the rule:
-  <strong>we run a spend model we can prove is wrong, and we rejected the better one.</strong>
-</p>
-
-<div class="callout">
-  <strong>1 &middot; The model we run is wrong, and we shipped it anyway.</strong> That last row &mdash;
-  a heavy spending day, <em>thirty days running</em> &mdash; describes a month no household has ever
-  had. Nobody has their worst Saturday thirty times in a row. So the engine sets aside <strong>more
-  money than the household has ever spent in any 30-day stretch</strong>, and that is where most of the
-  <b>~$544K</b> of safe-money-we-declined-to-move goes. It errs toward caution, which is exactly why it
-  could sit there unnoticed: <strong>a bug that overdrafts someone is found in a week; a bug that is
-  merely too careful never files a complaint.</strong>
-</div>
-
-<div class="callout">
-  <strong>2 &middot; So we fixed it &mdash; and the measurement refused the fix.</strong> The obvious
-  replacement: reserve against the household&rsquo;s <em>own</em> worst month on record rather than a
-  hypothetical one. It assumes nothing &mdash; and it is <em>worse</em>. Across 60 households and 4,320 graded days
-  it leaves people short on <b>19.8%</b> of days against today&rsquo;s <b>2.3%</b>, even set to their
-  worst month <em>ever</em>. So it ships turned <b>off</b>. <strong>The whiteboard said ship it; the
-  population said no.</strong>
-  <br><br>
-  <strong>Why the better model loses is a data problem, not a math problem &mdash; and that distinction
-  decides what we do next.</strong> The model isn&rsquo;t miscalculating. It is reading &ldquo;their
-  worst month&rdquo; off the <b>60&ndash;150 days</b> of history we actually have, and two to five months
-  is not enough to have <em>seen</em> a household&rsquo;s bad month &mdash; so it guesses one that is
-  <b>58&ndash;86%</b> of the truth and under-reserves by the difference. It is least reliable exactly
-  where the stakes are highest: volatile households have bad months <em>rarely</em>, so a short history
-  is the one most likely to have missed them.
-  <br><br>
-  <strong>A math problem an engineer fixes in a sprint. A data problem cannot be engineered away
-  &mdash; history can only be acquired.</strong> Give the same model three years instead of two months
-  and its failure rate falls to <b>3.7%</b>, and to <b>zero</b> on the household it was most dangerous
-  for. So this is not a dead end; it is a priced, dated ask: <strong>longer histories &mdash; from a
-  data partner that reaches further back, or from household tenure &mdash; buy back the recoverable
-  half of that $544K.</strong> It is also the flywheel in miniature: <strong>the engine gets less
-  conservative, and the household gets more money moved, the longer they stay.</strong>
-</div>
-
-<div class="callout go">
-  <strong>That is the assertion.</strong> A wrong model kept and a better model rejected are not two
-  embarrassments &mdash; they are the same rule enforced twice. <strong>We do not ship what reasons
-  well. We ship what measured well on 60 households.</strong> The harness caught this before a single
-  real dollar moved, which is the only time catching it is free.
-</div>
-
+<section class="slide">
 <h3 class="subhead">What happens after the money moves</h3>
 
 <div class="loop">
@@ -815,8 +825,8 @@
     </tr>
     <tr>
       <td><b>False-refusal cost</b><br>our conservatism, priced</td>
-      <td>~<b>$544K</b> &mdash; money we left idle that was genuinely safe to move. The prize for
-          fixing the spend model, and the reason it is worth fixing properly.</td>
+      <td>~<b>$544K</b> &mdash; money we left idle that was genuinely safe to move. The conservatism
+          above, priced. Recovering it safely is the open engineering problem.</td>
     </tr>
   </tbody>
 </table>
@@ -835,7 +845,9 @@
   a seed happens to produce, and one seed never landed on one. <strong>A guardrail measured on one
   household is not measured.</strong>
 </div>
+</section>
 
+<section class="slide">
 <h2><span class="section-num">03</span>Open distribution questions</h2>
 
 <p class="lede" style="margin-bottom:1.25rem">
@@ -885,11 +897,130 @@
   businesses anyway. It doesn't specify a mechanic. A share of interest genuinely avoided fits the
   constraint and the realized KPI, but hasn't closed on a spreadsheet yet.
 </div>
+</section>
 
+<section class="slide">
 <footer>
   Drawn from the engine itself, and from my own reasoning about the market it's entering.
 </footer>
+</section>
 
 </div>
+
+<button class="deck-toggle" id="deckToggle" aria-pressed="false">Present</button>
+<div class="deck-count" id="deckCount" aria-hidden="true"></div>
+
+<script>
+/* Document <-> presentation, over the same DOM.
+
+   The deck is a layout of this page, not a second copy of it. There is no
+   parallel set of slides to keep in sync, so the deck cannot drift from the
+   document the way an exported one would.
+
+   The mode is remembered, and it is also addressable: #present opens straight
+   into the deck, which is what you want when the link is going in a calendar
+   invite rather than being clicked by you on stage. */
+(function () {
+  var body    = document.body;
+  var toggle  = document.getElementById('deckToggle');
+  var counter = document.getElementById('deckCount');
+  var slides  = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+
+  function isDeck() { return body.classList.contains('deck'); }
+
+  function currentIndex() {
+    // The slide occupying the middle of the viewport is the one being read.
+    var mid = window.innerHeight / 2;
+    for (var i = 0; i < slides.length; i++) {
+      var r = slides[i].getBoundingClientRect();
+      if (r.top <= mid && r.bottom > mid) return i;
+    }
+    return 0;
+  }
+
+  function paintCount() {
+    if (isDeck()) counter.textContent = (currentIndex() + 1) + ' / ' + slides.length;
+  }
+
+  function setDeck(on, opts) {
+    body.classList.toggle('deck', on);
+    toggle.textContent = on ? 'Read' : 'Present';
+    toggle.setAttribute('aria-pressed', String(on));
+    try { localStorage.setItem('resfi-deck', on ? '1' : '0'); } catch (e) {}
+
+    // Entering the deck, land on the slide the reader was already looking at
+    // rather than snapping them back to the title.
+    if (on && opts && opts.anchor != null) {
+      slides[opts.anchor].scrollIntoView();
+    }
+    paintCount();
+  }
+
+  /* One slide — the decision-flow diagram — is genuinely taller than any
+     viewport, so it scrolls inside itself. Advancing must therefore page
+     *through* a tall slide before leaving it; otherwise a single arrow press
+     jumps the diagram's bottom half and the flow is presented with its
+     conclusion missing. */
+  function go(delta) {
+    var i  = currentIndex();
+    var el = slides[i];
+    var slack = el.scrollHeight - el.clientHeight;
+
+    if (slack > 4) {
+      var atEnd   = el.scrollTop >= slack - 4;
+      var atStart = el.scrollTop <= 4;
+      if ((delta > 0 && !atEnd) || (delta < 0 && !atStart)) {
+        el.scrollBy({ top: delta * el.clientHeight * 0.85, behavior: 'smooth' });
+        return;
+      }
+    }
+
+    var next = Math.min(Math.max(i + delta, 0), slides.length - 1);
+    var target = slides[next];
+
+    // Arriving at a tall slide backwards, land on its end — that is the part
+    // you were just reading, and the part you are coming back to.
+    var overflow = target.scrollHeight - target.clientHeight;
+    if (delta < 0 && overflow > 4) target.scrollTop = overflow;
+    else if (overflow > 4) target.scrollTop = 0;
+
+    target.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  toggle.addEventListener('click', function () {
+    setDeck(!isDeck(), { anchor: currentIndex() });
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    // `p` toggles from anywhere; Esc always returns to the document.
+    if (e.key === 'p' || e.key === 'P') {
+      e.preventDefault();
+      setDeck(!isDeck(), { anchor: currentIndex() });
+      return;
+    }
+    if (e.key === 'Escape' && isDeck()) { setDeck(false); return; }
+    if (!isDeck()) return;
+
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+      e.preventDefault(); go(1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+      e.preventDefault(); go(-1);
+    } else if (e.key === 'Home') {
+      e.preventDefault(); slides[0].scrollIntoView({ behavior: 'smooth' });
+    } else if (e.key === 'End') {
+      e.preventDefault(); slides[slides.length - 1].scrollIntoView({ behavior: 'smooth' });
+    }
+  });
+
+  window.addEventListener('scroll', paintCount, { passive: true });
+
+  // #present in the URL wins over the remembered mode.
+  var stored = null;
+  try { stored = localStorage.getItem('resfi-deck'); } catch (e) {}
+  setDeck(location.hash === '#present' || stored === '1');
+})();
+</script>
 </body>
 </html>
