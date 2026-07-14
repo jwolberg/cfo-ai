@@ -277,15 +277,49 @@ class TestTheWalk:
 
     def test_the_weekly_cap_binds_when_sweeps_stack_up(self) -> None:
         """`Snapshot.swept_this_week` defaults to zero, so a walk that forgot to track it
-        would silently never bind WEEKLY_CAP — the cap would look enforced and never be."""
+        would silently never bind WEEKLY_CAP — the cap would look enforced and never be.
+
+        Note the explicit `min_days_between_sweeps=0`. Under the demo's own weekly cadence the
+        household gets one sweep a week, so a *weekly* cap has nothing to stack against and can
+        never bind — the cadence subsumes it. WEEKLY_CAP is not dead code (a household spacing
+        sweeps every 3 days with a high per-sweep cap still reaches it), but it is no longer
+        reachable at the shipped policy, and this test pins the walk's bookkeeping rather than
+        pretending otherwise.
+        """
         tight = UserPolicy(
             buffer_floor=money("800.00"),
             max_sweep=money("400.00"),
             max_weekly_sweep=money("500.00"),  # a second full sweep cannot fit
+            min_days_between_sweeps=0,  # the daily engine — the only cadence the cap can bind under
         )
         a = build(policy=tight)
 
         assert any(r.decision.has(ReasonCode.WEEKLY_CAP) for r in a.days)
+
+    def test_the_cadence_holds_the_engine_off_between_sweeps(self) -> None:
+        """The demo's own policy spaces sweeps a week apart — so the feed must show it."""
+        a = build()
+
+        swept = [r.day for r in a.days if r.decision.action is Action.SWEEP]
+        gaps = [(b - x).days for x, b in zip(swept, swept[1:], strict=False)]
+
+        assert swept, "the served window has no sweep to space"
+        assert all(g >= 7 for g in gaps), f"sweeps landed closer than the cadence allows: {gaps}"
+        assert any(r.decision.has(ReasonCode.CADENCE_HOLD) for r in a.days)
+
+    def test_a_cadence_hold_still_carries_a_projection(self) -> None:
+        """Daily data, weekly money — the days we hold are still measured.
+
+        A hold that arrived as a *blocking* refusal would carry no projected low, and
+        `engine/outcome.py:grade()` raises on those. Six days in seven would drop out of the
+        calibration record for a reason that has nothing to do with forecasting.
+        """
+        a = build()
+        held = [r for r in a.days if r.decision.has(ReasonCode.CADENCE_HOLD)]
+
+        assert held
+        assert all(r.decision.projected_low_balance is not None for r in held)
+        assert all(r.decision.has(ReasonCode.PROJECTION) for r in held)
 
     def test_the_idle_savings_advisory_is_surfaced(self) -> None:
         a = build()
@@ -298,7 +332,13 @@ class TestTheWalk:
         # Big enough to survive the household's own two card payments during the warm-up
         # (a smaller card clears before the served window even opens, and then there is no
         # sweep left to show), small enough that the sweeps finish it off inside the window.
-        a = build(spec=spec_with(balance=money("2400.00"), minimum_payment=money("50.00")))
+        #
+        # Raised from $2,400 when the cadence went weekly: one sweep a week at a $1,600 cap
+        # clears a $2,400 card during the *warm-up*, so the served window opened on an
+        # already-dead card and the build failed for want of a single SWEEP. $9,000 leaves
+        # ~8 sweeps of runway and ~27 paid-off days, so it is not perched on either cliff —
+        # and unlike the old figure it sits inside prd.md §3's $8-40k persona band.
+        a = build(spec=spec_with(balance=money("9000.00"), minimum_payment=money("50.00")))
 
         cleared = [r for r in a.days if r.paid_off]
         assert cleared

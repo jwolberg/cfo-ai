@@ -125,6 +125,7 @@ has to be broke once.
 | `INCOME_TOO_VARIABLE` | Above 0.25 coefficient of variation. **See [5] — this is the one that matters.** |
 | `BLACKOUT` | The user paused sweeps for today. |
 | `SWEEP_IN_FLIGHT` | ACH is not instant, and stacking is how you overdraft someone with their own money. |
+| `CADENCE_HOLD` | We paid the card recently. Every sweep is a draw on the tail; the number of draws is itself a risk control. **See [9].** |
 | `NO_DEBT` | The happiest refusal. |
 | `APR_UNKNOWN` | Rates unknown *and* more than one card, so we cannot tell which is costing them most. |
 | `NO_SURPLUS` | Nothing above the buffer and the reserved minimums. |
@@ -287,9 +288,11 @@ to ban. So `Debt.observed_monthly_payment` is the baseline, `minimum_payment` is
 to the interest math at all, and a test asserts that changing it cannot move the claim by a
 cent.
 
-Interest accrues **daily** (average-daily-balance, no intra-cycle compounding) because the
-product sweeps daily — a monthly amortization would value a sweep on day 2 and one on day 29
-identically, and be wrong in the direction of over-claiming.
+Interest accrues **daily** (average-daily-balance, no intra-cycle compounding) because that is
+how the *card* works — a monthly amortization would value a sweep on day 2 and one on day 29
+identically, and be wrong in the direction of over-claiming. This is a fact about the issuer, not
+about our cadence, and it stays true whatever [9] sets the spacing to. (It used to be justified
+here as "because the product sweeps daily," which was circular: the cadence was never chosen.)
 
 ### [7.1] Three ways the engine declines to say what it saved
 
@@ -378,3 +381,67 @@ bug begins to bite.**
 So the replay driver — the last unbuilt piece of the shadow-mode harness — **must sweep the cap
 across a range.** Run at production caps alone, it will measure a forecast error of zero and
 issue a false clean bill of health. There is a test that says so.
+
+## [9] How often we are allowed to act
+
+**Sweeps are spaced at least `UserPolicy.min_days_between_sweeps` apart. It ships at 7.**
+
+The engine used to sweep every day, and no document in this repo ever argued for that. It was a
+fossil of the v0 advice product, whose output was a *notification* and which listed "daily
+engagement" as a feature. [`prd.md`](./prd.md) §0 killed advice-only and kept the rhythm, so a
+daily notification cadence quietly became a daily ACH cadence.
+
+It contradicted [`prd.md`](./prd.md) §2 — *"we cannot win this on expected value, we have to win
+it on the tail"* — by taking three times as many draws on that tail. And the engine could not
+honour it anyway: `SWEEP_IN_FLIGHT` blocks while ACH settles, so each sweep already suppressed
+the next several days. The **weekly cap** was doing the pacing, which is not what a cap is for.
+
+Priced across the demo household with the throughput ceiling held constant, daily sweeping is
+worth about **$36/yr** in interest timing over weekly — and costs about **$48/yr more in ACH
+fees**. The advantage and the transaction cost cancel; the extra tail exposure is bought for
+nothing. Full measurement, and the 5×-too-high estimate that preceded it:
+[`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md).
+
+### [9.1] The hold runs *after* the forecast, and that placement is the design
+
+`CADENCE_HOLD` is **not** in `_blocking_reasons`, and it must never move there.
+
+A blocking reason short-circuits `decide()` before `conservative_low_balance()` runs, so the
+refusal carries no `projected_low_balance` — and `outcome.py:grade()` **raises** on exactly those
+([8]), because inventing a projection would feed the calibration distribution zeros that look
+like perfect forecasts. Gate the cadence up there and six days in seven stop being gradeable: the
+engine would still be wrong daily, it would simply no longer be *measured* daily, and
+[`strategy.md`](./strategy.md) §3 says that error distribution is the only asset that compounds.
+
+So the forecast runs every day regardless, and a held day carries its projection with it.
+
+**The cadence limits what we do, never what we know.** Daily data, weekly money.
+
+### [9.2] `false_refusal_cost` on a held day is a deferral, not a loss
+
+The trap this opens, stated before someone falls into it. On a `CADENCE_HOLD` day
+`would_sweep()` returns the full surplus while `swept` is zero, so `false_refusal_cost`
+([8.2]) reports the whole un-swept amount — but that money is **not gone**. It sits in the
+household's checking account and is swept next period. Sum `false_refusal_cost` naively across a
+window and you count the same dollars every single day they sit, which is how you would conclude
+the cadence costs thousands when it costs tens.
+
+A replay must **partition on `CADENCE_HOLD` before totalling it**. The honest price of the
+cadence is the interest on the deferral — the last column of the table in the learnings note, and
+about $9 per 90 days for the demo household.
+
+### [9.3] What the spacing rule gets wrong
+
+It is a **spacing** rule, not a **cycle** rule: seven days since the last sweep, wherever that
+falls. A household's surplus does not appear on a seven-day rhythm — it appears when they are
+paid, and it is spoken for when their bills clear.
+
+The better design decides once per *cash cycle*: the day after income lands and the cycle's known
+obligations are covered, which for a semimonthly or biweekly earner is naturally twice a month
+and for a monthly earner is once. `sim/household.py` already models pay cadence (`_paydays`,
+`_semimonthly`, `_monthly`); the engine does not look at it. A fixed 7-day spacing is a decent
+approximation of a biweekly household and a poor one for everyone else.
+
+Not built, deliberately: it needs the recurring-income detector that [6.2] already lists as
+assumed away, and the measured cost of getting it wrong is small ([9]). The dial exists in the
+meantime — `min_days_between_sweeps` is a policy value, and `0` restores the daily engine exactly.

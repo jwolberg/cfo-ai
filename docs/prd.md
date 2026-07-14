@@ -34,12 +34,16 @@ This PRD is that product.
 
 ## [1] The product
 
-**Every day, we move the cash you do not need onto the debt that costs you the most — and we are
-right about "do not need."**
+**We move the cash you do not need onto the debt that costs you the most — and we are right about
+"do not need."**
 
 The user connects their checking, savings, and cards once. From then on the system forecasts their
-near-term cash position, decides what is genuinely surplus, and sweeps it to the highest-cost
-balance. The user does nothing. They are told what happened and why.
+near-term cash position **every day**, decides what is genuinely surplus, and sweeps it to the
+highest-cost balance. The user does nothing. They are told what happened and why.
+
+**We watch daily. We move weekly.** Those are two different things and the distinction is
+load-bearing — see [2.4]. This used to read "every day, we move the cash," which was inherited
+unexamined from the v0 advice product ([0]) and never survived being measured.
 
 > *"You had $220 sitting idle in checking, so I moved it to your card. That's $31 of interest you
 > won't pay."*
@@ -87,6 +91,7 @@ they are the feature working. Explicit refusal conditions:
 - A large or unusual pending debit not yet posted.
 - A user-configured blackout window (e.g. the 7 days before rent).
 - Any recent sweep still in flight and unsettled.
+- **A sweep too recently made** — see [2.4].
 
 ### [2.2] High cash-flow variance is a disqualifying condition, not an edge case
 
@@ -114,6 +119,38 @@ enforced by the income statement rather than by good intentions.
 DOJ, 2024), Brigit ($18M FTC settlement) — and never for model inaccuracy. Always for consent,
 fees, and harm. A visible, automatic, no-questions guarantee is our best defense against becoming
 the third.
+
+### [2.4] How often we act is itself a risk control
+
+*(Added 2026-07-14.)*
+
+[2] says we win this on the tail, not on expected value. **Every sweep is an independent draw from
+that tail, so how many draws we take is a lever on risk as directly as how large any one of them
+is** — and until now nobody had ever set it.
+
+The system swept **daily**, and no document in this repo ever argued for it. It was a fossil of the
+v0 advice product ([0]), whose output was a *notification* and which counted "daily engagement" as
+a virtue. When advice-only was killed the rhythm survived and the payload changed underneath it. So
+this document promised to win on the tail while taking three times as many draws on it, and
+promised "the absence of a decision" ([1.1]) while making thirty of them a month. The engine could
+not honour it in any case: it already refuses while a sweep is unsettled, so ACH settlement was
+suppressing most of those days anyway.
+
+Measured across the demo household with throughput held constant, daily sweeping bought about
+**$36/yr** of interest timing over weekly — and cost about **$48/yr** more in ACH fees. The gain
+and the transaction cost cancel, and the extra tail exposure was being bought for nothing.
+
+**Sweeps are now spaced at least a week apart**, as a user policy value rather than a hardcoded
+constant. The forecast still runs every day and a held day is still graded: the cadence limits what
+we *do*, never what we *know*. Full measurement — including a first estimate that was 5× too high,
+in the direction that flattered the status quo — in
+[`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md);
+the engine's contract is [`decision-engine.md`](./decision-engine.md) §9.
+
+**Still wrong, and known:** a fixed weekly spacing is a proxy for what actually matters, which is
+the household's own cash cycle — surplus appears when they are *paid*, not every seventh day. The
+right rule decides once per pay cycle, which for a semimonthly earner is naturally twice a month
+and for a monthly earner once. It needs the recurring-income detector we have not built.
 
 ---
 

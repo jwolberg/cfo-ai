@@ -16,6 +16,7 @@ import pytest
 
 from engine.decide import MIN_SWEEP, decide
 from engine.models import (
+    ZERO,
     Account,
     AccountKind,
     Action,
@@ -793,3 +794,89 @@ def test_an_implausible_apr_is_rejected():
             minimum_due_date=TODAY + timedelta(days=20),
             apr=money("24.99"),  # 2499%, not 24.99% — a units bug, caught at the door
         )
+
+
+# --- the cadence: how often we are allowed to move money -------------------------
+#
+# prd.md §2 says we win this on the tail, not on expected value. Every sweep is an
+# independent draw from that tail, so the number of draws is a risk control in its own
+# right. These tests pin the one property that makes the cadence safe to reason about:
+# it limits what we *do*, and never what we *know*.
+
+
+def test_holds_when_the_last_sweep_was_too_recent():
+    d = decide(snapshot(days_since_last_sweep=3, policy=policy(min_days_between_sweeps=7)))
+
+    assert d.action is Action.REFUSE
+    assert d.amount == ZERO
+    assert ReasonCode.CADENCE_HOLD in {r.code for r in d.reasons}
+
+
+def test_sweeps_again_once_the_spacing_has_elapsed():
+    d = decide(snapshot(days_since_last_sweep=7, policy=policy(min_days_between_sweeps=7)))
+
+    assert d.action is Action.SWEEP
+    assert d.amount > ZERO
+
+
+def test_a_household_we_have_never_swept_for_is_eligible_on_day_one():
+    """None means "never swept", not "swept just now" — a new user must not wait a week."""
+    d = decide(snapshot(days_since_last_sweep=None, policy=policy(min_days_between_sweeps=7)))
+
+    assert d.action is Action.SWEEP
+
+
+def test_a_cadence_hold_still_carries_its_projection_and_stays_gradeable():
+    """The whole reason the hold sits *after* the forecast rather than in the blocking gates.
+
+    engine/outcome.py:grade() raises on a decision with no projected_low_balance — a blocking
+    refusal never ran the forecast, and grading one would feed the calibration distribution a
+    zero that looks like a perfect prediction. If the cadence blocked up there, six days in
+    seven would drop out of the record: the engine would still be wrong daily, but would no
+    longer be *measured* daily, and strategy.md §3's error distribution is the only asset that
+    compounds. Daily data, weekly money.
+    """
+    held = decide(snapshot(days_since_last_sweep=1, policy=policy(min_days_between_sweeps=7)))
+    swept = decide(snapshot(days_since_last_sweep=None, policy=policy(min_days_between_sweeps=7)))
+
+    assert held.action is Action.REFUSE
+    assert held.projected_low_balance is not None
+    # Same day, same household, same forecast — the cadence changed the action, not the view.
+    assert held.projected_low_balance == swept.projected_low_balance
+    assert ReasonCode.PROJECTION in {r.code for r in held.reasons}
+
+
+def test_a_quiet_week_does_not_push_the_next_eligible_day_out():
+    """The rule is spacing since the last *sweep*, not since the last *decision*.
+
+    If a no-surplus day reset the clock, a household that ran thin for one day would be locked
+    out for another full cadence — the engine punishing them for being poor that morning.
+    """
+    broke = snapshot(
+        accounts=(account("760.00"),),  # under buffer + reserved: nothing to move
+        days_since_last_sweep=9,
+        policy=policy(min_days_between_sweeps=7),
+    )
+    d = decide(broke)
+
+    assert d.action is Action.REFUSE
+    codes = {r.code for r in d.reasons}
+    assert ReasonCode.NO_SURPLUS in codes
+    assert ReasonCode.CADENCE_HOLD not in codes  # eligible; there was simply no money
+
+
+def test_zero_spacing_restores_the_daily_engine():
+    """The cadence is a policy value, not a law of nature. 0 == the engine as originally shipped."""
+    d = decide(snapshot(days_since_last_sweep=0, policy=policy(min_days_between_sweeps=0)))
+
+    assert d.action is Action.SWEEP
+
+
+def test_a_negative_spacing_is_rejected():
+    with pytest.raises(ValueError, match="min_days_between_sweeps"):
+        policy(min_days_between_sweeps=-1)
+
+
+def test_a_negative_days_since_last_sweep_is_rejected():
+    with pytest.raises(ValueError, match="days_since_last_sweep"):
+        snapshot(days_since_last_sweep=-1)

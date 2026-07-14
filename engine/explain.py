@@ -33,6 +33,11 @@ def usd(amount: object) -> str:
     return str(amount)
 
 
+def days(n: object) -> str:
+    """ "1 day", not "1 days". The engine hands us small integers and some of them are 1."""
+    return f"{n} day" if n == 1 else f"{n} days"
+
+
 def render(reason: Reason) -> str:
     p = reason.params
 
@@ -91,6 +96,13 @@ def render(reason: Reason) -> str:
                 f"Your balance is heading for a low of {usd(p['low'])} on {p['low_day']}. "
                 f"After your {usd(p['buffer'])} buffer and {usd(p['reserved'])} of minimum "
                 "payments, there's nothing spare — so your cash stays where it is."
+            )
+
+        case ReasonCode.CADENCE_HOLD:
+            return (
+                f"We paid your card {days(p['days_since'])} ago, and we space payments at least "
+                f"{days(p['min_days'])} apart. Your spare cash is safe where it is until then — "
+                "we'd rather make one good payment than several small ones."
             )
 
         case ReasonCode.BELOW_MIN_SWEEP:

@@ -466,3 +466,97 @@ The **key-in-keychain** hazard is real and bit us: `security -w` returns hex, no
 the stored bytes aren't clean ASCII — which happens the moment a trailing newline gets stored
 with the secret. That is the same newline hazard `DEPLOY.local.md` §3 warns about for
 `gcloud secrets create`. Worth a line in the runbook that the *storage* step has it too.
+
+---
+
+## 2026-07-14 — The sweep cadence: daily → weekly (not a ticket; a decision that was never made)
+
+Not from the build plan. It came out of reading the PRD, the plan, `decision-engine.md`, and
+`decision-flow.html` for where the *daily* decision cadence had been decided — and finding that it
+never had been.
+
+### What I found
+
+`archive/prd-v0-advice-only.md` is an **advice** product: it "answers one question every day" and
+lists **"Daily engagement"** among the reasons the problem was attractive. Daily was an engagement
+property of a product whose output was a notification. `prd.md` §0 then killed advice-only on the
+RCT evidence and kept the rhythm — so §1's headline read "**Every day**, we move the cash you do not
+need." A daily notification cadence had become a daily **ACH** cadence, and nothing anywhere
+revisited it. `decision-engine.md` §7 even justified the daily interest model "*because the product
+sweeps daily*", which is circular.
+
+Two things should have caught it:
+
+1. **The PRD contradicts itself.** §2: "we cannot win this on expected value, we have to win it on
+   the tail." Then it takes ~12 draws/month instead of ~4. §1.1: what we sell is "the absence of a
+   decision" — while making 30 of them a month.
+2. **The engine couldn't do it anyway.** `SWEEP_IN_FLIGHT` refuses while ACH is unsettled (2–3
+   days), so daily sweeping was never reachable in production. The demo only *looked* like it could
+   because `precompute.py` hardcodes `sweeps_in_flight=ZERO` — which is why the old artifact opened
+   on runs of four consecutive $400 sweeps. What was actually pacing the engine was the **weekly
+   cap**, a governor bolted on to blunt a frequency nobody chose.
+
+### The number, and my own wrong number
+
+I gave the user a back-of-envelope estimate (**~$204/yr** for a fortnightly cadence) *before*
+measuring. Then I measured, and it was **~5× too high** — it priced each deferred dollar for the
+full length of its delay, but the same dollars get swept next period, so only the marginal delay
+costs anything. The un-swept cash is **deferred, not lost**: it sits in checking. The real cost of
+weekly spacing is **~$9 per 90 days (~$36/yr)**.
+
+And daily costs **~$48/yr more in ACH fees** (11.7 vs 3.7 debits/month at ~$0.50). The interest
+advantage and the transaction cost cancel. Daily was buying 3× the tail exposure for nothing.
+
+The estimate was wrong in the direction that flattered the status quo. `[6.1]`/`[8.3]`'s
+"measure, don't assert" rule exists for exactly this, and it caught its author. Full table:
+`docs/learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`.
+
+### Decisions taken
+
+- **`min_days_between_sweeps` is a `UserPolicy` field (default 7), not a constant.** `0` restores
+  the daily engine exactly; `30` gives a monthly one. The user's opening ask was "monthly, or twice
+  a month"; they then chose weekly. Making it a policy value means that reversal is a config change
+  rather than another engine diff — which is why I built it this way rather than hardcoding 7.
+- **`CADENCE_HOLD` is raised *after* the forecast, not in `_blocking_reasons`.** This is the
+  load-bearing bit. A blocking refusal carries no `projected_low_balance`, and `outcome.py:grade()`
+  **raises** on those — so gating the cadence up there would have made 6 days in 7 ungradeable and
+  thrown away most of the calibration asset `strategy.md` §3 calls the only one that compounds.
+  Daily data, weekly money. Tested (`test_a_cadence_hold_still_carries_its_projection_and_stays_gradeable`).
+- **The demo's `max_sweep` rose $400 → $1,600 to meet the weekly cap.** The ceiling on money moved
+  is *unchanged* at $1,600/week; what changed is that one ACH gets you there instead of four.
+  Leaving it at $400 would have cut throughput 4× and disguised a cadence change as a paydown
+  regression. Worth being explicit: this is a **cap raise**, and `decision-engine.md` [8.3] warns
+  that raising the cap is what un-masks the latent spend-model over-reservation. Expect
+  `false_refusal_cost` to stop reading $0 once a replay driver exists. That is the instrument
+  working, not a new bug.
+- **`MIN_SWEEP = $1.00` left alone**, deliberately. It is indefensible at any cadence (the old
+  artifact had 9 sweeps under $100, smallest $23.19), but it is its own money-rule change with its
+  own tradeoff and bundling it here would have hidden it. Logged as open.
+
+### Consequences I had to absorb
+
+- **`WEEKLY_CAP` is no longer reachable at the shipped policy** — one sweep a week has nothing to
+  stack against, and `max_sweep == max_weekly_sweep` now. It is not dead code (a 3-day spacing with
+  a high per-sweep cap still binds it), but `test_the_weekly_cap_binds_when_sweeps_stack_up` now
+  has to pass `min_days_between_sweeps=0` explicitly to reach it. The test says so.
+- **`test_a_card_paid_off_mid_window_keeps_being_served`'s card went $2,400 → $9,000.** At a $1,600
+  cap a $2,400 card clears during the 60-day *warm-up*, so the served window opened on a dead card
+  and the build failed for want of a single SWEEP. $9,000 leaves ~8 sweeps of runway and ~27
+  paid-off days — and unlike $2,400 it actually sits inside `prd.md` §3's $8–40k persona band.
+- **`test_the_real_models_answer_survives` no longer reads the demo artifact.** It pinned a verbatim
+  live-model answer to 2026-05-20's *numbers*, so regenerating the demo broke it even though the
+  guard hadn't moved. A guard regression test held hostage to the demo seed is a bad coupling; it
+  now builds its own `DayRecord` with the figures the model was actually answering about.
+- **The artifact regenerated**: 35 sweeps → **11** across the 90-day window; sub-$100 sweeps 9 → 1.
+
+### Still open
+
+- The spacing rule is a **proxy**. Surplus appears when a household is *paid*, not every seventh
+  day. The right rule is one decision per cash cycle (naturally twice a month for a semimonthly
+  earner). `sim/household.py` already models pay cadence; the engine doesn't look at it. Needs the
+  recurring-income detector that `decision-engine.md` [6.2] already lists as assumed away.
+- `false_refusal_cost` on a held day is a **deferral, not a loss** — it reports the full un-swept
+  amount, and that money moves next week. A replay must partition on `CADENCE_HOLD` before totalling
+  it or it will count the same dollars every day they sit. Written up as `decision-engine.md` [9.2]
+  before anyone falls into it.
+- `sweeps_in_flight=ZERO` in the demo is now the last thing overstating the achievable cadence.

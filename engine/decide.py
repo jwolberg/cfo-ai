@@ -108,6 +108,37 @@ def _blocking_reasons(s: Snapshot) -> list[Reason]:
     return reasons
 
 
+def _cadence_hold(s: Snapshot) -> Reason | None:
+    """Is it simply too soon since the last sweep?
+
+    This is *not* in `_blocking_reasons`, and the placement is the whole design.
+
+    A blocking reason short-circuits `decide()` before the forecast runs, so the refusal
+    carries no `projected_low_balance` — and `engine/outcome.py:grade()` refuses to grade a
+    decision without one, on the grounds that inventing a projection would corrupt the
+    calibration distribution with zeros that look like perfect forecasts. Gate the cadence up
+    there and six days in seven become ungradeable: the engine would still *observe* daily and
+    still be *wrong* daily, but it would no longer be *measured* daily, and strategy.md §3's
+    "empirical distribution of our own errors" — the only asset that compounds — would lose
+    most of its data to a rule that has nothing to do with forecasting.
+
+    So the forecast runs every day regardless. The cadence limits what we *do*, never what we
+    *know*. Daily data, weekly money.
+    """
+    limit = s.policy.min_days_between_sweeps
+
+    if limit <= 0 or s.days_since_last_sweep is None:
+        return None
+
+    if s.days_since_last_sweep >= limit:
+        return None
+
+    return Reason(
+        ReasonCode.CADENCE_HOLD,
+        {"days_since": s.days_since_last_sweep, "min_days": limit},
+    )
+
+
 def _idle_elsewhere(s: Snapshot) -> list[Reason]:
     """Money sitting outside the funding account.
 
@@ -251,6 +282,11 @@ def decide(snapshot: Snapshot) -> Decision:
         ReasonCode.PROJECTION,
         {"low": low, "low_day": low_day, "buffer": buffer_floor, "reserved": reserved},
     )
+
+    # After the forecast, deliberately — see _cadence_hold. The projection rides along on the
+    # refusal so the day is still gradeable and the cost of the cadence stays visible.
+    if hold := _cadence_hold(snapshot):
+        return _refuse(hold, projection, *_idle_elsewhere(snapshot), low=low)
 
     if available < MIN_SWEEP:
         return _refuse(
