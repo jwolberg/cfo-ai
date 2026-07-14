@@ -43,8 +43,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from backend.artifact import SCHEMA_VERSION, Artifact, DayRecord, dump, summarize
-from engine.decide import decide
+from backend.artifact import (
+    SCHEMA_VERSION,
+    Artifact,
+    DayRecord,
+    SpendSnapshot,
+    dump,
+    summarize,
+)
+from engine.decide import decide, untouchable
 from engine.models import (
     MIN_GRACE_DAYS,
     ZERO,
@@ -848,6 +855,8 @@ def build(
                     history_days=snapshot.history_days,
                 )
             )
+            # The last served day's view of the card is the one the Spending screen renders.
+            final = (today, portfolio, untouchable(snapshot)[1])
 
     days = tuple(served)
     _assert_demo_is_worth_showing(days)
@@ -858,6 +867,63 @@ def build(
         window_end=days[-1].day,
         days=days,
         summary=summarize(days),
+        spend=derive_spend_snapshot(history, *final),
+    )
+
+
+def derive_spend_snapshot(
+    history: History, today: date, portfolio: CardPortfolio, reserved: Decimal
+) -> SpendSnapshot:
+    """What the Spending screen renders. Comprehension, not a decision.
+
+    Every figure here is *reported*. None of it feeds `forecast.py` — swapping the forecast onto
+    `worst_30d_cash` would **loosen** the reserve, and loosening needs the measured breach rate
+    `engine/outcome.py` cannot yet produce (U8). The panel ships a release *before* it is trusted
+    with a decision, deliberately: it earns its way into the forecast having already been looked
+    at by real households.
+    """
+    profile = derive_spend_profile(history, today)
+    card = portfolio.cards[0] if portfolio.cards else None
+
+    if card is None:
+        return SpendSnapshot(
+            statement_balance=ZERO,
+            statement_due=today,
+            unbilled_balance=ZERO,
+            unbilled_due=today,
+            reserved=reserved,
+            rolling_30d_cash=profile.rolling_30d_cash,
+            rolling_30d_card=profile.rolling_30d_card,
+            charged_last_cycle=ZERO,
+            paid_last_cycle=ZERO,
+        )
+
+    # The cycle just gone — what they put on the card against what they took off it. If the
+    # first number is bigger, the card grew, and a sweep is not what fixes that.
+    window_start, close = _cycle_bounds(today, card.cycle.close_day_of_month)
+    seen = history.as_of(today)
+    charged = seen.card_charged_between(card.card_id, window_start, close)
+    paid = -sum(
+        (
+            t.amount
+            for t in seen.txns
+            if t.kind is TxnKind.CARD_PAYMENT
+            and t.card_id == card.card_id
+            and window_start <= t.day <= close
+        ),
+        ZERO,
+    )
+
+    return SpendSnapshot(
+        statement_balance=card.statement_balance,
+        statement_due=card.statement_due_date,
+        unbilled_balance=card.unbilled_balance,
+        unbilled_due=card.cycle.due_for(card.next_close_date),
+        reserved=reserved,
+        rolling_30d_cash=profile.rolling_30d_cash,
+        rolling_30d_card=profile.rolling_30d_card,
+        charged_last_cycle=charged,
+        paid_last_cycle=paid,
     )
 
 
