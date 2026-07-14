@@ -315,14 +315,109 @@
     the most &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; The whole decision, top to
     bottom. Deterministic: no clock, no network, no LLM, no randomness.
   </p>
-  <p class="thesis">
-    Read the diagram by its <strong>shape</strong>. The spine down the middle is short. Almost
-    everything branches <strong>off</strong> it, into a reason to do nothing.
-    <strong>Refusal is the product.</strong>
-  </p>
 </header>
 
+<h2>What this is</h2>
+
+<div class="loop">
+  <div class="beat">
+    <span class="kicker">The product &middot; prd.md</span>
+    <h3>The user does nothing</h3>
+    <p>They connect checking, savings and cards once. From then on we move the cash they do not need
+       onto the debt that costs them the most, and tell them what happened. The promise is not faster
+       paydown &mdash; it is <strong>no longer choosing between paying down debt and being safe.</strong></p>
+  </div>
+  <div class="beat">
+    <span class="kicker">Why it acts &middot; prd.md</span>
+    <h3>Advice does not work</h3>
+    <p>A 40,000-person RCT moved what cardholders <em>chose</em> &mdash; and seven months on, not what
+       they <em>owed</em>. Information is not the missing input. So the money has to actually move;
+       everything below exists to make that safe.</p>
+  </div>
+  <div class="beat">
+    <span class="kicker">Why it refuses &middot; strategy.md</span>
+    <h3>The worst day sets the price</h3>
+    <p>We sell a promise to loss-averse people, and <strong>one overdraft we caused destroys more value
+       than a hundred correct sweeps create</strong> &mdash; we reimburse the fee when we are wrong. That
+       is what buys the engine the right to say no this often.</p>
+  </div>
+</div>
+
+<h2>What is actually running</h2>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  Everything that follows is real code in this repo, running against a <strong>synthetic
+  household</strong>. The engine is dependency-free Python; every dependency in the stack sits
+  <em>around</em> it, never inside the decision.
+</p>
+
+<div class="rules">
+<table>
+  <thead><tr><th>Layer</th><th>What runs</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Decision engine</b><br><code>engine/</code></td>
+      <td>Pure Python 3.10+, <b>zero dependencies</b>. Frozen dataclasses, money as
+          <code>Decimal</code> &mdash; <code>money()</code> refuses a float outright. No clock, no
+          network, no LLM.</td>
+    </tr>
+    <tr>
+      <td><b>The household</b><br><code>sim/</code></td>
+      <td>A seeded synthetic household. Spend is a zero-inflated lognormal, because the engine
+          reserves a <b>p90</b> and the whole question is about the tail. Same seed, byte-identical
+          history, forever. <b>No Plaid, no real balances.</b></td>
+    </tr>
+    <tr>
+      <td><b>Build step</b><br><code>backend/precompute.py</code></td>
+      <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
+          <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a test
+          regenerates it and asserts the bytes match, so a stale demo is a red build.</td>
+    </tr>
+    <tr>
+      <td><b>API</b><br><code>backend/</code></td>
+      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
+          <b>No database and no write path.</b> Dollars cross the wire as strings (<code>"400.00"</code>),
+          because JSON's only number is a double. Bad artifact or missing key &rarr; the process refuses
+          to start.</td>
+    </tr>
+    <tr>
+      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
+      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
+          that costs money, and the only one with a rate cap. Every figure in its reply is checked
+          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
+          real number against the wrong day.</td>
+    </tr>
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
+          dashboard and explain modal run in a browser.</td>
+    </tr>
+    <tr>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Cloud Run</b>, one worker on purpose &mdash; the spend cap lives in process memory, and a
+          second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite, and the
+          mobile typecheck and tests.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <strong>The LLM is nowhere near the decision.</strong> Sweeps, interest and reason codes are computed
+  deterministically at build time; the model only narrates decisions that already exist, and a guard
+  &mdash; not a system prompt &mdash; is what enforces that. The dashboard and the base explanations
+  never call it at all, so an Anthropic outage cannot take the product&rsquo;s main surface down.
+  <strong>What this demo does not do is move money:</strong> there is no Plaid link and no ACH rail
+  &mdash; the arithmetic of refusing is the part worth proving first.
+</div>
+
 <h2>The decision</h2>
+
+<p class="thesis" style="margin: 0 0 1.75rem">
+  Read the diagram by its <strong>shape</strong>. The spine down the middle is short. Almost
+  everything branches <strong>off</strong> it, into a reason to do nothing.
+  <strong>Refusal is the product.</strong>
+</p>
 
 <div class="flow">
 
