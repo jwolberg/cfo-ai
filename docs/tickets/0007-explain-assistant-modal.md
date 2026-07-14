@@ -2,7 +2,7 @@
 id: "0007"
 title: Explain assistant modal
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: mobile-rn-agent
