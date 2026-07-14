@@ -14,19 +14,27 @@ from decimal import Decimal
 
 import pytest
 
-from engine.decide import MIN_SWEEP, decide
+from engine.decide import MIN_SWEEP, decide, obligation_in_horizon
+from engine.forecast import HORIZON_DAYS
 from engine.models import (
+    MIN_GRACE_DAYS,
     ZERO,
     Account,
     AccountKind,
     Action,
+    Card,
+    CardPortfolio,
     CashEvent,
     ConnectionState,
+    CoverageState,
     Debt,
     EventKind,
+    PaymentBehavior,
     PendingTransaction,
     ReasonCode,
     Snapshot,
+    StatementCycle,
+    UnmatchedPayment,
     UserPolicy,
     money,
 )
@@ -96,21 +104,40 @@ def card(
     balance: str = "9000.00",
     debt_id: str = "visa",
     observed: str | None = "400.00",
-) -> Debt:
-    return Debt(
-        debt_id=debt_id,
-        balance=money(balance),
-        minimum_payment=money("180.00"),
-        minimum_due_date=TODAY + timedelta(days=20),
+    behavior: PaymentBehavior = PaymentBehavior.REVOLVER,
+    unbilled: str = "0.00",
+) -> Card:
+    """A revolver carrying a balance, paying well above the minimum.
+
+    The default deliberately has **no unbilled charges** and a statement due inside the
+    horizon, so the reserve is the familiar single term and the existing tests keep testing
+    what they were written to test. The two-statement behaviour has its own tests below.
+    """
+    return Card(
+        card_id=debt_id,
         # Deliberately Decimal(), not money(): an APR is a rate, not a dollar amount, and
         # money() quantizes to cents — money("0.2399") is 0.24, a different card. Harmless
         # while APR is only ranked, wrong the moment it is multiplied by a balance.
         apr=Decimal(apr) if apr is not None else None,
+        cycle=StatementCycle(close_day_of_month=20, grace_days=MIN_GRACE_DAYS),
+        statement_balance=money(balance),
+        statement_due_date=TODAY + timedelta(days=20),
+        minimum_payment=money("180.00"),
+        unbilled_balance=money(unbilled),
+        # Far enough out that its due date (close + 21) sits beyond the 30-day horizon, so
+        # term 2 of the reserve is dormant unless a test asks for it.
+        next_close_date=TODAY + timedelta(days=25),
+        behavior=behavior,
         # What this household was already paying, well above the $180 minimum — which is
         # exactly why they have idle cash to sweep. This is the counterfactual the interest
         # claim is measured against (prd.md §5.1).
         observed_monthly_payment=money(observed) if observed is not None else None,
     )
+
+
+def wallet(*cards: Card, coverage: CoverageState = CoverageState.COMPLETE) -> CardPortfolio:
+    """A portfolio we can fully see. Coverage gates have their own tests."""
+    return CardPortfolio(cards=cards, coverage=coverage)
 
 
 def policy(**kw) -> UserPolicy:
@@ -131,7 +158,7 @@ def snapshot(**kw) -> Snapshot:
         funding_account_id="chk",
         events=(paycheck(3), bill(6, "1800.00")),
         pending=(),
-        debts=(card(),),
+        portfolio=wallet(card()),
         policy=policy(),
         daily_discretionary_high=money("40.00"),
         income_variation=0.05,
@@ -178,7 +205,7 @@ def test_amount_is_never_more_than_the_debt_balance():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(card(balance="42.00"),),
+            portfolio=wallet(card(balance="42.00")),
         )
     )
 
@@ -318,9 +345,9 @@ def test_sweeps_only_what_checking_can_cover():
         )
     )
 
-    # 1200 checking - 750 buffer - 180 minimum = 270. The savings is irrelevant.
+    # 1200 checking - 750 buffer - 400 obligation = 50. The savings is irrelevant.
     assert d.action is Action.SWEEP
-    assert d.amount == money("270.00")
+    assert d.amount == money("50.00")
 
 
 def test_a_pending_charge_on_savings_does_not_reduce_checking():
@@ -456,13 +483,18 @@ def test_refuses_rather_than_dipping_into_the_buffer():
     assert d.projected_low_balance == money("800.00")
 
 
-def test_protects_the_minimum_payment_before_any_extra_goes_out():
-    """The minimum is not surplus. Sweeping it and then missing it would be an
-    own-goal of the highest order: we would have caused the late fee we exist to prevent.
+def test_protects_the_whole_obligation_not_merely_the_minimum():
+    """The obligation is not surplus — and the minimum *understates* the obligation.
+
+    This test used to reserve $180 and sweep $70. That was wrong, and wrong in the expensive
+    direction. The minimum is what the **issuer** will accept; this household actually pays
+    **$400** every month, which is precisely why they have idle cash to sweep in the first
+    place. Reserving $180 and moving $70 leaves them $220 short of a payment they were always
+    going to make.
+
+    1000 in hand, 750 buffer => 250 apparently free. The real obligation is $400, so there is
+    no surplus at all, and the honest answer is to refuse.
     """
-    # 1000 in hand, 750 buffer => 250 apparently free. But a 180 minimum is due
-    # inside the horizon, so only 70 is genuinely free — under the cap, and after
-    # the minimum is reserved there is not enough left to be worth moving.
     d = decide(
         snapshot(
             accounts=(account("1000.00"),),
@@ -472,8 +504,9 @@ def test_protects_the_minimum_payment_before_any_extra_goes_out():
         )
     )
 
-    assert d.action is Action.SWEEP
-    assert d.amount == money("70.00")  # 1000 - 750 buffer - 180 minimum
+    assert d.action is Action.REFUSE
+    reserved = next(r for r in d.reasons if r.code is ReasonCode.NO_SURPLUS).params["reserved"]
+    assert reserved == money("400.00")  # what they pay, not the $180 the issuer would take
 
 
 def test_refuses_when_the_surplus_is_too_small_to_be_worth_the_ach_risk():
@@ -497,7 +530,7 @@ def test_targets_the_highest_apr_card():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(
+            portfolio=wallet(
                 card(apr="0.1499", debt_id="low"),
                 card(apr="0.2699", debt_id="high"),
             ),
@@ -515,7 +548,7 @@ def test_refuses_to_rank_when_aprs_are_unknown_and_there_is_a_choice():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(card(apr=None, debt_id="a"), card(apr=None, debt_id="b")),
+            portfolio=wallet(card(apr=None, debt_id="a"), card(apr=None, debt_id="b")),
         )
     )
 
@@ -528,7 +561,7 @@ def test_a_single_card_needs_no_apr_because_there_is_nothing_to_rank():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(card(apr=None, debt_id="only"),),
+            portfolio=wallet(card(apr=None, debt_id="only")),
         )
     )
 
@@ -560,7 +593,7 @@ def test_a_sweep_against_a_card_with_no_apr_claims_nothing():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(card(apr=None, debt_id="only"),),
+            portfolio=wallet(card(apr=None, debt_id="only")),
         )
     )
 
@@ -577,7 +610,7 @@ def test_a_household_underwater_on_their_own_payments_does_not_crash_the_decisio
     """
     underwater = card(debt_id="only", observed="10.00")  # $10/mo against ~$180/mo of interest
 
-    d = decide(snapshot(accounts=(account("50000.00"),), events=(), debts=(underwater,)))
+    d = decide(snapshot(accounts=(account("50000.00"),), events=(), portfolio=wallet(underwater)))
 
     assert d.action is Action.SWEEP
     assert not d.has(ReasonCode.INTEREST_AVOIDED)
@@ -589,7 +622,7 @@ def test_no_claim_until_we_have_seen_what_they_were_paying():
         snapshot(
             accounts=(account("50000.00"),),
             events=(),
-            debts=(card(debt_id="only", observed=None),),
+            portfolio=wallet(card(debt_id="only", observed=None)),
         )
     )
 
@@ -601,7 +634,7 @@ def test_refuses_when_there_is_no_debt_left():
     """The happiest refusal. Also, per the strategy doc, the moment the customer
     stops being a customer — which is a business problem, not an engine problem.
     """
-    d = decide(snapshot(accounts=(account("50000.00"),), events=(), debts=()))
+    d = decide(snapshot(accounts=(account("50000.00"),), events=(), portfolio=wallet()))
 
     assert d.action is Action.REFUSE
     assert d.has(ReasonCode.NO_DEBT)
@@ -647,7 +680,7 @@ def test_a_detected_card_minimum_is_not_counted_twice():
                     amount_high=money("-180.00"),
                     date_jitter_days=1,
                     confidence=0.99,
-                    kind=EventKind.DEBT_MINIMUM,
+                    kind=EventKind.CARD_PAYMENT,
                 ),
             ),
             daily_discretionary_high=money("0.00"),
@@ -655,13 +688,14 @@ def test_a_detected_card_minimum_is_not_counted_twice():
         )
     )
 
-    # 2000 - 750 buffer - 180 minimum. The minimum is reserved by decide(), full stop.
-    assert without.amount == money("1070.00")
+    # 2000 - 750 buffer - 400 obligation. The obligation is reserved by decide(), full stop —
+    # and a detected CARD_PAYMENT event does not subtract it a second time.
+    assert without.amount == money("850.00")
     assert with_detected_minimum.amount == without.amount
 
 
 def test_an_ordinary_obligation_is_still_counted():
-    """Guard against the fix over-reaching: only DEBT_MINIMUM is skipped."""
+    """Guard against the fix over-reaching: only CARD_PAYMENT is skipped."""
     d = decide(
         snapshot(
             accounts=(account("2000.00"),),
@@ -671,7 +705,7 @@ def test_an_ordinary_obligation_is_still_counted():
         )
     )
 
-    assert d.amount == money("890.00")  # 2000 - 750 - 180 minimum - 180 gym
+    assert d.amount == money("670.00")  # 2000 - 750 - 400 obligation - 180 gym
 
 
 def test_the_engine_never_reads_a_clock():
@@ -693,8 +727,10 @@ def test_refuses_when_the_account_is_already_at_or_below_zero(balance):
 @pytest.mark.parametrize(
     ("balance", "expected"),
     [
-        ("931.00", Action.SWEEP),  # exactly MIN_SWEEP available
-        ("930.99", Action.REFUSE),  # a cent under
+        # 750 buffer + 400 obligation + 1.00 MIN_SWEEP. The boundary moved with the reserve:
+        # it used to sit at 931 against a $180 minimum, and the $220 difference is the point.
+        ("1151.00", Action.SWEEP),  # exactly MIN_SWEEP available
+        ("1150.99", Action.REFUSE),  # a cent under
     ],
 )
 def test_the_min_sweep_boundary_is_inclusive(balance, expected):
@@ -880,3 +916,240 @@ def test_a_negative_spacing_is_rejected():
 def test_a_negative_days_since_last_sweep_is_rejected():
     with pytest.raises(ValueError, match="days_since_last_sweep"):
         snapshot(days_since_last_sweep=-1)
+
+
+class TestTheReserveTightens:
+    """The plan's central safety claim, and the only reason this change may ship without
+    calibration evidence:
+
+        **The new reserve is never smaller than the old one — on every day of a full cycle.**
+
+    The clause that matters is the last one. The first design of `obligation_in_horizon`
+    reserved only the *closed* statement, which passes any spot-check taken in the first half
+    of a cycle and silently drops to $0 for the last third of it. A sampled test would have
+    reported green while the hole shipped. Walk the calendar.
+    """
+
+    def old_reserve(self, card: Card, today: date) -> Decimal:
+        """What the engine used to reserve: the minimum, on a rolling next-due-date basis.
+
+        `precompute.py` recomputed `minimum_due_date` fresh *every day* (`_next_due`), so it
+        always pointed at the next due date and therefore reserved the minimum on essentially
+        every day of the cycle. That rolling-forecast property is what made the crude reserve
+        safe, and it is exactly what a "known fact, not a forecast" statement date throws away.
+        """
+        return card.minimum_payment
+
+    def test_the_reserve_never_shrinks_on_any_day_of_a_full_cycle(self) -> None:
+        """The household **pays** the statement, and that is the whole point.
+
+        An earlier draft of this test held `statement_balance` at $2,000 forever. It passed with
+        term 2 deleted — because a statement that is never paid keeps term 1 firing, which
+        covers for the missing term. It was green and it was worthless.
+
+        A real cycle: the statement closes, comes due, is **paid** (balance -> 0), and the next
+        one accrues behind it. The window between "paid" and "next close" is where a one-term
+        reserve reports $0 while the forecast has already skipped the payment event. Model the
+        payment or this test proves nothing.
+        """
+        cycle = StatementCycle(close_day_of_month=20, grace_days=MIN_GRACE_DAYS)
+
+        for offset in range(70):  # more than two full cycles, every single day
+            today = date(2026, 1, 1) + timedelta(days=offset)
+
+            # The **most recent** close on or before today — the same thing `derive_card` uses.
+            # An earlier draft took "the close about a month back", which on a close day skips
+            # straight over the statement that closed *today* and leaves it in neither term.
+            # The test caught it, which is the entire reason it walks the calendar.
+            last_close = cycle.close_on_or_after(today - timedelta(days=31))
+            while cycle.close_on_or_after(last_close + timedelta(days=1)) <= today:
+                last_close = cycle.close_on_or_after(last_close + timedelta(days=1))
+
+            due = cycle.due_for(last_close)
+            next_close = cycle.close_on_or_after(today + timedelta(days=1))
+
+            # Once it is due, they pay it. That is what a household does, and it is the state
+            # in which a closed-statement-only reserve holds back nothing at all.
+            paid = today > due
+            unbilled = money("900.00") if paid else money("300.00")
+
+            card = Card(
+                card_id="visa",
+                apr=Decimal("0.2399"),
+                cycle=cycle,
+                statement_balance=ZERO if paid else money("2000.00"),
+                statement_due_date=due,
+                minimum_payment=money("180.00"),
+                unbilled_balance=unbilled,
+                next_close_date=next_close,
+                behavior=PaymentBehavior.MINIMUM_ONLY,
+                observed_monthly_payment=money("180.00"),
+            )
+
+            new = obligation_in_horizon(card, today + timedelta(days=HORIZON_DAYS))
+            old = self.old_reserve(card, today)
+
+            assert new >= old, (
+                f"on {today} the new reserve ({new}) is SMALLER than the old one ({old}), "
+                f"statement_paid={paid}. This is the hole: a reserve keyed only on the closed "
+                "statement falls to zero once it is paid and before the next one closes."
+            )
+
+    def test_the_day_after_the_statement_is_paid_is_still_reserved(self) -> None:
+        """The exact day the naive design broke.
+
+        The closed statement has been paid, so it owes nothing. The next has not closed. A
+        one-term reserve says $0 here — while the forecast has *already skipped* the card
+        payment event, so nothing at all accounts for the money.
+        """
+        cycle = StatementCycle(close_day_of_month=20, grace_days=MIN_GRACE_DAYS)
+        today = date(2026, 2, 11)  # the day after the Jan-20 statement came due
+
+        card = Card(
+            card_id="visa",
+            apr=Decimal("0.2399"),
+            cycle=cycle,
+            statement_balance=ZERO,  # paid
+            statement_due_date=date(2026, 2, 10),
+            minimum_payment=money("180.00"),
+            unbilled_balance=money("640.00"),  # and the next one is already accruing
+            next_close_date=date(2026, 2, 20),
+            behavior=PaymentBehavior.REVOLVER,
+            observed_monthly_payment=money("450.00"),
+        )
+
+        reserved = obligation_in_horizon(card, today + timedelta(days=HORIZON_DAYS))
+
+        assert reserved > ZERO, "term 2 is missing — this is the hole the review found"
+        assert reserved == money("450.00")
+
+    def test_a_transactor_reserves_the_whole_statement_not_the_minimum(self) -> None:
+        """The $2,000 case. The reason the feature exists.
+
+        A household charging $2,000/month to a card they clear in full has a $2,000 obligation
+        and perhaps a $40 minimum. Reserve the minimum and $1,960 leaves checking on the 20th
+        that we told them was theirs to sweep.
+        """
+        cycle = StatementCycle(close_day_of_month=20, grace_days=MIN_GRACE_DAYS)
+        today = date(2026, 3, 1)
+
+        transactor = Card(
+            card_id="daily-driver",
+            apr=Decimal("0.1899"),
+            cycle=cycle,
+            statement_balance=money("2000.00"),
+            statement_due_date=date(2026, 3, 13),
+            minimum_payment=money("40.00"),
+            unbilled_balance=ZERO,
+            next_close_date=date(2026, 3, 20),
+            behavior=PaymentBehavior.TRANSACTOR,
+            observed_monthly_payment=money("2000.00"),
+        )
+
+        reserved = obligation_in_horizon(transactor, today + timedelta(days=HORIZON_DAYS))
+        assert reserved == money("2000.00")
+        assert reserved != money("40.00")
+
+    def test_a_transactor_is_reserved_against_but_never_swept_to(self) -> None:
+        """Both halves of the [9.2] decision, in one place.
+
+        They pay no interest — the grace period already does what our sweep claims to do. So a
+        sweep to them is a prepayment, not a saving, and charging a share of it (prd §7.2)
+        would be charging for nothing. But their statement still leaves checking, so it is
+        still reserved.
+        """
+        target = card(apr="0.2399", debt_id="target", balance="9000.00")
+        transactor = card(
+            apr="0.2999",  # the highest APR — it would win the ranking outright
+            debt_id="daily-driver",
+            balance="2000.00",
+            behavior=PaymentBehavior.TRANSACTOR,
+            observed="2000.00",
+        )
+
+        d = decide(
+            snapshot(
+                accounts=(account("20000.00"),),
+                events=(),
+                daily_discretionary_high=money("0.00"),
+                portfolio=wallet(target, transactor),
+                policy=policy(max_sweep=money("5000.00"), max_weekly_sweep=money("5000.00")),
+            )
+        )
+
+        assert d.action is Action.SWEEP
+        assert d.target_debt_id == "target", "a transactor must never be the target"
+
+        # ...and their $2,000 statement was reserved out of the surplus all the same.
+        reserved = next(r for r in d.reasons if r.code is ReasonCode.PROJECTION).params["reserved"]
+        assert reserved == money("2400.00")  # 2000 transactor + 400 revolver obligation
+
+    def test_an_all_transactor_portfolio_refuses_rather_than_sweeping_for_the_look_of_it(
+        self,
+    ) -> None:
+        d = decide(
+            snapshot(
+                accounts=(account("20000.00"),),
+                events=(),
+                portfolio=wallet(card(behavior=PaymentBehavior.TRANSACTOR, observed="2000.00")),
+            )
+        )
+
+        assert d.action is Action.REFUSE
+        assert d.has(ReasonCode.NO_INTEREST_TO_AVOID)
+
+
+class TestCoverageBlocks:
+    def test_an_unmatched_payment_blocks_no_matter_how_much_surplus_there_is(self) -> None:
+        """Optimality within an incomplete portfolio is not optimality. It is an overdraft with
+        a good explanation."""
+        d = decide(
+            snapshot(
+                accounts=(account("50000.00"),),
+                events=(),
+                portfolio=CardPortfolio(
+                    cards=(card(),),
+                    coverage=CoverageState.UNMATCHED_PAYMENT,
+                    unmatched_card_payments=(
+                        UnmatchedPayment(
+                            merchant="CHASE CARD SVC",
+                            typical_amount=money("300.00"),
+                            day_of_month=14,
+                            months_observed=6,
+                        ),
+                    ),
+                ),
+            )
+        )
+
+        assert d.action is Action.REFUSE
+        assert d.has(ReasonCode.CARD_COVERAGE_INCOMPLETE)
+
+    def test_an_unattested_portfolio_blocks_too(self) -> None:
+        """Chosen deliberately. It makes attestation a real onboarding gate rather than a
+        checkbox — a household that has not confirmed its card list gets refusals, and that is
+        the safe direction."""
+        d = decide(
+            snapshot(
+                accounts=(account("50000.00"),),
+                events=(),
+                portfolio=CardPortfolio(cards=(card(),), coverage=CoverageState.UNATTESTED),
+            )
+        )
+
+        assert d.action is Action.REFUSE
+        assert d.has(ReasonCode.CARD_COVERAGE_INCOMPLETE)
+
+    def test_a_card_we_have_not_watched_for_three_cycles_blocks(self) -> None:
+        """We do not know what it will take out of checking. That figure sets the reserve *and*
+        the interest claim, so a guess is load-bearing twice over."""
+        d = decide(
+            snapshot(
+                accounts=(account("50000.00"),),
+                events=(),
+                portfolio=wallet(card(behavior=PaymentBehavior.UNKNOWN)),
+            )
+        )
+
+        assert d.action is Action.REFUSE
+        assert d.has(ReasonCode.CARD_BEHAVIOR_UNKNOWN)

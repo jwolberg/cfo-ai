@@ -51,11 +51,13 @@ def household(spend: SpendSpec, seed: int):
         ),
         bills=(BillSpec(label="rent", day_of_month=1, mean=money("1800.00")),),
         spend=spend,
-        card=CardSpec(
-            balance=money("9000.00"),
-            apr=Decimal("0.2399"),
-            minimum_payment=money("180.00"),
-            payment=money("400.00"),
+        cards=(
+            CardSpec(
+                balance=money("9000.00"),
+                apr=Decimal("0.2399"),
+                minimum_payment=money("180.00"),
+                payment=money("400.00"),
+            ),
         ),
     )
     return generate(spec, start=START, days=DAYS, seed=seed)

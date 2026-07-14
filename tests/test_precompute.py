@@ -19,26 +19,55 @@ from backend.precompute import (
     DEMO_SPEC,
     SAVINGS_BALANCE,
     STATEMENT_DAY,
+    WINDOW_START,
     DebtLedger,
     build,
+    classify_behavior,
     daily_discretionary_high,
+    derive_card,
     derive_cash_events,
+    derive_portfolio,
+    derive_spend_profile,
+    detect_unmatched_payments,
     income_variation,
+    infer_close_day,
+    observed_monthly_payment,
 )
-from engine.models import Action, EventKind, ReasonCode, UserPolicy, money
-from sim.household import CardSpec, HouseholdSpec, generate
+from engine.models import (
+    ZERO,
+    Action,
+    CoverageState,
+    EventKind,
+    PaymentBehavior,
+    ReasonCode,
+    UserPolicy,
+    money,
+)
+from sim.household import (
+    BillSpec,
+    CardSpec,
+    History,
+    HouseholdSpec,
+    PayCadence,
+    PayrollSpec,
+    SpendSpec,
+    Txn,
+    TxnKind,
+    generate,
+)
 
 
 def spec_with(**kw) -> HouseholdSpec:
     """DEMO_SPEC with one or two fields swapped — the base is already the persona."""
     card_kw = {k: kw.pop(k) for k in list(kw) if k in CardSpec.__dataclass_fields__}
     card = CardSpec(**{**vars(DEMO_SPEC.card), **card_kw}) if card_kw else DEMO_SPEC.card
+    spend = kw.pop("spend", DEMO_SPEC.spend)
     return HouseholdSpec(
         opening_balance=kw.pop("opening_balance", DEMO_SPEC.opening_balance),
         payroll=DEMO_SPEC.payroll,
         bills=DEMO_SPEC.bills,
-        spend=DEMO_SPEC.spend,
-        card=card,
+        spend=spend,
+        cards=(card,),
         shocks=DEMO_SPEC.shocks,
     )
 
@@ -146,19 +175,29 @@ class TestDerivedCashEvents:
         for e in derive_cash_events(DEMO_SPEC, date(2026, 3, 1)):
             assert e.is_inflow == (e.label == "payroll")
 
-    def test_the_card_payment_is_not_tagged_as_the_minimum(self) -> None:
-        """Tagging the full $450 payment as DEBT_MINIMUM would hide $170 of real outflow.
+    def test_the_card_payment_is_tagged_and_the_reserve_carries_it(self) -> None:
+        """The ORDINARY workaround is gone, and this test is its epitaph.
 
-        `forecast.py` skips DEBT_MINIMUM events entirely, and `decide()` reserves only
-        `Debt.minimum_payment` ($280). The difference is money that genuinely leaves the
-        account and would go uncounted — an under-count, which is the direction that ends in
-        an overdraft.
+        It used to assert the opposite: the payment was emitted as ORDINARY at its full $450
+        and `decide()` reserved only the $280 minimum on top, knowingly over-counting by $280
+        because the alternative — tagging it so the forecast skipped it — under-counted $170,
+        and only one of those directions ends in an overdraft.
+
+        That workaround stood up only because the payment was a hardcoded constant. It is now
+        a function of behaviour and the statement that closed, and `untouchable()` reserves the
+        household's **actual obligation** rather than the minimum the issuer would settle for.
+        So the payment is tagged, the forecast skips it, the reserve carries it, and the
+        arithmetic is exact for the first time instead of deliberately wrong in the safe
+        direction.
+
+        The two halves are one mechanism: skip the event *without* reserving the obligation and
+        nothing accounts for the payment at all.
         """
         events = derive_cash_events(DEMO_SPEC, date(2026, 3, 1))
         card = [e for e in events if e.label == "card payment"]
 
         assert card
-        assert all(e.kind is EventKind.ORDINARY for e in card)
+        assert all(e.kind is EventKind.CARD_PAYMENT for e in card)
         assert all(e.amount == -DEMO_SPEC.card.payment for e in card)
 
     def test_events_land_on_the_funding_account(self) -> None:
@@ -338,7 +377,23 @@ class TestTheWalk:
         # already-dead card and the build failed for want of a single SWEEP. $9,000 leaves
         # ~8 sweeps of runway and ~27 paid-off days, so it is not perched on either cliff —
         # and unlike the old figure it sits inside prd.md §3's $8-40k persona band.
-        a = build(spec=spec_with(balance=money("9000.00"), minimum_payment=money("50.00")))
+        #
+        # `card_share=0` because "paid off" has to *stay* paid off to be worth asserting. A
+        # household that keeps charging the card drives the balance to zero and then straight
+        # back up again on the next coffee — which is correct, and is exactly why a card in
+        # active use is never durably "paid off". That is a different scenario than this one.
+        a = build(
+            spec=spec_with(
+                balance=money("9000.00"),
+                minimum_payment=money("50.00"),
+                spend=SpendSpec(
+                    zero_day_probability=0.25,
+                    median=money("38.00"),
+                    log_sigma=0.9,
+                    card_share=0.0,
+                ),
+            )
+        )
 
         cleared = [r for r in a.days if r.paid_off]
         assert cleared
@@ -434,3 +489,246 @@ class TestTheArtifact:
         assert art.DEFAULT_PATH.read_text() == art.to_json(build()), (
             "backend/data/decisions.json is stale — re-run `python -m backend.precompute`"
         )
+
+
+class TestDerivation:
+    """Raw history -> the card types. Pure derivation: nothing here decides anything.
+
+    The two properties that matter are both about *not* freeing up money we shouldn't:
+    behavior is UNKNOWN until we have really seen three cycles, and an uncertain calendar
+    reserves early rather than late.
+    """
+
+    def charging_spec(self, **kw: object) -> HouseholdSpec:
+        """A household that actually uses its card. Tests mutate one thing at a time."""
+        base: dict[str, object] = {
+            "opening_balance": money("4000.00"),
+            "payroll": PayrollSpec(
+                net_pay=money("2600.00"),
+                cadence=PayCadence.BIWEEKLY,
+                first_payday=date(2026, 1, 2),
+                variation=Decimal("0.00"),
+            ),
+            "bills": (BillSpec(label="rent", day_of_month=1, mean=money("1500.00")),),
+            "spend": SpendSpec(0.0, money("40.00"), 0.0, card_share=1.0),
+            "cards": (
+                CardSpec(
+                    balance=ZERO,
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("40.00"),
+                    payment=money("600.00"),
+                    payment_day_of_month=20,
+                    close_day_of_month=20,
+                    behavior=PaymentBehavior.TRANSACTOR,
+                ),
+            ),
+        }
+        base.update(kw)
+        return HouseholdSpec(**base)  # type: ignore[arg-type]
+
+    def test_behavior_is_unknown_below_three_observed_cycles(self) -> None:
+        """We refuse rather than guess. The guess is load-bearing twice: it sets the reserve
+        *and* it decides whether we may claim to have saved them anything."""
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=45, seed=5)  # ~1 payment
+
+        behavior, cycles = classify_behavior(h, spec.cards[0], WINDOW_START + timedelta(days=44))
+        assert behavior is PaymentBehavior.UNKNOWN
+        assert cycles < 3
+
+    def test_a_household_that_clears_every_statement_is_a_transactor(self) -> None:
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        behavior, _ = classify_behavior(h, spec.cards[0], WINDOW_START + timedelta(days=129))
+        assert behavior is PaymentBehavior.TRANSACTOR
+
+    def test_a_household_carrying_a_balance_two_cycles_running_is_a_revolver(self) -> None:
+        """A transactor who misses a payment has silently lost their grace period and is
+        accruing at the full APR *today*. Waiting is the expensive direction."""
+        spec = self.charging_spec(
+            cards=(
+                CardSpec(
+                    balance=money("5000.00"),  # they carry, and never clear it
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("100.00"),
+                    payment=money("300.00"),
+                    payment_day_of_month=20,
+                    close_day_of_month=20,
+                    behavior=PaymentBehavior.REVOLVER,
+                ),
+            ),
+        )
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        behavior, _ = classify_behavior(h, spec.cards[0], WINDOW_START + timedelta(days=129))
+        assert behavior in (PaymentBehavior.REVOLVER, PaymentBehavior.MINIMUM_ONLY)
+        assert behavior is not PaymentBehavior.TRANSACTOR
+
+    def test_the_observed_payment_comes_from_payments_not_from_inferred_cycles(self) -> None:
+        """This figure is payments-divided-by-cycles and it feeds the REVOLVER reserve.
+
+        An inference that invents more, shorter cycles would divide the same payments across a
+        bigger denominator and pull it *down* — shrinking the very reserve the inference was
+        supposed to protect. So: count the payments. Do not model the calendar.
+        """
+        spec = self.charging_spec(
+            cards=(
+                CardSpec(
+                    balance=money("9000.00"),
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("180.00"),
+                    payment=money("400.00"),
+                    payment_day_of_month=20,
+                    behavior=PaymentBehavior.REVOLVER,
+                ),
+            ),
+        )
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+        observed = observed_monthly_payment(h, spec.cards[0], WINDOW_START + timedelta(days=129))
+
+        # They pay $400 every cycle. Not the $180 minimum, and not a diluted fraction of it.
+        assert observed == money("400.00")
+
+    def test_no_observed_payment_yields_no_claim_rather_than_the_minimum(self) -> None:
+        """Falling back to the minimum is the flattering assumption prd.md §5.1 bans."""
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=30, seed=5)
+
+        assert observed_monthly_payment(h, spec.cards[0], WINDOW_START + timedelta(days=29)) is None
+
+    def test_an_uncertain_close_date_reserves_early_never_late(self) -> None:
+        """Getting the close wrong by a day moves a month of spend across the horizon boundary.
+
+        Wrong-and-early costs a smaller sweep. Wrong-and-late is an overdraft. Only one of
+        those is survivable, so the inference is only ever allowed to move the obligation
+        toward us.
+        """
+        spec = self.charging_spec()
+        today = WINDOW_START + timedelta(days=20)
+        h = generate(spec, WINDOW_START, days=21, seed=5)
+
+        _day, certain = infer_close_day(h, spec.cards[0], today)
+        assert not certain, "one payment is not a cycle — we cannot be sure"
+
+        card = derive_card(h, spec.cards[0], today, ledger_balance=money("1000.00"))
+        # The due date is pulled to the near edge, inside the horizon, rather than drifting out.
+        assert card.statement_due_date <= today + timedelta(days=30)
+
+    def test_a_card_carries_both_the_closed_statement_and_the_unbilled_charges(self) -> None:
+        """The field that the first draft of the design forgot, and the reason the reserve
+        dropped to $0 for a third of every cycle."""
+        spec = self.charging_spec()
+        # Two days past the close: a statement has closed, and new charges are already landing.
+        today = date(2026, 2, 22)
+        h = generate(spec, WINDOW_START, days=(today - WINDOW_START).days + 1, seed=5)
+
+        card = derive_card(h, spec.cards[0], today, ledger_balance=money("1200.00"))
+
+        assert card.unbilled_balance > ZERO, "charges since the close are not yet billed"
+        assert card.next_close_date > today
+        assert card.total_owed == card.statement_balance + card.unbilled_balance
+
+    def test_an_unmatched_card_payment_is_detected(self) -> None:
+        """A recurring $300 to CHASE CARD SVC with no Chase card connected is evidence of a
+        liability we are not reserving against. It is the real coverage gate."""
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        ghost = tuple(
+            Txn(
+                day=date(2026, m, 14),
+                amount=money("-300.00"),
+                label="CHASE CARD SVC",
+                kind=TxnKind.CARD_PAYMENT,
+                card_id="a-card-we-cannot-see",
+            )
+            for m in (1, 2, 3, 4)
+        )
+        haunted = History(
+            spec=h.spec,
+            start=h.start,
+            days=h.days,
+            opening_balance=h.opening_balance,
+            txns=tuple(sorted(h.txns + ghost, key=lambda t: t.day)),
+        )
+
+        found = detect_unmatched_payments(haunted, {"card-1"}, WINDOW_START + timedelta(days=129))
+        assert len(found) == 1
+        assert found[0].merchant == "CHASE CARD SVC"
+        assert found[0].typical_amount == money("300.00")
+        assert found[0].months_observed >= 3
+
+    def test_a_payment_to_a_card_we_can_see_is_not_unmatched(self) -> None:
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        found = detect_unmatched_payments(h, {"card-1"}, WINDOW_START + timedelta(days=129))
+        assert found == ()
+
+    def test_a_one_off_card_shaped_transfer_does_not_trip_the_detector(self) -> None:
+        """It happened once. That is not a liability, it is a transfer. Recurrence is required."""
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        once = (
+            Txn(
+                day=date(2026, 2, 14),
+                amount=money("-300.00"),
+                label="CHASE CARD SVC",
+                kind=TxnKind.CARD_PAYMENT,
+                card_id="ghost",
+            ),
+        )
+        haunted = History(
+            spec=h.spec,
+            start=h.start,
+            days=h.days,
+            opening_balance=h.opening_balance,
+            txns=tuple(sorted(h.txns + once, key=lambda t: t.day)),
+        )
+
+        assert detect_unmatched_payments(haunted, {"card-1"}, date(2026, 5, 1)) == ()
+
+    def test_coverage_is_unmatched_when_evidence_exists_and_unattested_otherwise(self) -> None:
+        spec = self.charging_spec()
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+        today = WINDOW_START + timedelta(days=129)
+        card = derive_card(h, spec.cards[0], today, ledger_balance=money("500.00"))
+
+        unattested = derive_portfolio(h, (card,), today, attested=False)
+        assert unattested.coverage is CoverageState.UNATTESTED
+        assert not unattested.is_complete
+
+        attested = derive_portfolio(h, (card,), today, attested=True)
+        assert attested.coverage is CoverageState.COMPLETE
+        assert attested.is_complete
+
+    def test_the_spend_profile_reads_its_worst_window_off_the_households_own_history(self) -> None:
+        """Non-parametric by construction. The learning is explicit: variance grows with
+        sqrt(t), and the current model grows it with t."""
+        spec = self.charging_spec(spend=SpendSpec(0.0, money("40.00"), 0.0, card_share=0.0))
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        profile = derive_spend_profile(h, WINDOW_START + timedelta(days=129))
+
+        assert profile.rolling_30d_cash, "a 130-day history has overlapping 30-day windows"
+        # ~$40/day on the card-free spec => a 30-day window near $1,200.
+        assert money("1000.00") < profile.worst_30d_cash < money("1500.00")
+        assert profile.worst_30d_card == ZERO
+
+    def test_spend_that_moved_to_the_card_shows_up_in_the_card_series_not_the_cash_one(
+        self,
+    ) -> None:
+        """The collapse that makes the whole feature urgent, now visible in the profile."""
+        spec = self.charging_spec()  # card_share=1.0
+        h = generate(spec, WINDOW_START, days=130, seed=5)
+
+        profile = derive_spend_profile(h, WINDOW_START + timedelta(days=129))
+
+        assert profile.worst_30d_cash == ZERO
+        assert profile.worst_30d_card > ZERO
+
+    def test_derivation_changes_no_decision(self) -> None:
+        """U3 is derivation only. The artifact must be exactly what it was."""
+        assert art.DEFAULT_PATH.read_text() == art.to_json(build())

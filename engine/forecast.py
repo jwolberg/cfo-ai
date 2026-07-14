@@ -67,7 +67,7 @@ def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
             # Income paid into savings does not protect a checking-account debit.
             continue
 
-        if event.kind is EventKind.DEBT_MINIMUM:
+        if event.kind is EventKind.CARD_PAYMENT:
             # Already reserved from available cash by decide(), out of Debt — the
             # authoritative source. Subtracting it here too would double-count it.
             continue

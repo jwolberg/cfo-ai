@@ -23,14 +23,20 @@ import pytest
 from engine.decide import decide
 from engine.forecast import HORIZON_DAYS
 from engine.models import (
+    MIN_GRACE_DAYS,
+    ZERO,
     Account,
     Action,
+    Card,
+    CardPortfolio,
     ConnectionState,
-    Debt,
+    CoverageState,
     Decision,
+    PaymentBehavior,
     Reason,
     ReasonCode,
     Snapshot,
+    StatementCycle,
     UserPolicy,
     money,
 )
@@ -50,17 +56,25 @@ def account(balance: str, **kw) -> Account:
     return Account(**base)
 
 
-def card(balance: str = "9000.00", **kw) -> Debt:
+def card(balance: str = "9000.00", **kw) -> Card:
     base = dict(
-        debt_id="visa",
-        balance=money(balance),
-        minimum_payment=money("180.00"),
-        minimum_due_date=TODAY + timedelta(days=20),
+        card_id="visa",
         apr=Decimal("0.2399"),
+        cycle=StatementCycle(close_day_of_month=20, grace_days=MIN_GRACE_DAYS),
+        statement_balance=money(balance),
+        statement_due_date=TODAY + timedelta(days=20),
+        minimum_payment=money("180.00"),
+        unbilled_balance=ZERO,
+        next_close_date=TODAY + timedelta(days=25),
+        behavior=PaymentBehavior.REVOLVER,
         observed_monthly_payment=money("400.00"),
     )
     base.update(kw)
-    return Debt(**base)
+    return Card(**base)
+
+
+def wallet(*cards: Card) -> CardPortfolio:
+    return CardPortfolio(cards=cards, coverage=CoverageState.COMPLETE)
 
 
 def snapshot(**kw) -> Snapshot:
@@ -70,7 +84,7 @@ def snapshot(**kw) -> Snapshot:
         funding_account_id="chk",
         events=(),
         pending=(),
-        debts=(card(),),
+        portfolio=wallet(card()),
         policy=UserPolicy(
             buffer_floor=money("750.00"),
             max_sweep=money("300.00"),
@@ -242,14 +256,15 @@ class TestFalseRefusalCost:
     def test_a_refusal_that_was_wrong_costs_us_the_whole_safe_amount(self) -> None:
         """Unswept low $1,000, buffer $750, reserved $180 -> $70 was genuinely safe.
 
-        $70 is under the $300 per-sweep cap, so the guardrails were not what stopped us. Our
-        forecast was. All $70 is our cost.
+        The reserve is the card's real obligation ($400 — what they actually pay), not the
+        $180 minimum the issuer would settle for, so in hindsight there was nothing safe to
+        move at all. We refused, and we were right to.
         """
         outcome = grade(snapshot(), refused(projected_low="600.00"), flat("-100.00"))
 
-        assert outcome.hindsight_safe == money("70.00")
-        assert outcome.should_have_swept == money("70.00")
-        assert outcome.false_refusal_cost == money("70.00")
+        assert outcome.hindsight_safe == money("0.00")
+        assert outcome.should_have_swept == money("0.00")
+        assert outcome.false_refusal_cost == money("0.00")
 
     def test_the_users_own_cap_is_not_our_conservatism(self) -> None:
         """The correction that this module's first draft got wrong.
@@ -260,10 +275,10 @@ class TestFalseRefusalCost:
         it exists to carry.
         """
         s = snapshot(accounts=(account("10000.00"),))
-        # unswept low = 10000 - 3000 = 7000. Raw surplus = 7000 - 750 - 180 = 6070.
+        # unswept low = 10000 - 3000 = 7000. Raw surplus = 7000 - 750 - 400 = 5850.
         outcome = grade(s, swept("300.00", projected_low="900.00"), flat("-100.00"))
 
-        assert outcome.hindsight_safe == money("6070.00")  # what was really there
+        assert outcome.hindsight_safe == money("5850.00")  # what was really there
         assert outcome.should_have_swept == money("300.00")  # what we were allowed to take
         assert outcome.false_refusal_cost == money("0.00")  # so we cost the user nothing
 
@@ -281,11 +296,11 @@ class TestFalseRefusalCost:
                 max_weekly_sweep=money("5000.00"),
             ),
         )
-        # unswept low = 6000 - 3000 = 3000. safe = 3000 - 750 - 180 = 2070, under both caps.
+        # unswept low = 6000 - 3000 = 3000. safe = 3000 - 750 - 400 = 1850, under both caps.
         outcome = grade(s, swept("300.00", projected_low="900.00"), flat("-100.00"))
 
-        assert outcome.should_have_swept == money("2070.00")
-        assert outcome.false_refusal_cost == money("1770.00")  # 2070 - 300 actually moved
+        assert outcome.should_have_swept == money("1850.00")
+        assert outcome.false_refusal_cost == money("1550.00")  # 1850 - 300 actually moved
 
     def test_a_correct_refusal_costs_nothing(self) -> None:
         """There was genuinely nothing safe to move. The refusal was the product working."""
@@ -328,7 +343,8 @@ class TestRefusalsAreGradedToo:
         assert outcome.action is Action.REFUSE
         assert outcome.swept == money("0.00")
         assert outcome.projection_error is not None
-        assert outcome.false_refusal_cost == money("70.00")
+        # Nothing was safe to move once the card's real obligation is reserved.
+        assert outcome.false_refusal_cost == money("0.00")
 
 
 class TestAgainstRealGeneratedHouseholds:
@@ -361,11 +377,13 @@ class TestAgainstRealGeneratedHouseholds:
             ),
             bills=(BillSpec(label="rent", day_of_month=1, mean=money("1800.00")),),
             spend=SpendSpec(zero_day_probability=0.25, median=money("38.00"), log_sigma=0.9),
-            card=CardSpec(
-                balance=money("9000.00"),
-                apr=Decimal("0.2399"),
-                minimum_payment=money("180.00"),
-                payment=money("400.00"),
+            cards=(
+                CardSpec(
+                    balance=money("9000.00"),
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("180.00"),
+                    payment=money("400.00"),
+                ),
             ),
             shocks=ShockSpec(**shock_kw),
         )
@@ -388,7 +406,7 @@ class TestAgainstRealGeneratedHouseholds:
         return snapshot(
             today=today,
             accounts=(account(str(history.balance_on(today))),),
-            debts=(card(minimum_due_date=today + timedelta(days=20)),),
+            portfolio=wallet(card(statement_due_date=today + timedelta(days=20))),
             **kw,
         )
 

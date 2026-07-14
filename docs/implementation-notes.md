@@ -729,3 +729,136 @@ sentence from the model now actually configured.
 The end-to-end run that would have closed this (`scratchpad/e2e.py`, all four question shapes)
 errored before it produced a result and was never re-run. Committed green-on-unit-tests and
 explicitly *unverified live*, so the gap is visible rather than assumed closed.
+
+---
+
+## 2026-07-14 — U2 (`0011`): the simulator charges a card, and nothing else moved
+
+**Deviation from the ticket, in the safe direction.** `0011` predicted that
+`tests/test_spend_model.py` and `test_the_committed_artifact_is_the_one_the_code_generates` would
+both fail "by design" and the numbers would need re-deriving. **Neither failed.** The artifact
+regenerates byte-for-byte identical and the full suite is green.
+
+That is not luck, and it is worth understanding rather than celebrating. `SpendSpec.card_share`
+defaults to `0.0`, and `DEMO_SPEC` does not opt in — so the simulator has *learned* to charge a card
+while the demo household still charges nothing. The generator can now do the thing; it is not yet
+doing it.
+
+Two details make the byte-identity real rather than approximate:
+
+- The channel decision is **short-circuited on the left** (`card_share > 0.0 and rng.random() < ...`),
+  so at zero the rng is never drawn and the whole random sequence is the one the generator has always
+  produced. Draw it unconditionally and every committed figure in the repo shifts on the same day the
+  feature lands, for no behavioural reason at all.
+- Card payments are computed *after* the spend loop (they depend on what was charged) but **appended
+  before** it, preserving the txn order the function has always emitted. The rng order is what
+  guarantees identity; the append order is what keeps the diff empty.
+
+**So the churn moves to U4, which is where it belongs.** Turning `card_share` on for the demo changes
+what the engine *decides*, and that change should land with the reserve that can survive it — not a
+release earlier, where it would look like an unexplained artifact diff.
+
+**The one genuinely load-bearing line in the diff** is in `History._by_day`: checking totals now
+exclude `TxnKind.CARD_CHARGE`. A card charge is not a checking outflow — it is a checking outflow
+scheduled for the due date of the statement it lands on, and `CARD_PAYMENT` already carries that.
+Counting both would spend the same dollar twice. `CHECKING_KINDS` is an explicit allow-list rather
+than a `!= CARD_CHARGE` check, so the next txn kind someone adds has to make a deliberate choice
+about which side of that line it falls on.
+
+**`CardSpec.payment` is no longer what the household pays.** It is what a REVOLVER *habitually* pays.
+What actually leaves checking is `_card_payment_for(behavior, closed_statement)` — a transactor
+clears the statement, a minimum-only household pays the floor. This is the sentence the whole feature
+turns on: once the payment is determined by what was charged, there is no constant left to hardcode,
+and `precompute.py`'s ORDINARY workaround has nothing left to stand on.
+
+**`HouseholdSpec.card` survives as a read-only property** returning `cards[0]`, for single-card
+callers and tests. It is deliberately *not* a compatibility shim for the engine: anything that
+reserves, ranks or forecasts must iterate `cards`, because reading `.card` on a two-card household is
+precisely the bug this feature exists to fix.
+
+---
+
+## 2026-07-14 — U4 (`0013`): the reserve holds the obligation, not the minimum
+
+The safety fix. `untouchable()` was already portfolio-wide — it summed across every debt due in
+the horizon — so the brainstorm's "the reserve is per-card" framing was wrong. The real defect was
+narrower and worse: **it reserved each card's *minimum* when it should have reserved each card's
+*obligation*.** The minimum is what the issuer will accept. The obligation is what the household
+pays, and for a transactor those differ by the whole statement.
+
+### The hole the first design opened, and how it was caught
+
+`obligation_in_horizon` initially reserved only the statement that had **already closed**. That
+reads as more correct — it is a known fact rather than a forecast — and it is a **regression**.
+
+The old reserve was a *rolling forecast*: `precompute.py` recomputed `minimum_due_date` fresh every
+single day, so it always pointed at the next due date and reserved the minimum on essentially every
+day of the cycle. `Card.statement_due_date` is a fact about a statement that has already been paid.
+Key the reserve on that alone and the moment it is paid, the next has not closed, the card appears
+to owe nothing, and the reserve falls to **$0 for the last third of every cycle** — while
+`forecast.py` skips the CARD_PAYMENT event *unconditionally*, on the tag alone. Neither side
+accounts for the money. A **double-miss**, strictly worse than the $280 over-count it replaced, in
+the one direction §3 forbids.
+
+Adversarial review found it in the plan, before any code existed. The fix is a second term: the
+statement that has **not closed yet** but will close *and* come due inside the horizon. With a
+30-day horizon and a >=21-day grace it activates once the next close is within `horizon - grace`
+days — precisely the window term 1 leaves empty. The two terms tile the cycle with no gap.
+
+### The test that would have caught it, and the two drafts that would not have
+
+`test_the_reserve_never_shrinks_on_any_day_of_a_full_cycle` walks 70 consecutive days. Two earlier
+drafts of it were green and worthless:
+
+1. **It held `statement_balance` at $2,000 forever.** A statement that is never paid keeps term 1
+   firing, which covers for a missing term 2. Model the payment or the test proves nothing.
+2. **It took "the close about a month back" as the last close.** On a close day that skips straight
+   over the statement that closed *today*, leaving it in neither term.
+
+Both were found by deliberately deleting term 2 and checking the test went red. It did not, the
+first two times. **A test for a safety invariant that has never been seen to fail is not evidence.**
+
+### A real bug this shipped and then caught
+
+Dropping a paid-off card from the portfolio (`if ledger.outstanding > ZERO`) meant the coverage
+detector read the household's own historical payments to it as evidence of *a card we cannot see*,
+and refused with `CARD_COVERAGE_INCOMPLETE` on the very days the feed should have been celebrating a
+cleared balance. A paid-off card is still a card we can **see**. The portfolio always carries every
+card; `_select_target` decides emptiness, with `NO_DEBT`.
+
+### The demo now charges its card, and the retune was not free
+
+`DEMO_SPEC` gains `card_share=0.15`. Without it the artifact never exercises the path this unit
+exists for — no unbilled balance, no second reserve term.
+
+Turning it on raised the sweeps (8 -> 10). **That is legitimate**: this household charges ~$300/month
+and pays $450, so their checking genuinely does hold more idle cash, and the reserve correctly covers
+the $450 that actually leaves. But at `card_share=0.35` the extra surplus cleared the whole $14,000
+card inside the window — a "paid off" banner instead of the engine's daily work.
+
+The first retune raised the balance to $22,000 and was **wrong**: at 24% that card accrues ~$440/month
+against a $450 payment, amortizes at $10/month, and `interest_avoided` ballooned to **$50,320** — a
+number that is arithmetically true and completely unverifiable, about a household `interest.py`
+refuses to make claims for. Backed out. The dial is `card_share`, not the balance.
+
+**The reserve was never touched to make the demo look good.** That is the trade the cadence work
+warned would be tempting and would arrive at the worst possible moment. It arrived. The demo spec
+absorbed it.
+
+### Reason codes
+
+Five added, each with copy and both guard tests green in the same commit (`test_every_reason_code_has_copy`,
+`test_the_engines_own_copy_passes_on_every_day`). This category of bug has shipped three times; the
+gate is a completion condition now, not a follow-up.
+
+`tests/test_assistant.py`'s supporting-date tests pinned a hardcoded day *and* two dollar figures out
+of the committed artifact, so they broke the moment the engine's decisions legitimately changed — and
+the breakage read as "the guard is wrong" when the guard was fine. They now **find** a sweep day with
+a projection horizon and derive the figures from it. The property under test is the word-order rule,
+not which Tuesday the engine happened to sweep on.
+
+### Still open
+
+`engine/interest.py` still takes a `Debt` and still models a balance that only ever shrinks.
+`decide.py` adapts a `Card` to it via `_as_debt()` — a labelled, temporary adapter and **not** a
+second source of truth: the reserve reads `Card` and only `Card`. U5 (`0014`) removes it.

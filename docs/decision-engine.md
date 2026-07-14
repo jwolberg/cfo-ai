@@ -152,7 +152,20 @@ silently produces a *wrong dollar amount* rather than an error:
   the engine guessing at money. It refuses instead, and the sync layer deals with it. It
   also rejects an APR outside 0–200%, which catches the units bug (`24.99` for 24.99%).
 
-The rule: **an upstream data bug must never buy a bigger sweep.**
+The rule: **an upstream data change must never buy a bigger sweep.**
+
+> This rule used to say *bug*, and the word was too narrow. Connecting a real credit card is
+> **not a bug** — it is the system working correctly, ingesting *better* data. But
+> `daily_discretionary_high` is a p90 of **checking** spend, so moving a household's spending
+> onto a card collapses that series toward zero, the forecast stops reserving for spend, and the
+> engine finds "surplus" that is really just an obligation that has not arrived yet. Better data,
+> bigger sweep, same overdraft.
+>
+> The reason a data *bug* may not enlarge a sweep is that a sweep must never grow for a reason
+> unrelated to the household genuinely having more spare cash. A channel shift satisfies that
+> description exactly, so the rule now covers it by name. The portfolio reserve
+> (`obligation_in_horizon`) is what makes the card case safe: what moves onto the card is
+> reserved as an obligation, not silently released as surplus.
 
 ### [3.1] The minimum payment is reserved once, not twice
 
