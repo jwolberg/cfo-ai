@@ -46,15 +46,23 @@ from pathlib import Path
 from backend.artifact import SCHEMA_VERSION, Artifact, DayRecord, dump, summarize
 from engine.decide import decide
 from engine.models import (
+    MIN_GRACE_DAYS,
     ZERO,
     Account,
     AccountKind,
     Action,
+    Card,
+    CardPortfolio,
     CashEvent,
     ConnectionState,
+    CoverageState,
     Debt,
     Decision,
+    PaymentBehavior,
     Snapshot,
+    SpendProfile,
+    StatementCycle,
+    UnmatchedPayment,
     UserPolicy,
     money,
 )
@@ -66,10 +74,14 @@ from sim.household import (
     PayCadence,
     PayrollSpec,
     SpendSpec,
+    Txn,
     TxnKind,
     _monthly,
     _paydays,
     generate,
+)
+from sim.household import (
+    _last_close_on_or_before as _sim_last_close,
 )
 
 DAYS_PER_YEAR = Decimal("365")
@@ -91,6 +103,10 @@ SEED = 7
 
 # Trailing windows for the rolling statistics the engine reads.
 SPEND_LOOKBACK_DAYS = 90
+# The spend profile looks back a year and reads its quantile off overlapping 30-day windows —
+# the household's own worst months, not a parametric guess at them.
+SPEND_PROFILE_DAYS = 365
+SPEND_WINDOW_DAYS = 30
 # Income is bucketed into 28-day periods rather than calendar months, and this is not a
 # detail. This household is paid biweekly, so a calendar month contains two paychecks —
 # except the ~4 times a year it contains three. Bucketing by month would score that
@@ -370,6 +386,278 @@ def income_variation(history: History, today: date) -> float:
         return 0.0
 
     return statistics.pstdev(buckets) / mean
+
+
+# --- derivation: raw history -> the card types ---------------------------------------
+#
+# Pure derivation. Nothing here decides anything; it turns what a household *did* into the
+# types `decide()` is allowed to look at. See docs/tickets/0012.
+
+# Below this, we have not seen enough cycles to say what a household does with a card, and
+# UNKNOWN is a blocking refusal rather than a guess. Three is the same bar `PaymentBehavior`
+# documents and the same one `INSUFFICIENT_HISTORY` already implies.
+MIN_CYCLES_TO_CLASSIFY = 3
+# A transactor who carries a balance has silently lost their grace period and is accruing at
+# the full APR today. Two consecutive cycles, not one — one tolerates a single late payment.
+CYCLES_TO_BECOME_REVOLVER = 2
+# Going the other way takes the full three. The asymmetry is deliberate: being slow to grant a
+# grace period costs a slightly smaller sweep. Being quick to grant one means under-reserving
+# a household that owes the whole statement.
+CYCLES_TO_BECOME_TRANSACTOR = 3
+
+# A recurring outflow smaller than this is not a card payment — it is a subscription.
+MIN_PLAUSIBLE_CARD_PAYMENT = money("25.00")
+# ...and it must actually recur. A single card-shaped transfer proves nothing.
+MIN_MONTHS_TO_BE_RECURRING = 3
+
+# Merchant strings that mean "this money went to a credit card". In production this is Plaid's
+# merchant enrichment; here it is the labels our own simulator emits plus the issuer names a
+# real funding account would show.
+_CARD_MERCHANT_MARKERS = ("card payment", "card svc", "cardmember", "credit crd", "chase card")
+
+
+def _cycle_bounds(day: date, close_day: int) -> tuple[date, date]:
+    """The statement window `day` falls in: (previous close + 1, this close)."""
+    close = _sim_last_close(day, close_day)
+    previous = _sim_last_close(close - timedelta(days=1), close_day)
+    return previous + timedelta(days=1), close
+
+
+def classify_behavior(history: History, card: CardSpec, today: date) -> tuple[PaymentBehavior, int]:
+    """What this household *does* with this card, and how many cycles we watched to say so.
+
+    Returns UNKNOWN below three observed cycles. We refuse rather than guess, because the guess
+    is load-bearing twice over: it sets the reserve *and* it decides whether we may claim to
+    have saved them any interest at all.
+    """
+    seen = history.as_of(today)
+    payments = [
+        t for t in seen.txns if t.kind is TxnKind.CARD_PAYMENT and t.card_id == card.card_id
+    ]
+
+    if len(payments) < MIN_CYCLES_TO_CLASSIFY:
+        return PaymentBehavior.UNKNOWN, len(payments)
+
+    # For each observed payment: did it clear the statement that had closed, or leave a balance?
+    carried: list[bool] = []
+    outstanding = card.balance
+    for pay in sorted(payments, key=lambda t: t.day):
+        window_start, close = _cycle_bounds(pay.day, card.close_day_of_month)
+        billed = seen.card_charged_between(card.card_id, window_start, close)
+        statement = max(outstanding + billed, ZERO)
+        paid = -pay.amount
+        outstanding = max(statement - paid, ZERO)
+        carried.append(outstanding > ZERO)
+
+    recent = carried[-CYCLES_TO_BECOME_REVOLVER:]
+    if len(recent) == CYCLES_TO_BECOME_REVOLVER and all(recent):
+        # They have carried a balance two cycles running. Whatever they used to be, they are
+        # paying 24% today, and reserving their minimum against a statement they owe in full
+        # would be the smaller of the two mistakes available.
+        clean = carried[-CYCLES_TO_BECOME_TRANSACTOR:]
+        if len(clean) == CYCLES_TO_BECOME_TRANSACTOR and not any(clean):
+            return PaymentBehavior.TRANSACTOR, len(carried)
+        paid_only_minimum = all(
+            -p.amount <= card.minimum_payment for p in sorted(payments, key=lambda t: t.day)[-3:]
+        )
+        behavior = PaymentBehavior.MINIMUM_ONLY if paid_only_minimum else PaymentBehavior.REVOLVER
+        return behavior, len(carried)
+
+    clean = carried[-CYCLES_TO_BECOME_TRANSACTOR:]
+    if len(clean) == CYCLES_TO_BECOME_TRANSACTOR and not any(clean):
+        return PaymentBehavior.TRANSACTOR, len(carried)
+
+    return PaymentBehavior.REVOLVER, len(carried)
+
+
+def observed_monthly_payment(history: History, card: CardSpec, today: date) -> Decimal | None:
+    """What the household actually pays this card each cycle — the interest counterfactual.
+
+    Derived from **observed payment events**, never from inferred cycle boundaries. That is not
+    a stylistic preference: this figure is payments-divided-by-cycles and it feeds the REVOLVER
+    reserve directly, so a cycle inference that invents *more, shorter* cycles would divide the
+    same payments across a larger denominator and pull the number **down** — shrinking the very
+    reserve the inference was meant to protect. Count the payments. Do not model the calendar.
+    """
+    seen = history.as_of(today)
+    payments = [
+        -t.amount for t in seen.txns if t.kind is TxnKind.CARD_PAYMENT and t.card_id == card.card_id
+    ]
+    if len(payments) < MIN_CYCLES_TO_CLASSIFY:
+        # No claim rather than a flattering one. `INSUFFICIENT_HISTORY` is already refusing to
+        # sweep on these days anyway.
+        return None
+    return money(sum(payments, ZERO) / len(payments))
+
+
+def infer_close_day(history: History, card: CardSpec, today: date) -> tuple[int, bool]:
+    """The statement close day, and whether we are *sure* of it.
+
+    Plaid does not reliably return the close date (prd.md §6.2, the same gap that makes APR
+    unreliable). Where it is missing we infer it from the household's own payment dates — but
+    the inference is only ever allowed to move the obligation *earlier*, into the horizon, never
+    later out of it. Getting a close date wrong by one day moves an entire month of spend across
+    the horizon boundary; wrong-and-early costs a smaller sweep, wrong-and-late is an overdraft.
+
+    Returns `(day_of_month, certain)`. `certain=False` puts the caller on notice to reserve
+    early — see `derive_card`.
+    """
+    seen = history.as_of(today)
+    pay_days = sorted(
+        t.day.day for t in seen.txns if t.kind is TxnKind.CARD_PAYMENT and t.card_id == card.card_id
+    )
+    if len(pay_days) < MIN_CYCLES_TO_CLASSIFY:
+        return card.close_day_of_month, False
+
+    # Payments cluster on the due date. A household that pays on the same day every month tells
+    # us the cycle exactly; one that pays whenever they remember does not.
+    common = max(set(pay_days), key=pay_days.count)
+    certain = pay_days.count(common) >= len(pay_days) - 1
+    return common, certain
+
+
+def derive_card(history: History, card: CardSpec, today: date, ledger_balance: Decimal) -> Card:
+    """The `Card` the engine sees, as of `today`.
+
+    Splits what is owed into the statement that has **already closed** (a known fact, legally
+    due) and the charges since (**unbilled** — not yet due, but the thing that determines next
+    month's bill). `obligation_in_horizon()` in U4 needs both, and a Card carrying only the
+    closed statement is what left the reserve at $0 for a third of every cycle.
+    """
+    seen = history.as_of(today)
+    behavior, _cycles = classify_behavior(seen, card, today)
+    close_day, certain = infer_close_day(seen, card, today)
+
+    cycle = StatementCycle(close_day_of_month=close_day, grace_days=MIN_GRACE_DAYS)
+    last_close = _sim_last_close(today, close_day)
+    next_close = cycle.close_on_or_after(today + timedelta(days=1))
+
+    # What has posted since the last close is not yet billed.
+    unbilled = seen.card_charged_between(card.card_id, last_close + timedelta(days=1), today)
+    statement_balance = max(ledger_balance - unbilled, ZERO)
+
+    due = cycle.due_for(last_close)
+    if not certain:
+        # We are guessing at the calendar. Guess in the direction that reserves: pull the
+        # obligation to the near edge of the horizon rather than letting it drift past it.
+        due = min(due, today)
+
+    return Card(
+        card_id=card.card_id,
+        apr=card.apr,
+        cycle=cycle,
+        statement_balance=statement_balance,
+        statement_due_date=max(due, today),
+        minimum_payment=card.minimum_payment,
+        unbilled_balance=unbilled,
+        next_close_date=next_close,
+        behavior=behavior,
+        observed_monthly_payment=observed_monthly_payment(seen, card, today),
+    )
+
+
+def detect_unmatched_payments(
+    history: History, known_card_ids: set[str], today: date
+) -> tuple[UnmatchedPayment, ...]:
+    """Recurring, card-shaped outflows that map to no card we can see.
+
+    The real coverage gate. Attestation is necessary and nowhere near sufficient — people forget
+    the store card — but a recurring $300 to `CHASE CARD SVC` with no Chase card connected is
+    *evidence*, not a hunch. Deterministic, runs off data we already have, and fails toward
+    refusal.
+    """
+    seen = history.as_of(today)
+
+    candidates: dict[str, list[Txn]] = {}
+    for txn in seen.txns:
+        if txn.amount >= ZERO:
+            continue
+        if txn.card_id in known_card_ids:
+            continue  # a card we can see. Not our problem.
+        label = txn.label.lower()
+        if not any(marker in label for marker in _CARD_MERCHANT_MARKERS):
+            continue
+        if -txn.amount < MIN_PLAUSIBLE_CARD_PAYMENT:
+            continue  # a subscription, not a card
+        candidates.setdefault(txn.label, []).append(txn)
+
+    out: list[UnmatchedPayment] = []
+    for merchant, txns in sorted(candidates.items()):
+        months = {(t.day.year, t.day.month) for t in txns}
+        if len(months) < MIN_MONTHS_TO_BE_RECURRING:
+            continue  # it happened once. That is not a liability, it is a transfer.
+        amounts = [-t.amount for t in txns]
+        out.append(
+            UnmatchedPayment(
+                merchant=merchant,
+                typical_amount=money(sum(amounts, ZERO) / len(amounts)),
+                day_of_month=max({t.day.day for t in txns}, key=[t.day.day for t in txns].count),
+                months_observed=len(months),
+            )
+        )
+
+    return tuple(out)
+
+
+def derive_portfolio(
+    history: History,
+    cards: tuple[Card, ...],
+    today: date,
+    attested: bool,
+) -> CardPortfolio:
+    """Every card the household is liable for — or an honest statement that we do not know."""
+    unmatched = detect_unmatched_payments(history, {c.card_id for c in cards}, today)
+
+    if unmatched:
+        coverage = CoverageState.UNMATCHED_PAYMENT
+    elif not attested:
+        coverage = CoverageState.UNATTESTED
+    else:
+        coverage = CoverageState.COMPLETE
+
+    return CardPortfolio(cards=cards, coverage=coverage, unmatched_card_payments=unmatched)
+
+
+def _rolling_30d(daily: Sequence[Decimal]) -> tuple[Decimal, ...]:
+    """Every overlapping 30-day total in the series."""
+    if len(daily) < SPEND_WINDOW_DAYS:
+        return ()
+    window = sum(daily[:SPEND_WINDOW_DAYS], ZERO)
+    out = [window]
+    for i in range(SPEND_WINDOW_DAYS, len(daily)):
+        window += daily[i] - daily[i - SPEND_WINDOW_DAYS]
+        out.append(window)
+    return tuple(out)
+
+
+def derive_spend_profile(history: History, today: date) -> SpendProfile:
+    """What normal looks like, over the trailing year, across every channel.
+
+    Non-parametric by construction. The 2026-07-13 learning is explicit about why: real spend is
+    zero-inflated and right-skewed, sigma is a poor description of its tail, and a parametric
+    `mu + z*sigma*sqrt(t)` reintroduces exactly the error the current forecast makes — "variance
+    grows with sqrt(t), and this model grows it with t". So we enumerate the household's own
+    overlapping 30-day windows and read the quantile straight off them.
+
+    **This feeds no decision.** It is a structure and a dashboard. Swapping the forecast onto its
+    empirical quantile would *loosen* the reserve, and loosening needs the measured breach rate
+    that `engine/outcome.py` cannot yet produce. See U8.
+    """
+    seen = history.as_of(today)
+
+    cash = list(seen.discretionary_series())
+    charges_by_day: dict[date, Decimal] = {}
+    for txn in seen.card_charges():
+        charges_by_day[txn.day] = charges_by_day.get(txn.day, ZERO) - txn.amount
+    card = [charges_by_day.get(seen.start + timedelta(days=i), ZERO) for i in range(seen.days)]
+
+    return SpendProfile(
+        window_days=SPEND_PROFILE_DAYS,
+        commitments=(),
+        by_category={},
+        rolling_30d_cash=_rolling_30d(cash),
+        rolling_30d_card=_rolling_30d(card),
+    )
 
 
 # --- the walk -----------------------------------------------------------------------
