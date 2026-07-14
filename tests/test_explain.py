@@ -23,6 +23,11 @@ from engine.models import Action, Decision, Reason, ReasonCode, money
 # One representative set of params per code. Update this when a code is added — the
 # test below will fail until you do, which is the point.
 SAMPLES: dict[ReasonCode, dict] = {
+    ReasonCode.CARD_COVERAGE_INCOMPLETE: {"coverage": "unmatched_payment", "unmatched": 1},
+    ReasonCode.CARD_BEHAVIOR_UNKNOWN: {"card_count": 1},
+    ReasonCode.NO_INTEREST_TO_AVOID: {"card_count": 2},
+    ReasonCode.STATEMENT_RESERVED: {"amount": money("2240.00"), "due": date(2026, 3, 13)},
+    ReasonCode.UNBILLED_ACCRUING: {"amount": money("1240.00"), "due": date(2026, 4, 10)},
     ReasonCode.FUNDING_ACCOUNT_MISSING: {"account_id": "chk"},
     ReasonCode.FUNDING_ACCOUNT_NOT_CHECKING: {"kind": "savings"},
     ReasonCode.CONNECTION_UNHEALTHY: {"state": "login_required"},

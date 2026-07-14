@@ -61,11 +61,12 @@ def spec_with(**kw) -> HouseholdSpec:
     """DEMO_SPEC with one or two fields swapped — the base is already the persona."""
     card_kw = {k: kw.pop(k) for k in list(kw) if k in CardSpec.__dataclass_fields__}
     card = CardSpec(**{**vars(DEMO_SPEC.card), **card_kw}) if card_kw else DEMO_SPEC.card
+    spend = kw.pop("spend", DEMO_SPEC.spend)
     return HouseholdSpec(
         opening_balance=kw.pop("opening_balance", DEMO_SPEC.opening_balance),
         payroll=DEMO_SPEC.payroll,
         bills=DEMO_SPEC.bills,
-        spend=DEMO_SPEC.spend,
+        spend=spend,
         cards=(card,),
         shocks=DEMO_SPEC.shocks,
     )
@@ -174,19 +175,29 @@ class TestDerivedCashEvents:
         for e in derive_cash_events(DEMO_SPEC, date(2026, 3, 1)):
             assert e.is_inflow == (e.label == "payroll")
 
-    def test_the_card_payment_is_not_tagged_as_the_minimum(self) -> None:
-        """Tagging the full $450 payment as DEBT_MINIMUM would hide $170 of real outflow.
+    def test_the_card_payment_is_tagged_and_the_reserve_carries_it(self) -> None:
+        """The ORDINARY workaround is gone, and this test is its epitaph.
 
-        `forecast.py` skips DEBT_MINIMUM events entirely, and `decide()` reserves only
-        `Debt.minimum_payment` ($280). The difference is money that genuinely leaves the
-        account and would go uncounted — an under-count, which is the direction that ends in
-        an overdraft.
+        It used to assert the opposite: the payment was emitted as ORDINARY at its full $450
+        and `decide()` reserved only the $280 minimum on top, knowingly over-counting by $280
+        because the alternative — tagging it so the forecast skipped it — under-counted $170,
+        and only one of those directions ends in an overdraft.
+
+        That workaround stood up only because the payment was a hardcoded constant. It is now
+        a function of behaviour and the statement that closed, and `untouchable()` reserves the
+        household's **actual obligation** rather than the minimum the issuer would settle for.
+        So the payment is tagged, the forecast skips it, the reserve carries it, and the
+        arithmetic is exact for the first time instead of deliberately wrong in the safe
+        direction.
+
+        The two halves are one mechanism: skip the event *without* reserving the obligation and
+        nothing accounts for the payment at all.
         """
         events = derive_cash_events(DEMO_SPEC, date(2026, 3, 1))
         card = [e for e in events if e.label == "card payment"]
 
         assert card
-        assert all(e.kind is EventKind.ORDINARY for e in card)
+        assert all(e.kind is EventKind.CARD_PAYMENT for e in card)
         assert all(e.amount == -DEMO_SPEC.card.payment for e in card)
 
     def test_events_land_on_the_funding_account(self) -> None:
@@ -366,7 +377,23 @@ class TestTheWalk:
         # already-dead card and the build failed for want of a single SWEEP. $9,000 leaves
         # ~8 sweeps of runway and ~27 paid-off days, so it is not perched on either cliff —
         # and unlike the old figure it sits inside prd.md §3's $8-40k persona band.
-        a = build(spec=spec_with(balance=money("9000.00"), minimum_payment=money("50.00")))
+        #
+        # `card_share=0` because "paid off" has to *stay* paid off to be worth asserting. A
+        # household that keeps charging the card drives the balance to zero and then straight
+        # back up again on the next coffee — which is correct, and is exactly why a card in
+        # active use is never durably "paid off". That is a different scenario than this one.
+        a = build(
+            spec=spec_with(
+                balance=money("9000.00"),
+                minimum_payment=money("50.00"),
+                spend=SpendSpec(
+                    zero_day_probability=0.25,
+                    median=money("38.00"),
+                    log_sigma=0.9,
+                    card_share=0.0,
+                ),
+            )
+        )
 
         cleared = [r for r in a.days if r.paid_off]
         assert cleared

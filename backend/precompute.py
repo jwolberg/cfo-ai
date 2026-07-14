@@ -56,8 +56,8 @@ from engine.models import (
     CashEvent,
     ConnectionState,
     CoverageState,
-    Debt,
     Decision,
+    EventKind,
     PaymentBehavior,
     Snapshot,
     SpendProfile,
@@ -164,18 +164,35 @@ DEMO_SPEC = HouseholdSpec(
         BillSpec(label="rent", day_of_month=1, mean=money("1800.00")),
         BillSpec(label="utilities", day_of_month=8, mean=money("180.00"), sd=money("35.00")),
     ),
-    # card_share stays at its default of 0.0 in this unit. The demo household still charges
-    # nothing, so this artifact is byte-for-byte the one already committed — the simulator can
-    # now issue charges, but turning them on for the demo is a decision that changes what the
-    # engine decides, and it belongs with the reserve that can survive it (U4), not here.
-    spend=SpendSpec(zero_day_probability=0.25, median=money("38.00"), log_sigma=0.9),
+    # The household now puts about a third of its discretionary spend on the card, which is
+    # what a real household does and what this feature exists to survive. Turning it on is a
+    # decision that changes what the engine decides, so it lands here — with the reserve that
+    # can carry it — and not a release earlier.
+    #
+    # This is also the only way the demo exercises the path that matters: charges accrue
+    # unbilled, the reserve covers the statement that has not closed yet, and the forecast's
+    # p90-of-checking-spend quietly falls as spend moves off checking. Before the obligation
+    # reserve, that fall would have *bought a bigger sweep*.
+    #
+    # 0.15, not 0.35. The share is the dial that absorbs the demo's shape, and it is tuned
+    # *here* rather than by softening the reserve — the trade the cadence work warned would be
+    # tempting and arrive at the worst moment. At 0.35 the household's checking spend collapses
+    # far enough that the engine finds enough genuine surplus to clear the whole card inside 90
+    # days, which is a true story about a different household than the one we serve.
+    spend=SpendSpec(
+        zero_day_probability=0.25, median=money("38.00"), log_sigma=0.9, card_share=0.15
+    ),
     cards=(
         CardSpec(
-            # A $9,000 card — the low end of the persona's band — is one this household clears
-            # almost exactly inside a 90-day window, which lands the demo on a $0 balance and a
-            # "paid off" banner instead of the engine's actual daily work. $14,000 sits in the
-            # middle of the band (USERS.md) and still has a real balance at the end of the
-            # window, which is the story worth showing.
+            # $14,000 sits in the middle of the persona's band (USERS.md) and leaves a real
+            # balance at the end of the window rather than a "paid off" banner.
+            #
+            # Do **not** raise this to absorb the bigger sweeps that card charges produce. At
+            # $22,000 and 24% the card accrues ~$440/month against a $450 payment: it amortizes
+            # at $10 a month, the payoff horizon runs to decades, and `interest_avoided`
+            # balloons to a five-figure number that is arithmetically true and completely
+            # unverifiable. That is the household `engine/interest.py` refuses to make a claim
+            # about, and it is not the persona. The card_share below is the dial to turn.
             balance=money("14000.00"),
             apr=Decimal("0.2399"),
             minimum_payment=money("280.00"),
@@ -269,16 +286,20 @@ def derive_cash_events(
     large. Collapsing every event to a certain point estimate would leave that asymmetry
     with nothing to bite on and quietly turn the conservative forecast into an exact one.
 
-    The card payment is emitted as an ORDINARY outflow at its full amount, not as
-    DEBT_MINIMUM. The household pays $450 against a $280 minimum (`DEMO_SPEC`); tagging the
-    whole payment as the minimum would make `forecast.py` skip all $450 of it (see `EventKind`)
-    while `decide()` reserved only the $280 — under-counting $170 of real outflow, in the one
-    direction that ends in an overdraft. Reserving the minimum on top of the full payment
-    over-counts by $280 instead, which is the direction that costs a slightly smaller sweep.
+    **The ORDINARY-at-full-value workaround is gone, and this is where it lived.** It emitted
+    the card payment as an ORDINARY outflow at its full $450 and knowingly ate a $280
+    double-count, because the alternative — tagging it DEBT_MINIMUM, which the forecast skips —
+    left `decide()` reserving only the $280 minimum against a $450 payment. That under-counted
+    $170 of real outflow, in the one direction that ends in an overdraft.
 
-    Figures are `DEMO_SPEC`'s, and they have drifted once already: this paragraph narrated
-    $400/$180/$220 long after the spec moved to $450/$280, and a scoping document later copied
-    the stale numbers back out of it. If `DEMO_SPEC` changes, change these too.
+    It stood up only because the payment was a hardcoded constant. It no longer is: the payment
+    is what `behavior` does to the statement that closed, and `untouchable()` now reserves that
+    *actual obligation* rather than the minimum the issuer would settle for. So the payment is
+    tagged CARD_PAYMENT, the forecast skips it, the reserve carries it, and the arithmetic is
+    exact for the first time instead of deliberately wrong in the safe direction.
+
+    The two halves are one mechanism. Skip the event without reserving the obligation and
+    nothing accounts for the payment at all.
     """
     through = today + timedelta(days=horizon)
     events: list[CashEvent] = []
@@ -316,20 +337,25 @@ def derive_cash_events(
                 )
             )
 
-    for day in _monthly(today, spec.card.payment_day_of_month, through):
-        payment = spec.card.payment
-        events.append(
-            CashEvent(
-                label="card payment",
-                account_id=CHECKING_ID,
-                expected_date=day,
-                amount=-payment,
-                amount_low=-payment,
-                amount_high=-payment,
-                date_jitter_days=1,
-                confidence=1.0,
+    for card in spec.cards:
+        for day in _monthly(today, card.payment_day_of_month, through):
+            # Tagged CARD_PAYMENT, so `forecast.py` skips it: the reserve is the authoritative
+            # source for what this card takes out of checking. Counting it here as well would
+            # subtract the same payment twice.
+            payment = card.payment
+            events.append(
+                CashEvent(
+                    label="card payment",
+                    account_id=CHECKING_ID,
+                    expected_date=day,
+                    amount=-payment,
+                    amount_low=-payment,
+                    amount_high=-payment,
+                    date_jitter_days=1,
+                    confidence=1.0,
+                    kind=EventKind.CARD_PAYMENT,
+                )
             )
-        )
 
     return tuple(events)
 
@@ -725,16 +751,26 @@ def build(
         last_sweep = max(sweeps, default=None)
         days_since_last_sweep = (today - last_sweep).days if last_sweep else None
 
-        debt = Debt(
-            debt_id=CARD_ID,
-            balance=ledger.outstanding,
-            minimum_payment=spec.card.minimum_payment,
-            minimum_due_date=_next_due(today, STATEMENT_DAY),
-            apr=spec.card.apr,
-            # What they were paying before we arrived — the counterfactual the interest
-            # claim is measured against, and without which the engine makes no claim at all.
-            observed_monthly_payment=spec.card.payment,
+        # The card as the engine sees it: the statement already closed, and the charges since
+        # that will become next month's. `derive_card` reads both, because a reserve keyed only
+        # on the closed statement falls to $0 for a third of every cycle.
+        #
+        # The demo household attests to its card list — it has exactly one card and we generated
+        # it. Coverage is COMPLETE, not because attestation is a formality, but because there is
+        # genuinely nothing here we cannot see.
+        # Every card, always — including one that has been paid to zero. A paid-off card is
+        # still a card we can *see*, and dropping it from the portfolio was a real bug: the
+        # coverage detector then read the household's own historical payments to it as evidence
+        # of a card we could not see, and refused with CARD_COVERAGE_INCOMPLETE on the very days
+        # the feed should have been celebrating a cleared balance.
+        #
+        # `_select_target` already filters on `total_owed > 0` and answers NO_DEBT when nothing
+        # is open. Emptiness is its job to decide, not this loop's.
+        cards = tuple(
+            derive_card(history, card_spec, today, ledger_balance=ledger.outstanding)
+            for card_spec in spec.cards
         )
+        portfolio = derive_portfolio(history, cards, today, attested=True)
 
         snapshot = Snapshot(
             today=today,
@@ -757,7 +793,7 @@ def build(
             funding_account_id=CHECKING_ID,
             events=derive_cash_events(spec, today),
             pending=(),
-            debts=(debt,) if ledger.outstanding > ZERO else (),
+            portfolio=portfolio,
             policy=policy,
             daily_discretionary_high=daily_discretionary_high(history, today),
             income_variation=income_variation(history, today),

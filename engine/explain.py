@@ -85,6 +85,32 @@ def render(reason: Reason) -> str:
         case ReasonCode.NO_DEBT:
             return "You have no debt left to pay. Nothing to do — congratulations."
 
+        case ReasonCode.CARD_COVERAGE_INCOMPLETE:
+            if p["unmatched"]:
+                return (
+                    "We can see a regular payment going to a card you haven't connected. Until "
+                    "we know what's on it, we'd rather leave your cash where it is than pay "
+                    "down one card and leave you short on another."
+                )
+            return (
+                "Tell us this is all of your cards and we'll get started. We hold off until we "
+                "can see the whole picture — paying the right card while another one goes short "
+                "helps nobody."
+            )
+
+        case ReasonCode.CARD_BEHAVIOR_UNKNOWN:
+            return (
+                f"We've not yet seen enough statements on {p['card_count']} of your cards to "
+                "know what you usually pay. A month or two more and we'll know what to set "
+                "aside."
+            )
+
+        case ReasonCode.NO_INTEREST_TO_AVOID:
+            return (
+                "You clear your cards in full every month, so you're paying no interest for us "
+                "to save. Your money is better off staying where it is."
+            )
+
         case ReasonCode.APR_UNKNOWN:
             return (
                 f"Your bank doesn't tell us the interest rates on your {p['card_count']} cards, "
@@ -114,8 +140,14 @@ def render(reason: Reason) -> str:
         case ReasonCode.PROJECTION:
             return (
                 f"Your balance is heading for a low of {usd(p['low'])} on {p['low_day']}, "
-                f"after your {usd(p['buffer'])} buffer and {usd(p['reserved'])} of minimum "
-                "payments."
+                f"after your {usd(p['buffer'])} buffer and {usd(p['reserved'])} set aside for "
+                "your cards."
+            )
+
+        case ReasonCode.STATEMENT_RESERVED:
+            return (
+                f"We're holding back {usd(p['amount'])} of your cash for a statement due "
+                f"{p['due']}."
             )
 
         case ReasonCode.PER_SWEEP_CAP:
@@ -134,6 +166,12 @@ def render(reason: Reason) -> str:
             return (
                 f"That's about {usd(p['amount'])} of interest you won't pay, if you keep "
                 "your payments where they are."
+            )
+
+        case ReasonCode.UNBILLED_ACCRUING:
+            return (
+                f"You've put {usd(p['amount'])} on this card since it last closed. That lands "
+                f"on your next statement, due {p['due']}."
             )
 
         case ReasonCode.IDLE_CASH_ELSEWHERE:

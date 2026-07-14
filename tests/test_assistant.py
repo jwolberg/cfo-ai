@@ -46,6 +46,29 @@ def facts_for(*records: art.DayRecord) -> Facts:
     return facts
 
 
+def _a_sweep_with_a_horizon(artifact: art.Artifact):
+    """Any sweep day whose projection quotes a horizon date, with its real figures.
+
+    Found rather than hardcoded, deliberately. These tests used to pin a specific day and a
+    specific pair of dollar figures out of the committed artifact — so they broke the moment
+    the engine's decisions legitimately changed, and the breakage read as "the guard is wrong"
+    when the guard was fine. The property under test is the *word-order rule*, not which
+    Tuesday the engine happened to sweep on.
+    """
+    from engine.models import Action
+
+    for record in artifact.days:
+        if record.decision.action is not Action.SWEEP:
+            continue
+        facts = facts_for(record)
+        for horizon, figures in facts.supporting.items():
+            if figures:
+                low = f"${max(figures):,.2f}"
+                return record, facts, horizon, low, f"${record.decision.amount:,.2f}"
+
+    raise AssertionError("no sweep day quotes a projection horizon — the fixture has drifted")
+
+
 def explain_sentences(record: art.DayRecord) -> list[str]:
     """The engine's own copy for a decision — the same sentences the tool payload carries."""
     from engine.explain import explain
@@ -612,18 +635,12 @@ class TestSupportingDates:
         What licenses it is word order: the projection reaches the date through its own figure,
         so the figure comes first. See the attribution cases below, which must still be caught.
         """
-        record = artifact.by_day(date(2026, 3, 8))
-        assert record is not None
-        assert record.decision.action is Action.SWEEP
-        facts = facts_for(record)
-        assert date(2026, 4, 7) in facts.supporting, (
-            "fixture drift: 2026-04-07 is no longer 2026-03-08's projection horizon"
-        )
+        record, facts, horizon, low, amount = _a_sweep_with_a_horizon(artifact)
 
         true_and_now_allowed = [
-            "Your balance was heading for a low of $4,024.53 on 2026-04-07, "
-            "so the engine paid $1,600.00 onto your card.",
-            "The projection showed a low of $4,024.53 on 2026-04-07, and we still moved $1,600.00.",
+            f"Your balance was heading for a low of {low} on {horizon}, "
+            f"so the engine paid {amount} onto your card.",
+            f"The projection showed a low of {low} on {horizon}, and we still moved {amount}.",
         ]
         for text in true_and_now_allowed:
             assert verify(text, facts) is None, f"the guard rejected a true sentence: {text}"
@@ -638,18 +655,16 @@ class TestSupportingDates:
         and it still asserts a payment on a day that never had one. Leading with the date is
         attribution no matter what else the sentence carries.
         """
-        record = artifact.by_day(date(2026, 3, 8))
-        assert record is not None
-        facts = facts_for(record)
+        record, facts, horizon, low, amount = _a_sweep_with_a_horizon(artifact)
 
         attributions = [
-            "On 2026-04-07 we paid $1,600.00 onto your card.",
-            "On 2026-04-07, with a low of $4,024.53, we swept $1,600.00.",
+            f"On {horizon} we paid {amount} onto your card.",
+            f"On {horizon}, with a low of {low}, we swept {amount}.",
         ]
         for text in attributions:
             rejection = verify(text, facts)
             assert rejection is not None, f"the guard passed a false attribution: {text}"
-            assert "2026-04-07" in rejection.reason
+            assert str(horizon) in rejection.reason
 
     def test_an_unfetched_date_is_still_rejected(self, refuse_day: art.DayRecord) -> None:
         """The original rule is intact: a date we never fetched in any form carries nothing."""

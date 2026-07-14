@@ -69,22 +69,29 @@ class AccountKind(str, Enum):
 class EventKind(str, Enum):
     """Whether an event is already accounted for elsewhere.
 
-    The recurring-event detector will happily identify a credit card's minimum payment
-    as a monthly obligation — it looks exactly like one. But `Debt` already carries that
-    minimum explicitly, and `decide()` reserves it out of available cash. Left
-    undistinguished, the same payment is subtracted twice: once by the forecast, once by
-    the reserve.
+    The recurring-event detector will happily identify a credit card payment as a monthly
+    obligation — it looks exactly like one. But the card portfolio already carries that
+    obligation explicitly, and `decide()` reserves it out of available cash. Left
+    undistinguished, the same payment is subtracted twice: once by the forecast, once by the
+    reserve.
 
-    The direction is safe (we under-sweep, nobody is overdrawn), which is precisely why
-    it would have gone unnoticed — the product would just quietly refuse more often than
-    it should, forever.
+    **This docstring used to assert a safety property that was false.** It claimed skipping the
+    card payment was safe because "we under-sweep, nobody is overdrawn" — which held only while
+    the reserve was the *minimum* and the payment was a hardcoded constant. It is not true in
+    general: a household pays more than the minimum (that is *why* they have idle cash), so
+    skipping the whole payment while reserving only the minimum under-counts the difference, in
+    the one direction that ends in an overdraft. `backend/precompute.py` had to route around
+    this with an ORDINARY-at-full-value workaround, and knowingly ate a double-count to do it.
 
-    `Debt` is the authoritative source for minimums. The forecast skips DEBT_MINIMUM
-    events and lets the reserve do that job alone.
+    What makes the skip correct now is that the reserve covers the card's **actual obligation**
+    — both the statement that has closed and the one about to (`obligation_in_horizon`). The
+    portfolio is the authoritative source; the forecast skips CARD_PAYMENT events and lets the
+    reserve do that job alone. Remove either half and the arithmetic breaks in the unsafe
+    direction.
     """
 
     ORDINARY = "ordinary"
-    DEBT_MINIMUM = "debt_minimum"
+    CARD_PAYMENT = "card_payment"
 
 
 @dataclass(frozen=True)
@@ -116,7 +123,7 @@ class CashEvent:
     amount_high: Decimal  # largest plausible magnitude (still signed)
     date_jitter_days: int
     confidence: float  # P(this event occurs roughly as predicted), 0..1
-    # DEBT_MINIMUM events are excluded from the forecast — Debt.minimum_payment is the
+    # CARD_PAYMENT events are excluded from the forecast — the card portfolio is the
     # authoritative source and decide() reserves it. See EventKind.
     kind: EventKind = EventKind.ORDINARY
 
@@ -578,7 +585,14 @@ class Snapshot:
     funding_account_id: str
     events: tuple[CashEvent, ...]
     pending: tuple[PendingTransaction, ...]
-    debts: tuple[Debt, ...]
+    # Every card the household is liable for — or an honest statement that we do not know.
+    #
+    # This replaced `debts: tuple[Debt, ...]`, and the replacement is the feature. A `Debt`
+    # knows only what the *issuer* will accept (the minimum). A `Card` knows what the
+    # *household* will pay, which for two of the three behaviours is a completely different
+    # number — and reserving the first while the second leaves checking is the overdraft this
+    # engine exists to prevent.
+    portfolio: CardPortfolio
     policy: UserPolicy
     # p90 of daily discretionary spend — the high end, deliberately.
     daily_discretionary_high: Decimal
@@ -634,9 +648,20 @@ class ReasonCode(str, Enum):
     BLACKOUT = "blackout"
     SWEEP_IN_FLIGHT = "sweep_in_flight"
 
+    # We cannot see the whole liability, so we will not act on part of it. Sweeping optimally
+    # into a portfolio we cannot see is not optimality — it is an overdraft with a good
+    # explanation.
+    CARD_COVERAGE_INCOMPLETE = "card_coverage_incomplete"
+    # Fewer than three observed cycles. We do not know what this card will take out of
+    # checking, and guessing sets both the reserve and the interest claim.
+    CARD_BEHAVIOR_UNKNOWN = "card_behavior_unknown"
+
     # Nothing to aim at.
     NO_DEBT = "no_debt"
     APR_UNKNOWN = "apr_unknown"
+    # Every card they hold is a transactor's. The grace period already does what our sweep
+    # claims to do, so there is no interest for us to avoid and nothing honest to charge for.
+    NO_INTEREST_TO_AVOID = "no_interest_to_avoid"
 
     # The money isn't there.
     NO_SURPLUS = "no_surplus"
@@ -649,6 +674,8 @@ class ReasonCode(str, Enum):
 
     # Why this amount, and not more.
     PROJECTION = "projection"
+    # The cash is smaller than the balance suggests because a statement is already spoken for.
+    STATEMENT_RESERVED = "statement_reserved"
     PER_SWEEP_CAP = "per_sweep_cap"
     WEEKLY_CAP = "weekly_cap"
     CLEARS_THE_CARD = "clears_the_card"
@@ -658,6 +685,9 @@ class ReasonCode(str, Enum):
     # Emitted only when the APR is known *and* the debt actually amortizes. Its absence is
     # how the engine declines to make a claim it cannot stand behind — see engine/interest.py.
     INTEREST_AVOIDED = "interest_avoided"
+    # What has been charged this cycle and when it comes due. Not why we acted — but it is the
+    # number that determines next month's bill, and the user cannot see it anywhere else.
+    UNBILLED_ACCRUING = "unbilled_accruing"
 
 
 @dataclass(frozen=True)

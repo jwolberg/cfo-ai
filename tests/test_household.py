@@ -23,10 +23,13 @@ import pytest
 from engine.models import (
     ZERO,
     Account,
+    Card,
+    CardPortfolio,
     ConnectionState,
-    Debt,
+    CoverageState,
     PaymentBehavior,
     Snapshot,
+    StatementCycle,
     UserPolicy,
     money,
 )
@@ -137,14 +140,22 @@ class TestMoneyDiscipline:
             funding_account_id=CHECKING,
             events=(),
             pending=(),
-            debts=(
-                Debt(
-                    debt_id="visa",
-                    balance=money("9000.00"),
-                    minimum_payment=money("180.00"),
-                    minimum_due_date=day + timedelta(days=20),
-                    apr=Decimal("0.2399"),
+            portfolio=CardPortfolio(
+                cards=(
+                    Card(
+                        card_id="visa",
+                        apr=Decimal("0.2399"),
+                        cycle=StatementCycle(close_day_of_month=20),
+                        statement_balance=money("9000.00"),
+                        statement_due_date=day + timedelta(days=20),
+                        minimum_payment=money("180.00"),
+                        unbilled_balance=ZERO,
+                        next_close_date=day + timedelta(days=25),
+                        behavior=PaymentBehavior.REVOLVER,
+                        observed_monthly_payment=money("400.00"),
+                    ),
                 ),
+                coverage=CoverageState.COMPLETE,
             ),
             policy=UserPolicy(
                 buffer_floor=money("750.00"),
