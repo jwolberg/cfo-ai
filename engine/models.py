@@ -645,12 +645,28 @@ class Snapshot:
     # degrades to the behaviour the engine shipped with. It cannot make any single sweep
     # larger, which is the thing [3] actually forbids.
     days_since_last_sweep: int | None = None
+    # What that last sweep was worth. Copy only — `decide()` never reads it, and no gate,
+    # cap or reserve depends on it. It exists so `CADENCE_HOLD` can say *what* we paid rather
+    # than only *when*: "we paid an extra $500 for you 6 days ago" is the same refusal as
+    # "we paid your card 6 days ago", told in a way that shows the user what they got.
+    #
+    # `None` means we do not know the figure, and the copy then says nothing about it. This
+    # is the `NO_INTEREST_TO_AVOID` rule applied to a sentence: we never render a number we
+    # cannot stand behind, and the absence is structural rather than a formatting accident.
+    #
+    # Deliberately **not** `swept_this_week`. That is a 7-day rolling sum which happens to
+    # equal the last sweep today only because `min_days_between_sweeps` defaults to 7. Set the
+    # cadence to 3 and the week can hold two sweeps, and the copy would start quoting a total
+    # while calling it a payment.
+    last_sweep_amount: Decimal | None = None
 
     def __post_init__(self) -> None:
         if self.days_since_last_sweep is not None and self.days_since_last_sweep < 0:
             raise ValueError(
                 f"days_since_last_sweep={self.days_since_last_sweep} cannot be negative"
             )
+        if self.last_sweep_amount is not None and self.last_sweep_amount < ZERO:
+            raise ValueError(f"last_sweep_amount={self.last_sweep_amount} cannot be negative")
 
 
 class Action(str, Enum):
