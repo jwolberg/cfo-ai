@@ -862,3 +862,52 @@ not which Tuesday the engine happened to sweep on.
 `engine/interest.py` still takes a `Debt` and still models a balance that only ever shrinks.
 `decide.py` adapts a `Card` to it via `_as_debt()` — a labelled, temporary adapter and **not** a
 second source of truth: the reserve reads `Card` and only `Card`. U5 (`0014`) removes it.
+
+---
+
+## 2026-07-14 — U5 (`0014`): the interest model admits that cards get charged
+
+`total_interest()` projected a balance that could only ever **shrink**. It had no concept of new
+charges, so a revolver putting $1,500/month onto the card we sweep against got a payoff date that
+never arrives and an interest-avoided figure overstated *by construction* — the one number
+`prd.md` §5.1 says the company is graded on.
+
+`Card` gains `observed_monthly_charges`, derived in `precompute.py` from the household's own
+history. `_check_amortizing()` has always been there; what is new is that it can finally **fire for
+the right reason**. Until charges entered the model, the one household it exists to protect was
+invisible to it.
+
+**Charges post at the close, before the payment — not daily.** That understates the days they spend
+accruing, so it understates the interest, so it understates what we claim to have saved. Wrong in
+the safe direction, deliberately: the alternative is a model that flatters us on the single figure
+we are paid on.
+
+**A TRANSACTOR's `total_interest` is `ZERO`, not `None`.** The distinction carries weight. `None`
+means *we cannot say*; `ZERO` means *we can, and it is nothing*. They hold the grace period, which
+already does exactly what our sweep claims to do, so sweeping their cash onto a card they were
+going to clear is a **prepayment, not a saving** — and taking a share of it (§7.2, "profit only on
+progress") would be charging for nothing. `decide()` already refuses to target them (U4); this is
+the model agreeing.
+
+### The demo's interest claim moved, and it is not an error
+
+**$6,678 -> $9,916.** Decisions did not change (still 10 sweeps / 80 refusals, same $11,719 swept) —
+only the claim did. The model now knows the household keeps charging the card, so *their own*
+payoff takes longer, so a sweep genuinely avoids more interest. Their real trajectory is worse than
+we were modelling, which makes our help worth **more**, not less. The figure got bigger because the
+model got honest, and those are not usually the same thing — worth stating plainly rather than
+letting it read as inflation.
+
+### The `_as_debt` adapter is gone
+
+`decide.py` no longer imports `Debt` at all. `engine/interest.py` takes a `Card`. There is now
+exactly one source of truth for what a household owes and what they pay against it.
+
+`Debt` itself survives, unused by the engine. Removing it is a separate cleanup and not this
+ticket's.
+
+### Hand-computed amortization is unchanged
+
+Every existing test in `tests/test_interest.py` still passes, because the `card()` helper defaults
+to `charges="0.00"`. The old arithmetic is still exactly right — for a household that has stopped
+using the card. That is a real household, and it is no longer the *only* one the model can describe.

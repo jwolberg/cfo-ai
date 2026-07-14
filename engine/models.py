@@ -381,6 +381,15 @@ class Card:
     # measured against (prd.md §5.1). Never the minimum: users of this product already pay
     # more than the minimum, which is *why* they have idle cash. See engine/interest.py.
     observed_monthly_payment: Decimal | None = None
+    # What they *charge* to it each cycle. Without this the interest model projects a balance
+    # that only ever shrinks, so a household whose card genuinely grows gets a payoff date that
+    # never arrives and an interest-avoided figure overstated by construction — the very number
+    # prd.md §5.1 says the company is graded on.
+    #
+    # `None` means we have not observed enough cycles to say, and the model then assumes zero
+    # future charges. That is the *old* behaviour and it is the flattering one, so it is only
+    # reachable while `PaymentBehavior.UNKNOWN` is already blocking the sweep outright.
+    observed_monthly_charges: Decimal | None = None
 
     def __post_init__(self) -> None:
         """Corrupt card data is rejected, not smoothed over.
@@ -405,6 +414,13 @@ class Card:
         if self.observed_monthly_payment is not None and self.observed_monthly_payment < ZERO:
             raise ValueError(
                 f"observed_monthly_payment={self.observed_monthly_payment} cannot be negative"
+            )
+
+        # A negative charge rate would *shrink* the projected balance, bring the payoff date
+        # forward, and inflate the interest we claim to have saved. Same rule as everywhere.
+        if self.observed_monthly_charges is not None and self.observed_monthly_charges < ZERO:
+            raise ValueError(
+                f"observed_monthly_charges={self.observed_monthly_charges} cannot be negative"
             )
 
         # The unbilled statement closes *after* the closed one came due. If these are the

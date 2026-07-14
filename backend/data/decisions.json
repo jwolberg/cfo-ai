@@ -701,7 +701,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "2020.24"
+                "$dec": "3270.89"
               },
               "debt_id": "card_demo"
             }
@@ -1159,7 +1159,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "1509.09"
+                "$dec": "2253.42"
               },
               "debt_id": "card_demo"
             }
@@ -1617,7 +1617,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "1122.32"
+                "$dec": "1657.13"
               },
               "debt_id": "card_demo"
             }
@@ -2086,7 +2086,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "819.46"
+                "$dec": "1156.02"
               },
               "debt_id": "card_demo"
             }
@@ -2555,7 +2555,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "590.68"
+                "$dec": "814.25"
               },
               "debt_id": "card_demo"
             }
@@ -3024,7 +3024,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "378.94"
+                "$dec": "462.27"
               },
               "debt_id": "card_demo"
             }
@@ -3531,7 +3531,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "19.08"
+                "$dec": "23.05"
               },
               "debt_id": "card_demo"
             }
@@ -3992,7 +3992,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "193.02"
+                "$dec": "247.01"
               },
               "debt_id": "card_demo"
             }
@@ -4624,7 +4624,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "3.70"
+                "$dec": "4.62"
               },
               "debt_id": "card_demo"
             }
@@ -5085,7 +5085,7 @@
             "code": "interest_avoided",
             "params": {
               "amount": {
-                "$dec": "21.36"
+                "$dec": "27.32"
               },
               "debt_id": "card_demo"
             }
@@ -5368,7 +5368,7 @@
       "$dec": "800.00"
     },
     "interest_avoided_total": {
-      "$dec": "6677.89"
+      "$dec": "9915.98"
     },
     "paid_off": false,
     "refuse_count": 80,

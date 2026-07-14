@@ -18,7 +18,14 @@ from decimal import Decimal
 import pytest
 
 from engine.interest import claimable_interest_avoided, interest_avoided, total_interest
-from engine.models import Debt, money
+from engine.models import (
+    MIN_GRACE_DAYS,
+    ZERO,
+    Card,
+    PaymentBehavior,
+    StatementCycle,
+    money,
+)
 
 # 36.5% APR -> daily periodic rate of exactly 0.001.
 #
@@ -38,14 +45,28 @@ def card(
     due: date = date(2026, 1, 31),
     minimum: str = "30.00",
     observed: str | None = "530.00",
-) -> Debt:
-    return Debt(
-        debt_id="card",
-        balance=money(balance),
-        minimum_payment=money(minimum),
-        minimum_due_date=due,
+    charges: str | None = "0.00",
+    behavior: PaymentBehavior = PaymentBehavior.REVOLVER,
+) -> Card:
+    """A revolver who charges nothing, by default.
+
+    `charges="0.00"` keeps every hand-computed amortization in this file reproducible: the
+    arithmetic below was worked out against a balance that only shrinks, and it is still exactly
+    right for a household that has stopped using the card. The charging households — the ones
+    this model could not previously describe at all — have their own tests below.
+    """
+    return Card(
+        card_id="card",
         apr=apr,  # type: ignore[arg-type]
+        cycle=StatementCycle(close_day_of_month=due.day, grace_days=MIN_GRACE_DAYS),
+        statement_balance=money(balance),
+        statement_due_date=due,
+        minimum_payment=money(minimum),
+        unbilled_balance=ZERO,
+        next_close_date=due,
+        behavior=behavior,
         observed_monthly_payment=money(observed) if observed is not None else None,
+        observed_monthly_charges=money(charges) if charges is not None else None,
     )
 
 
@@ -215,3 +236,111 @@ class TestBadDataFailsLoudly:
         """It would make the counterfactual cheaper than reality and inflate what we claim."""
         with pytest.raises(ValueError, match="observed_monthly_payment"):
             card(observed="-100.00")
+
+
+class TestTheCardGetsCharged:
+    """The household this model could not previously describe at all.
+
+    `total_interest()` had no concept of new charges, so the projected balance could only ever
+    *shrink*. A revolver charging $1,500/month to the card we are sweeping against has a balance
+    that genuinely grows — and we would have reported a payoff date that never arrives and an
+    interest-avoided figure overstated by construction. That figure is the one prd.md §5.1 says
+    the company is graded on.
+    """
+
+    def test_charges_lengthen_the_payoff_and_therefore_the_interest(self) -> None:
+        """Same balance, same payment. The only difference is that they keep using the card."""
+        quiet = total_interest(card(balance="5000.00", charges="0.00"), START, PAYS)
+        spending = total_interest(card(balance="5000.00", charges="200.00"), START, PAYS)
+
+        assert quiet is not None and spending is not None
+        assert spending > quiet, "charging the card cannot make it cheaper to carry"
+
+    def test_a_card_that_outruns_its_payments_has_no_payoff_and_makes_no_claim(self) -> None:
+        """They charge $600 a month and pay $530. The balance grows forever.
+
+        There is no payoff date, so there is no honest total, so we make **no claim** — not a
+        smaller number, not a capped one. For this household the sweep is not the answer, and
+        `engine/explain.py` says so rather than staying silent.
+        """
+        drowning = card(balance="5000.00", charges="600.00")
+
+        with pytest.raises(ValueError, match="does not amortize"):
+            total_interest(drowning, START, PAYS)
+
+        # The product path never raises — it declines.
+        assert claimable_interest_avoided(drowning, money("300.00"), START) is None
+
+    def test_the_error_names_the_charges_because_that_is_the_new_reason(self) -> None:
+        """A payment that would have amortized a quiet card no longer amortizes a live one, and
+        the message has to say which of the two facts is doing the work."""
+        with pytest.raises(ValueError, match="new charges"):
+            total_interest(card(balance="5000.00", charges="600.00"), START, PAYS)
+
+    def test_charges_are_reserved_against_over_claiming_not_under(self) -> None:
+        """Charges post at the close, not daily.
+
+        That understates the days they spend accruing, so it understates the interest, so it
+        understates what we claim to have saved. Wrong in the safe direction on purpose — the
+        alternative is a model that flatters us on the single number we are paid on.
+        """
+        charged = card(balance="5000.00", charges="200.00")
+        saved = interest_avoided(charged, money("1000.00"), START, PAYS)
+
+        assert saved is not None and saved > ZERO
+        # A sweep never saves more than carrying the whole balance would have cost.
+        total = total_interest(charged, START, PAYS)
+        assert total is not None
+        assert saved <= total
+
+
+class TestATransactorIsOwedNothing:
+    """They clear the statement every month, so the grace period already does exactly what our
+    sweep claims to do. Sweeping their cash onto a card they were going to pay in full is a
+    **prepayment, not a saving** — and taking a share of it (prd.md §7.2, "profit only on
+    progress") would be charging for nothing."""
+
+    def test_a_transactor_pays_no_interest_at_all(self) -> None:
+        assert (
+            total_interest(
+                card(balance="2000.00", behavior=PaymentBehavior.TRANSACTOR), START, PAYS
+            )
+            == ZERO
+        )
+
+    def test_a_transactors_interest_avoided_is_exactly_zero_not_a_small_number(self) -> None:
+        """Zero is the answer, not a rounding artefact. A "$3.40 saved" here would be a lie with
+        a decimal point in it."""
+        transactor = card(balance="2000.00", behavior=PaymentBehavior.TRANSACTOR)
+        saved = interest_avoided(transactor, money("500.00"), START, PAYS)
+
+        assert saved == ZERO
+        assert saved is not None  # distinct from "we cannot say" — we can, and it is nothing
+
+    def test_a_transactor_still_accrues_nothing_even_while_charging_heavily(self) -> None:
+        """The grace period covers the unbilled charges. That is what a grace period *is*."""
+        assert (
+            total_interest(
+                card(balance="2000.00", charges="1800.00", behavior=PaymentBehavior.TRANSACTOR),
+                START,
+                PAYS,
+            )
+            == ZERO
+        )
+
+    def test_the_minimum_still_cannot_move_the_claim_by_a_cent(self) -> None:
+        """The invariant from 2026-07-13, re-asserted against `Card`.
+
+        The counterfactual is `observed_monthly_payment` — what they actually pay — never the
+        minimum. Users of this product already pay more than the minimum; that is *why* they
+        have idle cash. Crediting our sweep with interest they were never going to pay inflates
+        the KPI, and prd.md §5.1 exists to ban exactly that.
+        """
+        cheap = interest_avoided(
+            card(minimum="10.00", charges="150.00"), money("300.00"), START, PAYS
+        )
+        dear = interest_avoided(
+            card(minimum="400.00", charges="150.00"), money("300.00"), START, PAYS
+        )
+
+        assert cheap == dear

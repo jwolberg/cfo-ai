@@ -516,6 +516,31 @@ def observed_monthly_payment(history: History, card: CardSpec, today: date) -> D
     return money(sum(payments, ZERO) / len(payments))
 
 
+def observed_monthly_charges(history: History, card: CardSpec, today: date) -> Decimal | None:
+    """What the household puts on this card each cycle.
+
+    Without this the interest model projects a balance that can only ever *shrink* — so a
+    household charging more than they pay gets a payoff date that never arrives and an
+    interest-avoided figure overstated by construction. That is the number prd.md §5.1 says the
+    company is graded on.
+
+    Derived from observed charges over observed cycles. `None` below three cycles, which means
+    the model assumes **zero** future charges — the old, flattering behaviour, and reachable
+    only while `CARD_BEHAVIOR_UNKNOWN` is already blocking the sweep outright.
+    """
+    seen = history.as_of(today)
+    charges = seen.card_charges(card.card_id)
+    if not charges:
+        return ZERO
+
+    cycles = len({(t.day.year, t.day.month) for t in seen.txns if t.kind is TxnKind.CARD_PAYMENT})
+    if cycles < MIN_CYCLES_TO_CLASSIFY:
+        return None
+
+    charged = -sum((t.amount for t in charges), ZERO)
+    return money(charged / cycles)
+
+
 def infer_close_day(history: History, card: CardSpec, today: date) -> tuple[int, bool]:
     """The statement close day, and whether we are *sure* of it.
 
@@ -579,6 +604,7 @@ def derive_card(history: History, card: CardSpec, today: date, ledger_balance: D
         next_close_date=next_close,
         behavior=behavior,
         observed_monthly_payment=observed_monthly_payment(seen, card, today),
+        observed_monthly_charges=observed_monthly_charges(seen, card, today),
     )
 
 
