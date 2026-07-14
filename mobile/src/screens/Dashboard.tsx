@@ -24,6 +24,8 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   Pressable,
   StyleSheet,
   Text,
@@ -45,8 +47,44 @@ interface Props {
   onExplain: (decision: Decision) => void;
 }
 
+/** The list's own top padding, which sits above the hero inside the scrolled content. */
+const LIST_PADDING_TOP = space.xl;
+
+/** Until the hero has measured itself, assume it is tall. Erring high means the summary bar
+ *  appears a little late on the very first frame, rather than appearing *over* a hero that is
+ *  still on screen — which is the one thing this is not allowed to do. */
+const HERO_HEIGHT_FALLBACK = 320;
+
+/** The dead zone between collapsing and expanding.
+ *
+ * A single threshold flickers the bar on and off on every pixel of scroll jitter, and a user
+ * resting a thumb near it gets a strobe. So the bar appears once the hero is fully gone, and
+ * does not leave again until you have scrolled back a little past that. (Classic hysteresis —
+ * the same reason a thermostat doesn't cycle on every degree.)
+ */
+const HYSTERESIS = 24;
+
 export function Dashboard({ onExplain }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Where the hero's bottom edge sits in the scrolled content — **measured, not guessed.** The
+  // summary may not appear until the hero it summarises is entirely off screen, and a hard-coded
+  // pixel threshold is a claim about the hero's height that stops being true the first time
+  // anyone edits it (a longer streak line, a wrapped hedge, a bigger font).
+  const [heroEnd, setHeroEnd] = useState(LIST_PADDING_TOP + HERO_HEIGHT_FALLBACK);
+
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const y = event.nativeEvent.contentOffset.y;
+      setCollapsed((was) => (was ? y > heroEnd - HYSTERESIS : y >= heroEnd));
+    },
+    [heroEnd],
+  );
+
+  const onHeroLayout = useCallback((bottomWithinHeader: number) => {
+    setHeroEnd(LIST_PADDING_TOP + bottomWithinHeader);
+  }, []);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -81,15 +119,33 @@ export function Dashboard({ onExplain }: Props) {
   const { summary, decisions } = state.data;
 
   return (
-    <FlatList
-      data={decisions}
-      keyExtractor={(decision) => decision.date}
-      contentContainerStyle={styles.list}
-      style={styles.scroll}
-      ListHeaderComponent={<Header summary={summary} />}
-      ListEmptyComponent={<Empty />}
-      renderItem={({ item }) => <DecisionFeedItem decision={item} onPress={onExplain} />}
-    />
+    <View style={styles.shell}>
+      <FlatList
+        testID="decision-feed"
+        data={decisions}
+        keyExtractor={(decision) => decision.date}
+        contentContainerStyle={styles.list}
+        style={styles.scroll}
+        ListHeaderComponent={<Header summary={summary} onHeroLayout={onHeroLayout} />}
+        ListEmptyComponent={<Empty />}
+        renderItem={({ item }) => <DecisionFeedItem decision={item} onPress={onExplain} />}
+        onScroll={onScroll}
+        scrollEventThrottle={16}
+      />
+
+      {/* The hero, collapsed to the one thing worth keeping on screen: how far down the card is.
+          Absolutely positioned *over* the list rather than pushing it, so the feed does not jump
+          by the height of the bar the moment it appears. */}
+      {collapsed && (
+        <View style={styles.stickyLayer} pointerEvents="none">
+          <View style={styles.stickyCard} testID="paydown-summary">
+            <View style={styles.stickyInner}>
+              <Paydown summary={summary} topless />
+            </View>
+          </View>
+        </View>
+      )}
+    </View>
   );
 }
 
@@ -107,17 +163,79 @@ function paidDownFraction(summary: DecisionsResponse['summary']): number {
   return Math.min(1, Math.max(0, (start - now) / start));
 }
 
-function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
-  const progress = paidDownFraction(summary);
-  const percent = Math.round(progress * 100);
+/**
+ * The paydown block: the one part of the hero that survives the scroll.
+ *
+ * Rendered by both the full hero and the collapsed summary bar, from the same props. Two copies
+ * of "how far down is the card" would drift, and the day they drifted the sticky bar would be
+ * quietly telling the user a different number from the card they just scrolled past.
+ *
+ * `topless` drops the top margin: inside the hero it needs air under the interest figure; alone
+ * in the summary bar it is the only thing there.
+ */
+function Paydown({
+  summary,
+  topless = false,
+}: {
+  summary: DecisionsResponse['summary'];
+  topless?: boolean;
+}) {
+  if (summary.paid_off) {
+    // Deliberately *not* a `$0.00` — that reads like a bug on the one day it is unambiguously
+    // good news. The panel that used to carry this is gone; the state it protected is not.
+    return <Text style={[styles.paidOff, topless && styles.toplessPaidOff]}>Card paid off 🎉</Text>;
+  }
 
+  const percent = Math.round(paidDownFraction(summary) * 100);
+
+  return (
+    <View style={[styles.progressBlock, topless && styles.toplessBlock]}>
+      <View style={styles.progressHead}>
+        <Text style={styles.progressLabel}>Card paid down</Text>
+        <Text style={styles.progressPercent}>{percent}%</Text>
+      </View>
+      {/* accessibility: a bar that only speaks in colour says nothing to a screen reader, and
+          this is the number the whole screen is about. */}
+      <View
+        style={styles.track}
+        accessibilityRole="progressbar"
+        accessibilityValue={{ min: 0, max: 100, now: percent }}
+      >
+        <View style={[styles.fill, { width: `${percent}%` }]} />
+      </View>
+      <Text style={styles.progressFoot}>
+        {formatMoneyRounded(summary.starting_debt_balance)} when we started →{' '}
+        {formatMoneyRounded(summary.targeted_debt_balance)} now
+      </Text>
+    </View>
+  );
+}
+
+function Header({
+  summary,
+  onHeroLayout,
+}: {
+  summary: DecisionsResponse['summary'];
+  onHeroLayout: (bottomWithinHeader: number) => void;
+}) {
   return (
     <View>
       <Text style={styles.greeting}>Your money, working.</Text>
 
       {/* The hero. Deep green, not white — this is the one card that is a reward rather than
-          a readout, and it should not look like the stats beneath it. */}
-      <View style={styles.heroCard}>
+          a readout, and it should not look like the stats beneath it.
+
+          It reports its own bottom edge so the summary bar knows when it is fully out of sight.
+          `layout.y` is relative to this header, and the list's top padding is added by the
+          caller — together they are the exact scroll offset at which the hero disappears. */}
+      <View
+        style={styles.heroCard}
+        testID="hero-card"
+        onLayout={(event) => {
+          const { y, height } = event.nativeEvent.layout;
+          onHeroLayout(y + height);
+        }}
+      >
         {summary.sweep_count > 0 && (
           <Text style={styles.streak}>🔥 {summary.sweep_count}-payment streak</Text>
         )}
@@ -129,32 +247,7 @@ function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
             celebrate; it is not allowed to drop the condition. */}
         <Text style={styles.heroFoot}>in interest, as long as you keep your payments up</Text>
 
-        {summary.paid_off ? (
-          // The "Card balance" panel used to carry this, and it was deliberately *not* a
-          // `$0.00` — that reads like a bug on the one day it is unambiguously good news.
-          // The panel is gone; the state it protected is not.
-          <Text style={styles.paidOff}>Card paid off 🎉</Text>
-        ) : (
-          <View style={styles.progressBlock}>
-            <View style={styles.progressHead}>
-              <Text style={styles.progressLabel}>Card paid down</Text>
-              <Text style={styles.progressPercent}>{percent}%</Text>
-            </View>
-            {/* accessibility: a bar that only speaks in colour says nothing to a screen
-                reader, and this is the number the whole screen is about. */}
-            <View
-              style={styles.track}
-              accessibilityRole="progressbar"
-              accessibilityValue={{ min: 0, max: 100, now: percent }}
-            >
-              <View style={[styles.fill, { width: `${percent}%` }]} />
-            </View>
-            <Text style={styles.progressFoot}>
-              {formatMoneyRounded(summary.starting_debt_balance)} when we started →{' '}
-              {formatMoneyRounded(summary.targeted_debt_balance)} now
-            </Text>
-          </View>
-        )}
+        <Paydown summary={summary} />
       </View>
 
       <Text style={styles.feedLabel}>Recent decisions</Text>
@@ -192,7 +285,36 @@ function Unreachable({ onRetry }: { onRetry: () => void }) {
 }
 
 const styles = StyleSheet.create({
+  shell: { flex: 1, backgroundColor: colors.page },
   scroll: { flex: 1, backgroundColor: colors.page },
+
+  // The collapsed hero. Floats over the feed rather than pushing it down — a bar that reflows
+  // the list the moment it appears makes the row under your thumb jump, which is how you tap
+  // the wrong decision.
+  //
+  // **Full-bleed, and flush to the tab bar**: no top gap, no side margins, no corner radius.
+  // It is a band pinned under the tabs, not a card floating on the page — which also means it
+  // fully covers the feed rows passing behind it, instead of letting them peek out around a
+  // rounded card.
+  stickyLayer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+  },
+  stickyCard: {
+    width: '100%',
+    backgroundColor: colors.deepGreen,
+    paddingHorizontal: space.lg,
+    paddingVertical: space.md,
+    ...shadow,
+  },
+  // The bar is full-bleed, but its contents still line up with the feed's column.
+  stickyInner: {
+    width: '100%',
+    maxWidth: COLUMN_WIDTH,
+    alignSelf: 'center',
+  },
   list: {
     paddingHorizontal: space.lg,
     paddingTop: space.xl,
@@ -234,6 +356,9 @@ const styles = StyleSheet.create({
   paidOff: { ...type.heading, color: '#FFFFFF', marginTop: space.lg },
 
   progressBlock: { marginTop: space.lg },
+  // In the summary bar the paydown block is the only thing there, so it carries no top gap.
+  toplessBlock: { marginTop: 0 },
+  toplessPaidOff: { marginTop: 0 },
   progressHead: { flexDirection: 'row', justifyContent: 'space-between' },
   progressLabel: { ...type.label, color: '#8FBFB4' },
   progressPercent: { ...type.label, color: '#FFFFFF' },
