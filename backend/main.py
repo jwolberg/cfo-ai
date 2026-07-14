@@ -173,11 +173,17 @@ def no_record(day: str) -> JSONResponse:
     )
 
 
-@app.get("/healthz", include_in_schema=False)
-async def healthz() -> dict[str, str]:
+@app.get("/health", include_in_schema=False)
+async def health() -> dict[str, str]:
     """Cloud Run's probe. Deliberately unauthenticated, and deliberately says nothing.
 
     If the artifact were missing the process would not be here to answer.
+
+    Named `/health`, not `/healthz`: Google's frontend reserves `/healthz` on `*.run.app` and
+    answers it itself with a Google 404, so a route by that name is defined here and never
+    reached in production. It fails in a way that reads like a broken deploy — the 404 body is
+    Google's HTML, carries no `server: Google Frontend` header, and produces no request log —
+    while every other path, including ones this app has never heard of, arrives normally.
     """
     return {"status": "ok"}
 

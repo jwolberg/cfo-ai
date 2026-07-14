@@ -94,10 +94,16 @@ class TestHealth:
     def test_the_probe_needs_no_key(self, client: TestClient) -> None:
         """Cloud Run's health check does not carry our API key, so gating it would fail
         every deploy while the service was in fact fine."""
-        response = client.get("/healthz")
+        response = client.get("/health")
 
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+    def test_the_probe_is_not_named_healthz(self, client: TestClient) -> None:
+        """`/healthz` is reserved by Google's frontend on `*.run.app` — it answers with its own
+        404 and the request never reaches the container. A route by that name would look correct
+        in every test and be unreachable in production, so assert we did not reintroduce it."""
+        assert client.get("/healthz").status_code == 404
 
 
 class TestAuth:

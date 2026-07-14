@@ -14,4 +14,16 @@
 # The rate cap on /assistant/message (backend/assistant.py) lives in process memory, and it
 # is the only thing bounding Anthropic spend if the public API key leaks. A second worker is
 # a second counter and a doubled ceiling. One process, one cap. See docs/tickets/0009.
-web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
+#
+# --proxy-headers because Cloud Run terminates TLS in front of the container and forwards
+# plain HTTP. Without it Uvicorn believes the request scheme is http, and anything FastAPI
+# builds from it is wrong: a redirect off `GET /decisions/` emitted `Location: http://…`,
+# silently downgrading the client to plaintext. Observed on the deployed service.
+#
+# --forwarded-allow-ips='*' is what makes --proxy-headers take effect: Uvicorn only trusts
+# X-Forwarded-* from allowed peers, and the Cloud Run proxy's address is not knowable ahead
+# of time. Trusting any peer is safe *here* precisely because nothing but Cloud Run can reach
+# the container — it holds no public port of its own, so there is no unproxied path by which
+# a forged X-Forwarded-Proto could arrive. Do not carry this flag to a host that is directly
+# reachable.
+web: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips='*'
