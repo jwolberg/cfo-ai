@@ -45,7 +45,12 @@ SAMPLES: dict[ReasonCode, dict] = {
         "reserved": money("180.00"),
     },
     ReasonCode.BELOW_MIN_SWEEP: {"minimum": money("1.00")},
-    ReasonCode.CADENCE_HOLD: {"days_since": 3, "min_days": 7},
+    ReasonCode.CADENCE_HOLD: {
+        "days_since": 3,
+        "min_days": 7,
+        "days_until": 4,
+        "amount": money("500.00"),
+    },
     ReasonCode.PROJECTION: {
         "low": money("3880.00"),
         "low_day": date(2026, 7, 15),
@@ -120,17 +125,65 @@ def test_explain_renders_a_whole_decision_in_order():
 
 
 def test_a_single_day_is_not_pluralised():
-    """ "We paid your card 1 days ago" shipped in the first draft of the cadence copy."""
-    text = render(Reason(ReasonCode.CADENCE_HOLD, {"days_since": 1, "min_days": 7}))
+    """ "We paid your card 1 days ago" shipped in the first draft of the cadence copy.
+
+    Both numbers in this sentence are days, and both can be 1.
+    """
+    text = render(
+        Reason(
+            ReasonCode.CADENCE_HOLD,
+            {"days_since": 1, "min_days": 7, "days_until": 1, "amount": money("500.00")},
+        )
+    )
 
     assert "1 day ago" in text
+    assert "in 1 day." in text
     assert "1 days" not in text
-    assert "7 days apart" in text
 
 
 def test_a_cadence_hold_does_not_read_like_an_error():
     """A refusal tells the user their money is staying put. It does not scold them."""
-    text = render(Reason(ReasonCode.CADENCE_HOLD, {"days_since": 3, "min_days": 7}))
+    text = render(
+        Reason(
+            ReasonCode.CADENCE_HOLD,
+            {"days_since": 3, "min_days": 7, "days_until": 4, "amount": money("500.00")},
+        )
+    )
 
-    assert "safe" in text
     assert not any(w in text.lower() for w in ("error", "cannot", "failed", "denied", "invalid"))
+
+
+def test_the_cadence_hold_says_what_we_paid_and_when_we_are_back():
+    """The copy the user actually asked for: what they got, and when we return.
+
+    It no longer explains our *cadence policy* ("we space payments at least 7 days apart") —
+    a rule the user did not ask for and cannot act on. It tells them the two things they can:
+    we paid this much, and we look again then.
+    """
+    text = render(
+        Reason(
+            ReasonCode.CADENCE_HOLD,
+            {"days_since": 6, "min_days": 7, "days_until": 1, "amount": money("500.00")},
+        )
+    )
+
+    assert text == "We paid an extra $500.00 for you 6 days ago. Our next check-in is in 1 day."
+
+
+def test_a_cadence_hold_never_invents_an_amount_it_does_not_have():
+    """`last_sweep_amount=None` means we do not know the figure — so the sentence omits it.
+
+    Same rule as NO_INTEREST_TO_AVOID: the engine never renders a number it cannot stand
+    behind, and the absence is structural rather than a formatting accident. A `$None` or a
+    `$0.00` here would be a lie about a payment we actually made.
+    """
+    text = render(
+        Reason(
+            ReasonCode.CADENCE_HOLD,
+            {"days_since": 6, "min_days": 7, "days_until": 1, "amount": None},
+        )
+    )
+
+    assert text == "We paid your card 6 days ago. Our next check-in is in 1 day."
+    assert "None" not in text
+    assert "$" not in text

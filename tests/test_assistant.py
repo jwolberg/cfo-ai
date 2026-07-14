@@ -283,6 +283,44 @@ class TestGuard:
         assert verify(f"On {day}, we paid your card 1 day ago, so we held off.", facts) is None
         assert verify(f"On {day}, we paid your card.", facts) is not None
 
+    def test_a_dollar_amount_does_not_break_the_prior_payment_exemption(
+        self, artifact: art.Artifact
+    ) -> None:
+        """**A dollar amount contains a period, and the sentence guard used to stop at it.**
+
+        `_PRIOR_PAYMENT` bounded the gap between the verb and the "ago" with `[^.!?]`, to keep
+        the two inside one sentence. Then CADENCE_HOLD's copy started naming the figure — "We
+        paid an extra $1,600.00 for you 1 day ago" — and the decimal point in `$1,600.00` hard-
+        stopped the character class *inside the number*. The match died before reaching "ago",
+        the guard read a past payment as a claim about today, and it rejected the engine's own
+        copy on **59 of 90 days**.
+
+        Same outage as the one `_PRIOR_PAYMENT` was written to fix, arriving through a
+        character class instead of a phrase list. A sentence-ending period is followed by
+        whitespace; a decimal point is followed by a digit. Only the first one ends the clause.
+        """
+        cadence = next(r for r in artifact.days if ReasonCode.CADENCE_HOLD in r.decision.codes)
+        facts = facts_for(cadence)
+        day = cadence.day.isoformat()
+
+        # The figure the engine's own copy names: `last_sweep_amount`, carried on the reason.
+        hold = next(r for r in cadence.decision.reasons if r.code is ReasonCode.CADENCE_HOLD)
+        paid = f"${hold.params['amount']:,.2f}"
+        assert paid in {f"${a:,.2f}" for a in facts.amounts_for(cadence.day)}, (
+            "the amount the copy quotes must be a fact the guard already knows — otherwise the "
+            "assistant cannot repeat the engine's own sentence"
+        )
+
+        ok = f"On {day}, we paid an extra {paid} for you 1 day ago."
+        assert verify(ok, facts) is None
+
+        # The exemption must not have been widened into a licence: the same sentence without
+        # the "ago" is still a payment claim, and this day is a refusal.
+        assert verify(f"On {day}, we paid an extra {paid} for you.", facts) is not None
+
+        # And it must still not reach across a sentence boundary to borrow a neighbour's "ago".
+        assert verify(f"On {day}, we paid your card. That was 1 day ago.", facts) is not None
+
     def test_an_invented_dollar_amount_is_caught(self, sweep_day: art.DayRecord) -> None:
         """Covers AE4. The figure is plausible, well-formatted, and from nowhere."""
         facts = facts_for(sweep_day)

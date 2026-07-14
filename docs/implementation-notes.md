@@ -1091,3 +1091,57 @@ it has to actually buy something back — and a test pinning it.
   adjacent settings as signal; the baseline's `od=0` across every run is.
 
 Full write-up: `docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`.
+
+---
+
+## 2026-07-14 — the cadence refusal, in plain language (and the guard broke again)
+
+The `CADENCE_HOLD` copy explained **our policy** ("we space payments at least 7 days apart") and
+buried what the household actually got. Rewritten to the two facts they can use:
+
+> **We paid an extra $1,600.00 for you 1 day ago. Our next check-in is in 6 days.**
+
+`PROJECTION`, `NO_SURPLUS` and `IDLE_CASH_ELSEWHERE` got the same treatment — shorter sentences,
+no em-dash asides, "your cash balance will be X on DATE" instead of "your balance is heading for a
+low of X".
+
+**No decision changes.** 0 of 90 actions moved, amounts identical, summary byte-identical. Copy is
+a view of the decision, which is the entire reason `explain.py` exists.
+
+### The engine had to learn a number to say it
+
+The sentence names the last sweep's amount and the engine never carried it. Added
+`Snapshot.last_sweep_amount` — **copy only**, `decide()` never reads it, no gate or cap depends on
+it. `None` when unknown, and the copy then omits the figure rather than inventing one.
+
+Deliberately *not* reused: `swept_this_week`. It equals the last sweep today only because
+`min_days_between_sweeps` is 7. Set the cadence to 3 and the week holds two sweeps, and the copy
+would quote a total while calling it a payment.
+
+### The guard couldn't read the new copy — for the second time, and for a new reason
+
+`backend/assistant.py`'s `_PRIOR_PAYMENT` exists *because* of the last outage (72/90 days
+unanswerable when the guard read "we paid your card 6 days ago" as a fabricated payment). It broke
+again, on **59 of 90 days**, and the cause is one character:
+
+**A dollar amount contains a period.** The regex bounded the verb-to-"ago" gap with `[^.!?]` to
+keep the match inside one sentence — and the decimal point in `$1,600.00` hard-stops the character
+class *inside the number*. The match dies before it reaches "ago". No widening of the length bound
+rescues it; the class itself forbids money.
+
+Now: a period ends the clause only when **whitespace follows it**. A sentence-ending period does; a
+decimal point is followed by a digit. (The length bound also went 30 → 60 — the amount pushes the
+verb and the "ago" 34 characters apart.)
+
+The lesson is the same one as last time, sharper: **the phrase list and the regexes in
+`assistant.py` are a second copy of `explain.py`'s wording, and nothing in the type system links
+them.** Every copy edit is a guard edit. The only test that catches it is the one that feeds the
+engine's *real* rendered sentence through the guard — a hand-written imitation of the copy passes
+happily while production is 59/90 broken.
+
+### Follow-up worth a ticket
+
+`precompute.build()` does **not** call `assemble_snapshot()` — it constructs its own `Snapshot`
+inline. The 0017 note claims "one definition of a Snapshot, not two"; that is not true today, and
+adding `last_sweep_amount` meant editing both. They will drift, and the day they do the calibration
+starts describing an engine that never shipped — which is precisely the argument that note makes.

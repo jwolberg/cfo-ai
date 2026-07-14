@@ -749,7 +749,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -813,7 +817,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -877,7 +885,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -941,7 +953,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -1005,7 +1021,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -1069,7 +1089,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -1207,7 +1231,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -1271,7 +1299,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -1335,7 +1367,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -1399,7 +1435,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -1463,7 +1503,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -1527,7 +1571,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -1676,7 +1724,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -1740,7 +1792,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -1804,7 +1860,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -1868,7 +1928,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -1932,7 +1996,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -1996,7 +2064,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -2145,7 +2217,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -2209,7 +2285,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -2273,7 +2353,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -2337,7 +2421,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -2401,7 +2489,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -2465,7 +2557,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -2614,7 +2710,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -2678,7 +2778,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -2742,7 +2846,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -2806,7 +2914,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -2870,7 +2982,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -2934,7 +3050,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1600.00"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -3064,7 +3184,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -3128,7 +3252,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -3192,7 +3320,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -3256,7 +3388,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -3320,7 +3456,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -3384,7 +3524,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "984.68"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -3525,7 +3669,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -3589,7 +3737,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -3653,7 +3805,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -3717,7 +3873,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -3781,7 +3941,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -3845,7 +4009,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "670.93"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -3986,7 +4154,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -4050,7 +4222,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -4114,7 +4290,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -4178,7 +4358,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -4242,7 +4426,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -4306,7 +4494,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "1574.10"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -4618,7 +4810,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -4682,7 +4878,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -4746,7 +4946,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -4810,7 +5014,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -4874,7 +5082,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
@@ -4938,7 +5150,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "26.24"
+              },
               "days_since": 6,
+              "days_until": 1,
               "min_days": 7
             }
           },
@@ -5068,7 +5284,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "449.50"
+              },
               "days_since": 1,
+              "days_until": 6,
               "min_days": 7
             }
           },
@@ -5132,7 +5352,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "449.50"
+              },
               "days_since": 2,
+              "days_until": 5,
               "min_days": 7
             }
           },
@@ -5196,7 +5420,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "449.50"
+              },
               "days_since": 3,
+              "days_until": 4,
               "min_days": 7
             }
           },
@@ -5260,7 +5488,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "449.50"
+              },
               "days_since": 4,
+              "days_until": 3,
               "min_days": 7
             }
           },
@@ -5324,7 +5556,11 @@
           {
             "code": "cadence_hold",
             "params": {
+              "amount": {
+                "$dec": "449.50"
+              },
               "days_since": 5,
+              "days_until": 2,
               "min_days": 7
             }
           },
