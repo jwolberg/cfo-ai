@@ -963,3 +963,68 @@ The demo household attests trivially (`attested=True` — one card, and we gener
 `CARD_COVERAGE_INCOMPLETE` never fires in the served window. **That means the gate is unexercised
 end-to-end**, and it is the one refusal in this feature nobody has seen in the product. Worth
 knowing before it meets a real portfolio.
+
+---
+
+## 2026-07-14 — U8 (`0017`): the grader has a caller, and the engine has a measured error
+
+`engine/outcome.py` existed for a day and a half and **nothing called it**. `backend/replay.py` is
+the caller. The artifact is byte-identical after it — the replay observes and changes nothing.
+
+**The first numbers the engine has ever had about itself**, on the demo household (72 of 90 days
+gradeable; the rest are blocking refusals that never ran a forecast):
+
+| | |
+|---|---|
+| Breach rate (days we were *optimistic*) | **6.9%** |
+| Sweep-caused overdrafts | **0** |
+| Worst projection error | **−$1,656** |
+| False-refusal cost (our conservatism) | **$3,516** |
+| Deferred (cadence holds — *not* a cost) | **$11,973** |
+
+### The deferral partition is not a nicety — it is 77% of the number
+
+Totalled naively, "false refusal cost" comes to **$15,489**. Of that, **$11,973 is deferred money
+that moves next week.** Counting it would make the metric a measure of *how long the cadence made
+someone wait*, not a measure of our forecast error — and the calibration dial would then learn to
+talk us out of the cadence rule, and out of this feature's coverage gates with it.
+
+`DEFERRING_REASONS` names all three: `CADENCE_HOLD` (the money moves next week),
+`CARD_COVERAGE_INCOMPLETE` (resolves on attestation), `CARD_BEHAVIOR_UNKNOWN` (resolves by itself
+after three cycles). `NO_SURPLUS` is deliberately **not** in it — that refusal is simply correct, and
+being right costs nothing.
+
+### Two bugs caught while writing it
+
+**The shadow replay must apply its own sweeps.** The first version assumed we had never acted —
+`days_since_last_sweep=None`, `swept_this_week=0`. It never tripped `CADENCE_HOLD`, so it observed
+**zero deferrals**, so the entire partition above was untested and invisible. It would have reported
+a clean $0 deferred and nobody would have questioned it. If the engine had been running, it *would*
+have swept, and the cadence *would* have held — so the walk carries the sweep state, exactly as
+`precompute.build()` does.
+
+What our sweeps are **not** in is `Realized`. That is the household's own movement, and `grade()`
+applies the decision's sweep to it itself — the caller cannot forget, because the caller is not the
+one who applies it.
+
+**A cold start throws away most of the window.** Without the 60-day warm-up runway that `build()`
+walks, the first 60 days are `INSUFFICIENT_HISTORY` — blocking refusals with no projection, and
+therefore ungradeable. 12 gradeable days instead of 72. The warm-up is walked and not graded: those
+refusals are true, and they are not forecast errors.
+
+### One definition of a Snapshot, not two
+
+`assemble_snapshot()` is exported from `precompute.py` and used by both the artifact walk and the
+replay. Two copies of "how a Snapshot is assembled" would drift, and the day they drifted the
+calibration numbers would quietly start describing an engine that never shipped. Same argument
+`untouchable()` and `apply_caps()` are exported under — and it has already paid for itself once.
+
+### What this unlocks, and what it does not
+
+`daily_discretionary_high` **still has not moved**, and this ticket does not move it. What exists now
+is the *evidence* required to move it: a measured breach rate. The learning's sequencing is intact —
+land the grader and the driver (**done**), ship the new spend model with its dial set to reproduce
+today's refusals, and loosen only as far as the measurement licenses.
+
+**6.9% is a starting reading, not a licence.** It is one household, one seed, 72 days. A population
+and a distribution come before anyone touches the forecast.

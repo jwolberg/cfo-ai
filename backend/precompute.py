@@ -719,6 +719,66 @@ def derive_spend_profile(history: History, today: date) -> SpendProfile:
     )
 
 
+def assemble_snapshot(
+    history: History,
+    today: date,
+    spec: HouseholdSpec,
+    policy: UserPolicy,
+    ledger_balance: Decimal,
+    checking: Decimal,
+    swept_this_week: Decimal = ZERO,
+    days_since_last_sweep: int | None = None,
+) -> Snapshot:
+    """The `Snapshot` the engine sees on `today`, given the walk's state.
+
+    Exported for `backend/replay.py`, and defined **here** on purpose. The replay driver has to
+    grade the engine that shipped, not a second reconstruction of it: two copies of "how a
+    Snapshot is assembled" would drift, and the day they drifted the calibration numbers would
+    quietly start describing an engine that never existed. That is the same argument
+    `untouchable()` and `apply_caps()` are exported under, and it has already paid for itself once.
+
+    The sweep state is **passed in**, not inferred. A replay that assumed we had never swept would
+    never trip `CADENCE_HOLD` — and would therefore never observe a deferral, which is precisely
+    the thing the calibration has to partition on. If the engine had been running, it would have
+    swept, and the cadence would have held.
+    """
+    cards = tuple(
+        derive_card(history, card_spec, today, ledger_balance=ledger_balance)
+        for card_spec in spec.cards
+    )
+
+    return Snapshot(
+        today=today,
+        accounts=(
+            Account(
+                account_id=CHECKING_ID,
+                balance=money(checking),
+                connection=ConnectionState.HEALTHY,
+                balance_age_days=0,
+                kind=AccountKind.CHECKING,
+            ),
+            Account(
+                account_id=SAVINGS_ID,
+                balance=SAVINGS_BALANCE,
+                connection=ConnectionState.HEALTHY,
+                balance_age_days=0,
+                kind=AccountKind.SAVINGS,
+            ),
+        ),
+        funding_account_id=CHECKING_ID,
+        events=derive_cash_events(spec, today),
+        pending=(),
+        portfolio=derive_portfolio(history, cards, today, attested=True),
+        policy=policy,
+        daily_discretionary_high=daily_discretionary_high(history, today),
+        income_variation=income_variation(history, today),
+        history_days=(today - history.start).days + 1,
+        sweeps_in_flight=ZERO,
+        swept_this_week=swept_this_week,
+        days_since_last_sweep=days_since_last_sweep,
+    )
+
+
 # --- the walk -----------------------------------------------------------------------
 
 
