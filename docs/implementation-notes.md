@@ -1145,3 +1145,80 @@ happily while production is 59/90 broken.
 inline. The 0017 note claims "one definition of a Snapshot, not two"; that is not true today, and
 adding `last_sweep_amount` meant editing both. They will drift, and the day they do the calibration
 starts describing an engine that never shipped — which is precisely the argument that note makes.
+
+---
+
+## 2026-07-14 — Cloud Run deploy (ticket 0009), and two things the deploy taught us
+
+Deployed the API to Cloud Run (`cfo-ai-1` / `us-central1` / `resfi-api`) and published the Expo
+web client to Firebase Hosting. The runbook that drove it is `DEPLOY.local.md` (gitignored — it
+carries the live values); this note is the part that belongs in the repo.
+
+### `/healthz` was never reachable in production, and no test could have told us
+
+**`/healthz` is a reserved path on Google's frontend for `*.run.app`.** It answers the request
+itself with a Google 404; the container never sees it. Our route was defined correctly and was
+dead on arrival — and every test passed, because `TestClient` talks to the app directly and never
+crosses the frontend that eats the path.
+
+Renamed to `/health` (`backend/main.py`), which is verified reachable. Also added a test asserting
+`/healthz` now 404s, so nobody reintroduces the name.
+
+What made this expensive to diagnose is worth recording, because it does not present as a platform
+problem:
+
+- FastAPI's own 404 is JSON (`{"detail":"Not Found"}`); the reserved-path 404 is Google's **HTML**.
+- Responses that reach the app carry `server: Google Frontend` and `x-cloud-trace-context`. The
+  `/healthz` 404 carries **neither**.
+- A path the app has never heard of (`/nonexistent-xyz`) returns FastAPI's JSON 404 *with* those
+  headers. So routing was fine — one specific string was being swallowed.
+- It is the exact string: `/health`, `/healthZ`, `/healthzz`, `/readyz` all arrive. Only `/healthz`
+  does not, with or without a query string.
+
+Nothing depended on it — Cloud Run's default startup probe is TCP, not an HTTP GET, so the service
+was healthy the whole time. The cost was that our one deliberately-open endpoint was a black hole.
+
+**The general lesson:** a route can be correct, tested, and unreachable. Any check that only
+exercises the app in-process cannot see the platform in front of it. The acceptance check for a
+deployed endpoint has to be run *against the deployed URL*, which is why `DEPLOY.local.md` §7 exists
+and why check [1] failing is what surfaced this at all.
+
+### Uvicorn was emitting plaintext redirect URLs behind Cloud Run's TLS
+
+Cloud Run terminates TLS and forwards plain HTTP. Uvicorn, not told to trust the proxy, believed the
+scheme was `http` — so FastAPI's trailing-slash redirect emitted `Location: http://…`, a silent
+downgrade. Observed live on `GET /healthz/`.
+
+Fixed in the `Procfile` with `--proxy-headers --forwarded-allow-ips='*'`. The wildcard is safe
+*specifically because* nothing but Cloud Run can reach the container, so there is no unproxied path
+by which a forged `X-Forwarded-Proto` could arrive. That reasoning does not travel — the comment in
+the `Procfile` says so.
+
+No current client path uses a trailing slash, so nothing was broken. It was a trap set for the first
+person to add one.
+
+### Deviations and decisions not in the plan
+
+- **Firebase Hosting for the web client**, not in ticket 0009 (which only scoped the API). Chosen
+  because `cfo-ai-1` already existed and Hosting gives free HTTPS on `*.web.app` with no load
+  balancer, bucket, or certificate to manage. `mobile/firebase.json` + `mobile/.firebaserc`.
+- **`@expo/metro-runtime` added** to `mobile/package.json` — Expo web does not build without it.
+- **`docs/decision-flow.html` is now published** at `cfo-ai-1.web.app/decision-flow.html`. Because
+  `expo export` **wipes `dist/`**, it is *rebuilt into* the export by a `copy:docs` script rather
+  than copied in once; `npm run deploy:web` chains export → copy → deploy. A file hand-placed in
+  `dist/` would vanish on the next web deploy, silently, and only for the people you sent the link
+  to.
+- **`--min-instances=1` bills continuously** (~$10–15/mo for an idle warm instance). Accepted: the
+  client gives up after 8s (`REQUEST_TIMEOUT_MS`) and a cold start plausibly eats most of that
+  budget, which would make the demo's first screen its error state.
+- **The public web client makes `RESFI_API_KEY` discoverable**, not merely public-by-construction —
+  anyone can read it out of the JS bundle. Exposure is bounded to **300 Anthropic calls/day**
+  because `RateCap` is in process memory and `--max-instances=1` pins us to one process. This is
+  the load-bearing reason that pin is not a tuning knob.
+
+### Left alone deliberately
+
+`docs/tickets/0002`, `docs/tickets/0009`, and `docs/plans/2026-07-13-001-…` still say `/healthz` in
+their acceptance criteria. They are a record of what was planned, not live docs, and rewriting them
+would erase the fact that the plan was wrong in a way worth remembering. `docs/RUNBOOK.md` *is* live
+and was updated.

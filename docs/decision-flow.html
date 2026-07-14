@@ -48,6 +48,9 @@
 
   * { box-sizing: border-box; }
 
+  a { color: var(--go); text-decoration-color: var(--go-rule); text-underline-offset: 2px; }
+  a:hover { text-decoration-color: var(--go); }
+
   body {
     margin: 0;
     padding: 3rem 1.25rem 5rem;
@@ -363,19 +366,24 @@
 </div>
 
 <div class="callout">
-  <strong>This is a service people want.</strong> Tally: ~$172M raised, $855M valuation, shut down 2024 &mdash; on CAC, not the model, the
-  technology, or the product.Users liked it: <b>4.5 stars</b> across 17k+ App Store
-  reviews, <b>$1B+</b> in debt paid off, <b>~$4,300</b> average lifetime savings per member. <br>
-  The estate split on the CAC line  &mdash; LendingClub took the consumer app, while Pagaya took the
-  decisioning platform to embed into partners it already serves at scale, presumably.
+  <strong>This is a service people want.</strong> Tally: ~$172M raised, $855M valuation, shut down 2024
+  &mdash; on CAC, not the model, the technology, or the product. Users liked it: <b>4.5 stars</b> across
+  17k+ App Store reviews, <b>$1B+</b> in debt paid off, <b>~$4,300</b> average lifetime savings per
+  member. <br>
+  The estate split on the CAC line &mdash; LendingClub took the consumer app, while Pagaya took the
+  decisioning platform, presumably to embed into partners it already serves at scale.
 </div>
 <div class="callout">
   <strong>Conservative estimates and auditability are must-haves from day one.</strong> Every scaled competitor in this category has ended up in front of a
   regulator. Dave: FTC + DOJ, 2024. Brigit: $18M FTC settlement.
   Always stems from consent, fees, harm &mdash; a wrong &ldquo;it&rsquo;s safe to sweep&rdquo; is a textbook
-  UDAAP fact pattern. The guarantee plus an append-only decision log (full frozen input behind
-  every sweep) is what makes refusal auditable rather than asserted; Reg E, NACHA, KYC/AML, and
-  GLBA sign-off comes before any real rail connects.
+  UDAAP fact pattern. The guarantee plus an append-only decision log &mdash; the full frozen input
+  behind every sweep &mdash; is what <em>will</em> make refusal auditable rather than merely asserted.
+  <b>That log is not built yet.</b> It is a prerequisite, not an afterthought, and the engine is
+  already shaped for it: every decision is emitted as stable <em>reason codes</em> rather than
+  sentences, so a decision recorded today still means the same thing in five years after the copy has
+  been rewritten three times. The record exists in the right form; nothing yet persists it. Reg E,
+  NACHA, KYC/AML, and GLBA sign-off comes before any real rail connects &mdash; and so does that log.
 </div>
 
 <div class="callout">
@@ -395,10 +403,24 @@
 <h3 class="subhead">What I built</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  <strong>Status: engine built, and now graded against a synthetic <em>population</em> &mdash; it has
-  real numbers about its own error, and they have already refused one change and caught one bug.
-  Nothing moves real money yet</strong> &mdash; no Plaid link, no ACH rail. Dependency-free engine;
-  everything else in the stack sits around it, never inside the decision.
+  <strong>Status: a 1-day prototype of what two screens on the customer app might look like, built and
+  deployed &mdash; <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real
+  funds is in place</strong> &mdash; no Plaid link, no payment rail. Everything below the API is real
+  and runs; everything that would touch an actual bank account is not built.
+</p>
+
+<div class="callout">
+  <strong>What &ldquo;no rail&rdquo; means, precisely.</strong> Moving money here is two legs, not one.
+  The <b>debit leg</b> pulls from the user&rsquo;s checking &mdash; ordinary ACH origination, and a
+  solved problem (Dwolla, Moov, Increase, Column, or Plaid Transfer alongside the link itself). The
+  <b>payoff leg</b> has to land that money on a card held at <em>someone else&rsquo;s</em> issuer, and
+  plain ACH cannot route it &mdash; that needs creditor/biller routing, which is what
+  <b>Method Financial</b> exists to sell. The second leg is the hard one, and it is the one every
+  Tally-shaped product actually depends on. Neither is wired here.
+</div>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  Below is an outline of the deployed tech stack:
 </p>
 
 <div class="rules">
@@ -406,63 +428,42 @@
   <thead><tr><th>Layer</th><th>What runs</th></tr></thead>
   <tbody>
     <tr>
-      <td><b>Decision engine</b><br><code>engine/</code></td>
-      <td>Pure Python 3.10+, <b>zero dependencies</b>. Frozen dataclasses, money as
-          <code>Decimal</code> &mdash; <code>money()</code> refuses a float outright. No clock, no
-          network, no LLM.</td>
-    </tr>
-    <tr>
-      <td><b>The household</b><br><code>sim/</code></td>
-      <td>A seeded synthetic household. Spend is a zero-inflated lognormal, because the engine
-          reserves a <b>p90</b> and the whole question is about the tail. Same seed, byte-identical
-          history, forever. <b>No Plaid, no real balances.</b></td>
-    </tr>
-    <tr>
-      <td><b>Build step</b><br><code>backend/precompute.py</code></td>
-      <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
-          <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a
-          test regenerates it and asserts the bytes match, so a stale demo is a red build.
-          <b>Every day gets a decision; about one in nine is a sweep</b> (10 of 90) &mdash; the
-          cadence cap alone allows at most one in seven, and the other gates take the rest.</td>
-    </tr>
-    <tr>
-      <td><b>The grader</b><br><code>engine/outcome.py</code><br><code>backend/replay.py</code></td>
-      <td>Settles the bet. Replays a household day by day and grades every day it can
-          <em>honestly</em> grade &mdash; a blocking refusal never ran a forecast, so it is not
-          graded rather than being scored a perfect zero. It applies the sweep to the household's
-          own path <b>itself</b>, so a caller cannot forget to and quietly report the tail we'd
-          have had if we had never acted.</td>
-    </tr>
-    <tr>
-      <td><b>The calibration</b><br><code>backend/calibrate.py</code></td>
-      <td>Grades a <b>population</b> &mdash; 3 spend shapes &times; 20 seeds, 4,320 graded days
-          &mdash; at every setting of the spend dial, and licenses at most one. <b>A guardrail
-          measured on one household is not measured.</b></td>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Google Cloud Run.</b> <b>GitHub Actions</b>: ruff, the Python suite,
+          and the mobile typecheck and tests.</td>
     </tr>
     <tr>
       <td><b>API</b><br><code>backend/</code></td>
       <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
-          <b>No database and no write path.</b> Dollars cross the wire as strings, because JSON's
-          only number is a double.</td>
+          <b>No database and no write path.</b> </td>
+    </tr>
+    
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same two
+          screens &mdash; the dashboard and the spending view &mdash; and the explain modal run in a
+          browser. That browser build is what&rsquo;s deployed above; the same source targets iOS and
+          Android unchanged.</td>
+    </tr>
+    <tr>
+      <td><b>Decision engine</b><br><code>engine/</code></td>
+      <td> Python 3.10.</td>
     </tr>
     <tr>
       <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
-      <td><b>Claude Sonnet 5</b>, reaching the decisions through two structured tools. The only path
-          that costs money, and the only one with a rate cap. Every figure in its reply is checked
-          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote
-          a real number against the wrong day.</td>
+      <td><b>Claude Sonnet 5</b> &mdash; it <b>looks up decisions the engine already made</b> and puts
+          them in English. It does not make them. Three <b>read-only</b> tools
+          (<code>get_decision</code>, <code>list_decisions</code>, <code>get_summary</code>) fetch a
+          finished decision from memory; the model has no path to move money, size a sweep, or pick a
+          card. Every figure in its reply is checked against that turn's tool results &mdash; keyed by
+          <b>(date, field)</b>, so it cannot quote a real number against the wrong day, and it cannot
+          cite a decision it never fetched. The only path that costs money, and the only one with a
+          rate cap.</td>
     </tr>
-    <tr>
-      <td><b>Client</b><br><code>mobile/</code></td>
-      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
-          dashboard and explain modal run in a browser.</td>
-    </tr>
-    <tr>
-      <td><b>Hosting &amp; CI</b></td>
-      <td><b>Cloud Run, one worker on purpose</b> &mdash; the spend cap lives in process memory,
-          and a second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite,
-          and the mobile typecheck and tests.</td>
-    </tr>
+  
+  
+    
+   
   </tbody>
 </table>
 </div>
@@ -642,52 +643,119 @@
 <h3 class="subhead">The one rule inside the forecast</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  <em>Money arrives late and small. It leaves early and large.</em> A forecast that is right on
-  <em>average</em> overdrafts half its users half the time. This asymmetry is the safety property.
+  Before it moves a dollar, the engine has to answer one question: <em>how low does this household&rsquo;s
+  checking account get over the next 30 days?</em> That is a guess about the future, and it is built out
+  of a dozen smaller guesses &mdash; when the paycheck lands, how big rent is, what they&rsquo;ll spend
+  on a Saturday. <strong>Every one of those guesses is deliberately resolved against us.</strong>
+</p>
+
+<p class="thesis" style="margin: 0 0 1.5rem">
+  <em>Money arrives late and small. It leaves early and large.</em><br>
+  <strong>A forecast that is right on average overdrafts half its users half the time.</strong>
+</p>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  That sentence is the whole safety argument. A forecast tuned for <em>accuracy</em> is wrong in both
+  directions equally &mdash; and being wrong in one of those directions means we swept money a household
+  turned out to need. So the engine is not tuned for accuracy. It is tuned to be wrong in the
+  <em>harmless</em> direction, on purpose, on every input:
 </p>
 
 <div class="rules">
 <table>
-  <thead><tr><th>Quantity</th><th>What we assume</th></tr></thead>
+  <thead><tr><th>What we&rsquo;re unsure about</th><th>What the engine assumes instead</th></tr></thead>
   <tbody>
-    <tr><td>Income timing</td><td>expected date <b>+ jitter</b> &mdash; it&rsquo;s late</td></tr>
-    <tr><td>Income amount</td><td>the <b>low</b> end of its range</td></tr>
-    <tr><td>Income we&rsquo;re under 80% sure of</td><td><b>not money at all</b> &mdash; it&rsquo;s a hope</td></tr>
-    <tr><td>Obligation timing</td><td>expected date <b>&minus; jitter</b> &mdash; it&rsquo;s early</td></tr>
-    <tr><td>Obligation amount</td><td>the <b>high</b> end</td></tr>
-    <tr><td>Obligations we&rsquo;re unsure of</td><td><b>still counted</b> &mdash; an uncertain bill is still a bill</td></tr>
-    <tr><td>Pending debits</td><td><b>already gone</b></td></tr>
-    <tr><td>Pending credits</td><td><b>not yet money</b></td></tr>
-    <tr><td>Our own unsettled sweeps</td><td><b>already gone</b> &mdash; the bank may not have taken it yet</td></tr>
-    <tr><td>Discretionary spend</td><td>the <b>p90 &mdash; every single day</b></td></tr>
+    <tr>
+      <td><b>When their paycheck lands</b></td>
+      <td>Later than expected. Payroll slips; it rarely rushes.</td>
+    </tr>
+    <tr>
+      <td><b>How big the paycheck is</b></td>
+      <td>The low end of what we&rsquo;ve seen from them.</td>
+    </tr>
+    <tr>
+      <td><b>Income we&rsquo;re less than 80% sure of</b></td>
+      <td><b>Not money at all.</b> An expected deposit we can&rsquo;t vouch for is a hope, and you
+          cannot spend a hope.</td>
+    </tr>
+    <tr>
+      <td><b>When a bill hits</b></td>
+      <td>Earlier than expected &mdash; the mirror image of the paycheck.</td>
+    </tr>
+    <tr>
+      <td><b>How big the bill is</b></td>
+      <td>The high end.</td>
+    </tr>
+    <tr>
+      <td><b>Bills we&rsquo;re unsure of</b></td>
+      <td><b>Counted anyway.</b> An uncertain bill is still a bill.</td>
+    </tr>
+    <tr>
+      <td><b>Charges still settling</b></td>
+      <td>Money out is <b>already gone</b>. Money in is <b>not there yet</b>.</td>
+    </tr>
+    <tr>
+      <td><b>Our own sweep, not yet cleared</b></td>
+      <td><b>Already gone</b> &mdash; we never give ourselves the benefit of the doubt that the bank
+          hasn&rsquo;t taken it.</td>
+    </tr>
+    <tr>
+      <td><b>What they&rsquo;ll spend day to day</b></td>
+      <td>A <b>heavy day &mdash; every single day</b>. Not their average day: roughly their 90th-percentile
+          day, repeated for thirty days straight.</td>
+    </tr>
   </tbody>
 </table>
 </div>
 
+
+<p class="thesis" style="margin: 1.75rem 0 1.5rem">
+  <strong>Nothing ships here because it is clever. It ships because it survived measurement on a
+  population.</strong><br>
+  Two things follow from that rule, and both look like mistakes until you see the rule:
+  <strong>we run a spend model we can prove is wrong, and we rejected the better one.</strong>
+</p>
+
 <div class="callout">
-  <strong>That last row is measurably wrong.</strong> Compounding a per-day p90 across 30 days grows
-  variance with <em>t</em>, not &radic;t &mdash; the engine ends up reserving <strong>more than the
-  household has ever spent in any 30-day stretch.</strong> Fails safe, which is exactly why it would
-  go unnoticed.
+  <strong>1 &middot; The model we run is wrong, and we shipped it anyway.</strong> That last row &mdash;
+  a heavy spending day, <em>thirty days running</em> &mdash; describes a month no household has ever
+  had. Nobody has their worst Saturday thirty times in a row. So the engine sets aside <strong>more
+  money than the household has ever spent in any 30-day stretch</strong>, and that is where most of the
+  <b>~$544K</b> of safe-money-we-declined-to-move goes. It errs toward caution, which is exactly why it
+  could sit there unnoticed: <strong>a bug that overdrafts someone is found in a week; a bug that is
+  merely too careful never files a complaint.</strong>
 </div>
 
 <div class="callout">
-  <strong>So we fixed it, measured it, and the measurement refused the fix.</strong> The replacement
-  reserves against the household&rsquo;s <em>own</em> worst 30-day window instead &mdash;
-  non-parametric, no distributional assumption, unimprovable on paper. Across 60 households and
-  4,320 graded days it breaches <b>19.8%</b> of days against today&rsquo;s <b>2.3%</b>, even set to
-  their worst month <em>ever</em>. So the dial ships at <code>None</code> and the engine still uses
-  the model we know is wrong.
+  <strong>2 &middot; So we fixed it &mdash; and the measurement refused the fix.</strong> The obvious
+  replacement: reserve against the household&rsquo;s <em>own</em> worst month on record rather than a
+  hypothetical one. It assumes nothing &mdash; and it is <em>worse</em>. Across 60 households and 4,320 graded days
+  it leaves people short on <b>19.8%</b> of days against today&rsquo;s <b>2.3%</b>, even set to their
+  worst month <em>ever</em>. So it ships turned <b>off</b>. <strong>The whiteboard said ship it; the
+  population said no.</strong>
   <br><br>
-  <strong>The model isn&rsquo;t wrong &mdash; it&rsquo;s starved.</strong> It reads &ldquo;their worst
-  month&rdquo; off the 60&ndash;150 days of history the engine actually has, which is only
-  <b>2&ndash;5 independent months</b>. The worst of 3 months badly understates the worst of 36 &mdash;
-  it estimates the true worst month at <b>77% / 58% / 86%</b> for the typical / fat-tailed / steady
-  household. <strong>The bias is worst exactly where it&rsquo;s most dangerous</strong>: a fat tail
-  means the bad month is <em>rare</em>, so a short history almost never contains one. Given three
-  years instead of sixty days, the same model&rsquo;s breach rate falls to <b>3.7%</b>, and to
-  <b>zero</b> on the household it was most dangerous for. The idea was right; the data isn&rsquo;t
-  there.
+  <strong>Why the better model loses is a data problem, not a math problem &mdash; and that distinction
+  decides what we do next.</strong> The model isn&rsquo;t miscalculating. It is reading &ldquo;their
+  worst month&rdquo; off the <b>60&ndash;150 days</b> of history we actually have, and two to five months
+  is not enough to have <em>seen</em> a household&rsquo;s bad month &mdash; so it guesses one that is
+  <b>58&ndash;86%</b> of the truth and under-reserves by the difference. It is least reliable exactly
+  where the stakes are highest: volatile households have bad months <em>rarely</em>, so a short history
+  is the one most likely to have missed them.
+  <br><br>
+  <strong>A math problem an engineer fixes in a sprint. A data problem cannot be engineered away
+  &mdash; history can only be acquired.</strong> Give the same model three years instead of two months
+  and its failure rate falls to <b>3.7%</b>, and to <b>zero</b> on the household it was most dangerous
+  for. So this is not a dead end; it is a priced, dated ask: <strong>longer histories &mdash; from a
+  data partner that reaches further back, or from household tenure &mdash; buy back the recoverable
+  half of that $544K.</strong> It is also the flywheel in miniature: <strong>the engine gets less
+  conservative, and the household gets more money moved, the longer they stay.</strong>
+</div>
+
+<div class="callout go">
+  <strong>That is the assertion.</strong> A wrong model kept and a better model rejected are not two
+  embarrassments &mdash; they are the same rule enforced twice. <strong>We do not ship what reasons
+  well. We ship what measured well on 60 households.</strong> The harness caught this before a single
+  real dollar moved, which is the only time catching it is free.
 </div>
 
 <h3 class="subhead">What happens after the money moves</h3>
@@ -725,7 +793,7 @@
 </div>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  The loop is closed and it has run. <code>replay.py</code> grades one household;
+  EXAMPLE: The loop is closed and it has run. <code>replay.py</code> grades one household;
   <code>calibrate.py</code> grades sixty. The first numbers the engine has ever had about itself,
   across <b>4,320 graded days</b>:
 </p>
