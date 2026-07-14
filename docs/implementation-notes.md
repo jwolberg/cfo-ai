@@ -911,3 +911,55 @@ ticket's.
 Every existing test in `tests/test_interest.py` still passes, because the `card()` helper defaults
 to `charges="0.00"`. The old arithmetic is still exactly right — for a household that has stopped
 using the card. That is a real household, and it is no longer the *only* one the model can describe.
+
+---
+
+## 2026-07-14 — U6/U7 (`0015`, `0016`): the spend surface, and one thing deliberately not built
+
+### `GET /spend` feeds no decision, and a test enforces that
+
+The rolling 30-day series is the exact structure that will eventually replace
+`daily_discretionary_high` in the forecast. It ships here as a **dashboard**, a release before it
+is trusted with a decision — so it earns its way into the forecast having already been looked at by
+real households. `test_the_spend_surface_feeds_no_decision` asserts `engine/forecast.py` never reads
+it. That swap would *loosen* the reserve, and loosening needs the measured breach rate `0017` has
+not produced yet. It does not get to arrive quietly inside a dashboard ticket.
+
+### The "no router" stance is retired, and no router was added
+
+`App.tsx` argued that file-based routing was scaffolding for navigation that did not exist. That was
+right with one screen. There are two now, and they are **co-equal** — someone opening the app to see
+where their money went is not on a detour from the decision feed, they are doing the other half of
+the thing the product is for.
+
+`expo-router` (SDK 57) is capable and it is a great deal of machinery for a boolean. Two screens, no
+nesting, no deep links, no URL state: a `useState` and two `Pressable`s. Both screens stay **mounted**
+(`display: none`, not unmount) so a half-scrolled feed does not reset every time you glance at
+spending.
+
+The strip chart is hand-rolled from `View`s. A charting dependency would be more code than the chart
+and another package in the bundle.
+
+### The growing-card panel is not styled like an error
+
+`theme.ts` contains **no red**, deliberately: a refusal is the product working, and colouring it like
+a failure would quietly turn the most common outcome in the feed into a fault. That argument applies
+here too. A household whose card grew is being told the truth about their spending, not shown an app
+error. Deep green, the same voice as a refusal.
+
+### NOT BUILT: the attestation action
+
+[9.1] makes `UNATTESTED` a **blocking** refusal, which makes "these are all my cards" a hard
+onboarding precondition. The engine half is real and tested (`0013`), and the refusal copy already
+surfaces in the Decisions feed.
+
+**The action is missing, and it should stay missing until there is somewhere to put it.** Attesting
+is a *write*, and this backend has no database — it serves one committed JSON artifact
+(`docs/decisions/0002-generated-json-artifact-over-database.md`). A button that appears to save an
+attestation and cannot would be theatre, and the worst kind: it would look like the coverage gate was
+handled.
+
+The demo household attests trivially (`attested=True` — one card, and we generated it), so
+`CARD_COVERAGE_INCOMPLETE` never fires in the served window. **That means the gate is unexercised
+end-to-end**, and it is the one refusal in this feature nobody has seen in the product. Worth
+knowing before it meets a real portfolio.

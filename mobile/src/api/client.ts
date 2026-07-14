@@ -28,6 +28,7 @@ import type {
   DecisionsResponse,
   ExplainResponse,
   IsoDate,
+  SpendResponse,
   Turn,
 } from './types';
 
@@ -120,6 +121,15 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
 /** The served window: the feed (newest first) and the summary stats above it. */
 export function getDecisions(): Promise<DecisionsResponse> {
   return request<DecisionsResponse>('/decisions');
+}
+
+/**
+ * What the household spends, and what their card is about to take.
+ *
+ * Comprehension, not a decision — nothing served here feeds the engine. See `GET /spend`.
+ */
+export function getSpend(): Promise<SpendResponse> {
+  return request<SpendResponse>('/spend');
 }
 
 /**
