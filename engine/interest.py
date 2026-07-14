@@ -52,12 +52,11 @@ actions we have not taken.
 
 from __future__ import annotations
 
-import calendar
 from collections.abc import Mapping
 from datetime import date, timedelta
 from decimal import Decimal
 
-from engine.models import ZERO, Debt, money
+from engine.models import ZERO, Debt, money, statement_day
 
 DAYS_PER_YEAR = Decimal("365")
 
@@ -66,14 +65,10 @@ DAYS_PER_YEAR = Decimal("365")
 MAX_CYCLES = 600  # 50 years
 
 
-def _statement_day(year: int, month: int, day_of_month: int) -> date:
-    """The statement close in a given month, clamped to the month's length.
-
-    A card that closes on the 31st closes on the 28th in February. Left unclamped this
-    raises, and a February crash in the interest model is not a failure mode worth having.
-    """
-    last = calendar.monthrange(year, month)[1]
-    return date(year, month, min(day_of_month, last))
+# Moved to engine/models.py, where StatementCycle also needs it. Kept as an alias rather than
+# a second copy: two implementations of a February clamp would drift, and the bug would show
+# up in exactly one of them.
+_statement_day = statement_day
 
 
 def _next_close(after: date, day_of_month: int) -> date:
