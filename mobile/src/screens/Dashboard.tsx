@@ -114,10 +114,6 @@ function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
   return (
     <View>
       <Text style={styles.greeting}>Your money, working.</Text>
-      <Text style={styles.subhead}>
-        {summary.sweep_count} payments made, {summary.refuse_count} days left alone — each for
-        a reason.
-      </Text>
 
       {/* The hero. Deep green, not white — this is the one card that is a reward rather than
           a readout, and it should not look like the stats beneath it. */}
@@ -133,7 +129,12 @@ function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
             celebrate; it is not allowed to drop the condition. */}
         <Text style={styles.heroFoot}>in interest, as long as you keep your payments up</Text>
 
-        {!summary.paid_off && (
+        {summary.paid_off ? (
+          // The "Card balance" panel used to carry this, and it was deliberately *not* a
+          // `$0.00` — that reads like a bug on the one day it is unambiguously good news.
+          // The panel is gone; the state it protected is not.
+          <Text style={styles.paidOff}>Card paid off 🎉</Text>
+        ) : (
           <View style={styles.progressBlock}>
             <View style={styles.progressHead}>
               <Text style={styles.progressLabel}>Card paid down</Text>
@@ -154,31 +155,6 @@ function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
             </Text>
           </View>
         )}
-      </View>
-
-      <View style={styles.statRow}>
-        <View style={[styles.statCard, styles.half]}>
-          <Text style={styles.statLabel}>Buffer protected</Text>
-          <Text style={styles.statValue}>{formatMoneyRounded(summary.current_buffer)}</Text>
-        </View>
-
-        <View style={[styles.statCard, styles.half]}>
-          {summary.paid_off ? (
-            // Not a $0.00 stat — that reads like a bug on the one day it is unambiguously
-            // good news.
-            <>
-              <Text style={styles.statLabel}>Your card</Text>
-              <Text style={[styles.statValue, { color: colors.greenText }]}>Paid off</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.statLabel}>Card balance</Text>
-              <Text style={styles.statValue}>
-                {formatMoneyRounded(summary.targeted_debt_balance)}
-              </Text>
-            </>
-          )}
-        </View>
       </View>
 
       <Text style={styles.feedLabel}>Recent decisions</Text>
@@ -234,20 +210,8 @@ const styles = StyleSheet.create({
   },
   loadingText: { ...type.body, marginTop: space.md },
 
-  greeting: { ...type.display },
-  subhead: { ...type.body, marginTop: space.xs, marginBottom: space.lg },
-
-  statRow: { flexDirection: 'row', gap: space.md },
-  half: { flex: 1 },
-  statCard: {
-    backgroundColor: colors.card,
-    borderRadius: radius.card,
-    padding: space.lg,
-    marginBottom: space.md,
-    ...shadow,
-  },
-  statLabel: { ...type.label, marginBottom: space.xs },
-  statValue: { ...type.stat },
+  // The subhead is gone, so the greeting carries the gap to the hero itself.
+  greeting: { ...type.display, marginBottom: space.lg },
 
   // The reward card. Brand deep green, reversed out — the only inverted surface on the
   // screen, which is what makes it read as a prize and not a fourth statistic.
@@ -266,6 +230,8 @@ const styles = StyleSheet.create({
   heroLabel: { ...type.label, color: '#8FBFB4' },
   heroValue: { fontSize: 38, fontWeight: '700', color: '#FFFFFF', marginTop: space.xs },
   heroFoot: { ...type.small, color: '#8FBFB4', marginTop: space.xs },
+
+  paidOff: { ...type.heading, color: '#FFFFFF', marginTop: space.lg },
 
   progressBlock: { marginTop: space.lg },
   progressHead: { flexDirection: 'row', justifyContent: 'space-between' },
