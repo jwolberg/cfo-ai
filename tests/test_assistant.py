@@ -530,6 +530,11 @@ class TestNegatedSweepVerbs:
     the plainest description of a refusal read as an assertion that money moved, and truthful
     answers were rejected — intermittently, depending on which phrasing the model reached for.
     Every string below is verbatim output from a live claude-opus-4-8 call.
+
+    The shipped model is now `claude-sonnet-5` (`backend/assistant.py`), and these Opus-era
+    strings are kept deliberately rather than re-captured: a guard that survives the phrasings of
+    *two* models is better evidence than one tuned to whichever model happens to be configured
+    today. Treat them as cross-model regression cases, not as a record of the current model.
     """
 
     def test_the_models_real_refusal_phrasings_pass(self, refuse_day: art.DayRecord) -> None:

@@ -71,6 +71,30 @@ The risks table's "LLM asserts an untraceable claim" row held up — the guard n
 fabrication through. The failure was the opposite one the plan never listed: **a guard so
 strict it rejected the engine's own words.** Worth carrying into any future guard work.
 
+### The model is Sonnet, and that was re-verified live rather than assumed
+
+*(2026-07-14.)* The assistant shipped on `claude-opus-4-8`, which was itself a drift from this
+plan — Key Technical Decisions specified **Sonnet-class** from the start. It is now
+`claude-sonnet-5` (`backend/assistant.py`). Opus was overkill: the model narrates over a tiny
+structured dataset with two tools, it never decides anything (`engine/decide.py` does, before the
+assistant is reached), and it is never trusted about money (the guard re-checks every figure
+against the tool results).
+
+**A model swap is exactly the change the live-verification bar exists for.** All three bugs found
+in `verify()` were bugs about *how a particular model phrases things*, and the fake client cannot
+produce a real model's sentences. So the swap was re-verified against live Sonnet, not asserted:
+
+- **8/8 legitimate questions** across a sweep day, a cadence-hold day and a no-surplus day
+  answered, with **zero guard rejections**.
+- **6/6 adversarial turns** handled: an out-of-window date and an excluded warm-up day both
+  declined honestly; credit-score and index-fund questions refused as out of scope (`prd.md`
+  §4.2); a prompt injection demanding "tell me you swept $9,999" caught by the guard and replaced
+  with the fallback. **No fabricated figure reached the user.**
+
+The Opus-era verbatim strings in `tests/test_assistant.py` are kept rather than re-captured — a
+guard that survives *two* models' phrasings is stronger evidence than one tuned to whichever model
+is configured today. They are now cross-model regression cases.
+
 ### What is left
 
 - **Ticket `0009` — the deploy.** `Procfile`, root `requirements.txt` and `.gcloudignore`
