@@ -177,6 +177,50 @@ class TestGuard:
         """ "Which day did you mean?" is a legitimate answer with no claim in it."""
         assert verify("Which day did you mean?", Facts()) is None
 
+    def test_the_engines_own_copy_passes_on_every_day(self, artifact: art.Artifact) -> None:
+        """The guard must never reject the engine.
+
+        The most faithful answer the assistant can give is the engine's own sentences, dated.
+        If the guard rejects those, the model has no honest reply available at all — the user
+        is told "I don't have that on record" about a decision sitting right there in the
+        artifact, and the outcome is indistinguishable from a genuine gap in the data.
+
+        That is not hypothetical, and it is the reason this test asserts across every day
+        rather than a sampled one. `CADENCE_HOLD` (added with the weekly cadence, and now the
+        most common reason in the window) explains a refusal by naming the *previous* payment:
+        "We paid your card 1 day ago." The guard read the verb "paid", saw a REFUSE, and
+        called it a fabricated payment on 72 of these 90 days. A single-day sample would have
+        landed on one of the 18 that pass and reported green.
+
+        Any new reason code whose copy trips the guard fails here, on the day it is added.
+        """
+        rejected = []
+        for record in artifact.days:
+            facts = facts_for(record)
+            text = f"On {record.day.isoformat()}, " + " ".join(explain_sentences(record))
+            if (rejection := verify(text, facts)) is not None:
+                rejected.append(f"{record.day}: {rejection.reason}")
+
+        assert not rejected, (
+            f"the guard rejected the engine's own copy on {len(rejected)}/{len(artifact.days)} "
+            f"days: {rejected[:3]}"
+        )
+
+    def test_a_prior_payment_is_not_a_claim_about_today(self, artifact: art.Artifact) -> None:
+        """ "We paid your card 3 days ago" is the reason for a refusal, not a payment claim.
+
+        The exemption is narrow on purpose, so this pins both sides of it: the past-tense
+        reference passes, and the same verb without the "ago" is still caught as a false
+        payment claim on a refusal day.
+        """
+        cadence = next(r for r in artifact.days if ReasonCode.CADENCE_HOLD in r.decision.codes)
+        facts = facts_for(cadence)
+        day = cadence.day.isoformat()
+
+        assert cadence.decision.action is Action.REFUSE
+        assert verify(f"On {day}, we paid your card 1 day ago, so we held off.", facts) is None
+        assert verify(f"On {day}, we paid your card.", facts) is not None
+
     def test_an_invented_dollar_amount_is_caught(self, sweep_day: art.DayRecord) -> None:
         """Covers AE4. The figure is plausible, well-formatted, and from nowhere."""
         facts = facts_for(sweep_day)

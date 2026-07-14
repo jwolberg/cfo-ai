@@ -352,10 +352,43 @@ _NEGATED_SWEEP = re.compile(
     re.IGNORECASE,
 )
 
+# A sweep verb pointing at a *previous* payment — "we paid your card 3 days ago". This is the
+# reason for today's decision, not a claim about today, and reading it as one is a false
+# positive that costs an honest answer.
+#
+# CADENCE_HOLD's copy is built on exactly this shape: "We paid your card 1 day ago, and we
+# space payments at least 7 days apart." The word is "paid" and the day is a REFUSE, so the
+# guard called every one of them a fabricated payment — 72 of the 90 days in the demo window,
+# i.e. the assistant could not answer about the most common decision the engine makes. The
+# engine's copy was right; the guard could not read it.
+#
+# Deliberately narrow. It licenses no figure and no outcome: the amount rules below still bind
+# every dollar to the decision it was fetched for, and a segment matching this simply asserts
+# nothing about today's action, so no action check runs against it. The `ago` must follow the
+# verb within one clause, so a sweep claim about today cannot borrow a neighbour's "ago".
+_PRIOR_PAYMENT = re.compile(
+    r"\b(?:swept|paid|moved|sent|put)\b[^.!?]{0,30}?\bago\b",
+    re.IGNORECASE,
+)
+
+
+def _asserts_sweep(segment: str) -> bool:
+    """Does this segment claim money moved *on the day it is talking about*?
+
+    A sweep verb alone is not the claim. It is also how the engine describes a payment that
+    already happened ("we paid your card 1 day ago") and how it describes one that did not
+    ("no money moved"). Both are refusals; neither is an assertion that today was a sweep.
+    """
+    if not _SWEEP_WORDS.search(segment):
+        return False
+    return not _NEGATED_SWEEP.search(segment) and not _PRIOR_PAYMENT.search(segment)
+
+
 # Distinctive phrases from `engine/explain.py`'s copy, mapped back to the code they render.
 # A phrase the model uses must belong to a reason that decision actually carries.
 _REASON_PHRASES: dict[ReasonCode, tuple[str, ...]] = {
     ReasonCode.WEEKLY_CAP: ("weekly limit", "weekly cap"),
+    ReasonCode.CADENCE_HOLD: ("space payments", "days apart"),
     ReasonCode.PER_SWEEP_CAP: ("single payment limit", "per-payment limit"),
     ReasonCode.CLEARS_THE_CARD: ("clears the card", "cleared the card"),
     ReasonCode.NO_SURPLUS: ("nothing spare", "no surplus"),
@@ -451,14 +484,14 @@ def verify(text: str, facts: Facts) -> Rejection | None:
         # A sentence about a day we never fetched cannot carry a claim. This is what forces
         # a fresh tool call every turn, even to restate something said earlier in the
         # conversation — the client resends history, and history is not evidence.
-        if unknown_dates and (amounts or _SWEEP_WORDS.search(segment)):
+        if unknown_dates and (amounts or _asserts_sweep(segment)):
             return Rejection(f"claim about {sorted(unknown_dates)[0]}, which was never fetched")
 
         # An outcome may never hang off a supporting date. "On 2026-06-05 we swept $400" names
         # a date the model really was shown and an amount that really exists — every part true,
         # the attribution invented. Only a *decision* date can carry an outcome, so this is a
         # rejection precisely when the segment offers no real decision to attribute it to.
-        if supporting and not cited and _SWEEP_WORDS.search(segment):
+        if supporting and not cited and _asserts_sweep(segment):
             return Rejection(
                 f"outcome asserted about {sorted(supporting)[0]}, which is not a decision"
             )
@@ -487,7 +520,7 @@ def verify(text: str, facts: Facts) -> Rejection | None:
             # not a payment one — reading it as a payment is what made the guard reject the
             # plainest possible description of a refusal.
             negated = bool(_NEGATED_SWEEP.search(segment))
-            asserts_sweep = bool(_SWEEP_WORDS.search(segment)) and not negated
+            asserts_sweep = _asserts_sweep(segment)
             asserts_refusal = bool(_REFUSE_WORDS.search(segment)) or negated
 
             if asserts_sweep and not asserts_refusal and not swept:

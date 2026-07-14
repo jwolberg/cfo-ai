@@ -628,3 +628,40 @@ The keychain hazard from the last entry bit again while running this: `security 
 returns the secret **with a trailing newline**, which must be stripped (`tr -d '\n'`) before it is
 used as an API key. Same hazard `DEPLOY.local.md` §3 warns about for `gcloud secrets create`; it
 applies to local verification runs too.
+
+---
+
+## 2026-07-14 — the guard couldn't read the engine's new copy (72/90 days unanswerable)
+
+Reported as "the LLM can't see the data." It could. The tool calls worked and returned real
+decisions; `verify()` then threw the answers away and the user got the "no record" copy.
+`POST /assistant/message` returned `outcome: "guard_rejected"` — which is the only reason this
+was diagnosable at all, since `GUARD_REJECTED` and `NO_RECORD` render identical text to the user.
+
+**Cause.** `2aeda1e` added `CADENCE_HOLD` to the engine and its copy, and never touched the guard
+(`backend/assistant.py` had zero references to it). The copy explains a refusal by naming the
+*previous* payment — "We paid your card 1 day ago, and we space payments at least 7 days apart."
+`_SWEEP_WORDS` matched the verb "paid", the guard concluded the model was claiming a payment on a
+REFUSE day, and rejected. `CADENCE_HOLD` is now the most common reason in the window, so this hit
+**72 of 90 days**: the assistant could not answer about the engine's most common decision.
+
+This is the *third* incarnation of the same failure (see the `$5321.39` money-regex note and the
+82/90 projection-horizon note in this file). Each time: the guard rejects the engine's own words,
+silently, and it reads to the user as missing data.
+
+**Fix.** A `_PRIOR_PAYMENT` exemption mirroring the existing `_NEGATED_SWEEP` one, behind a single
+`_asserts_sweep()` helper that all three `_SWEEP_WORDS` call sites now route through — they had
+drifted into checking the raw regex in three subtly different ways. Also added the missing
+`CADENCE_HOLD` entry to `_REASON_PHRASES`, which had left the window's most common reason with no
+phrase validation at all.
+
+**Tradeoff.** The exemption means a segment reading "we paid ... ago" asserts *no* outcome for the
+cited day, so an action check no longer runs on it. It licenses no figure: every dollar stays bound
+to the `(date, field)` it was fetched for. A model could now write "On <day> we paid $400.00 two
+days ago" and have the amount checked but not the (self-contradictory) tense. Judged well worth it
+against 72/90 days of honest answers being destroyed.
+
+**Guard against a fourth recurrence.** `test_the_engines_own_copy_passes_on_every_day` runs every
+day's engine copy through the guard. Any new reason code whose copy trips it now fails on the day
+it is added, rather than months later as "the LLM can't see the data." Deliberately across all 90
+days, not a sample: 18 days passed, so a sampled test could easily have reported green.
