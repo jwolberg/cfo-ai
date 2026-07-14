@@ -1,0 +1,37 @@
+# What `gcloud run deploy --source .` does NOT upload to Cloud Build (ticket 0009).
+#
+# ## Why this file has to exist
+#
+# With no .gcloudignore, gcloud synthesizes one that pulls in the root .gitignore via
+# `#!include:.gitignore`. Only the *root* one — nested .gitignore files are not honored. Our
+# `node_modules` rule lives in `mobile/.gitignore`, so it is invisible to that mechanism, and
+# `mobile/node_modules` (~418 MB) would be tarred and shipped to Cloud Build on every single
+# deploy. Slow, and billed.
+#
+# ## What must NOT be added here
+#
+# `backend/data/decisions.json` is the entire state of the service — committed on purpose
+# (docs/decisions/0002), loaded once at startup, no database behind it. Exclude it and the
+# container will not boot. It is covered by no rule below; keep it that way.
+
+#!include:.gitignore
+
+# The Cloud Run service is the Python API. It never serves the Expo client.
+mobile/
+tests/
+docs/
+.github/
+
+# `sim/` is deliberately NOT excluded. It is 40 KB, `pyproject.toml` lists it as a package
+# (so a build step that installs the project would fail without it), and `backend/precompute.py`
+# imports it. Excluding it buys nothing and breaks two things.
+
+# Never needed in an image, and the first two are large.
+**/node_modules/
+**/__pycache__/
+*.pyc
+
+# Local runbooks carry infrastructure values. They are gitignored already; this is belt and
+# braces, because the one place they must never end up is inside a deployed artifact.
+*.local.md
+private/

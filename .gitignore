@@ -14,6 +14,11 @@ AGENTS.md
 # personal / not for the repo
 private/
 
+# Local runbooks and scratch notes. These carry real infrastructure values once filled in
+# (project ids, service urls, secret names), which is the whole reason they stay local. The
+# shareable version of a deploy runbook lives in docs/runbooks/ with the values stripped.
+*.local.md
+
 # python build artifacts
 __pycache__/
 *.pyc
