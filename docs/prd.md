@@ -141,18 +141,29 @@ Measured across the demo household with throughput held constant, daily sweeping
 
 **Weigh it against the guarantee in [2.3], because that is what a draw actually costs us.** Daily
 takes ~142 debits a year; weekly takes ~45. Against 97 extra draws at a $35 reimbursement, daily
-pays for itself only if the **per-sweep overdraft probability is under ~1%** — a number nobody has
-measured, and precisely what [8]'s shadow mode exists to produce. And [2] says not to make this bet
-on expected value at all: the true cost of an incident is not $35, it is "a $35 fee, a missed rent
-payment, and a permanently lost customer who tells everyone." At a few hundred dollars all-in, the
-breakeven falls to ~0.1%.
+pays for itself only if the **per-sweep overdraft probability is under ~1%**. And [2] says not to
+make this bet on expected value at all: the true cost of an incident is not $35, it is "a $35 fee,
+a missed rent payment, and a permanently lost customer who tells everyone." At a few hundred
+dollars all-in, the breakeven falls to ~0.1%.
 
-So the trade is **~$36/yr of the household's money to take a third as many draws on the tail, until
-calibration tells us what the tail is.** Cheap insurance, and the same posture we take everywhere
-else — not a free lunch. (An earlier draft of this section claimed daily also cost ~$48/yr in ACH
-fees and that the two "cancelled." That figure was assumed, not sourced, and is wrong under most
-processor pricing — see the learnings note. It is corrected rather than deleted because it was the
-second plugged-in number in this investigation to point the right way for the wrong reason.)
+**That probability is no longer unmeasured — and it still does not settle the question.** [8]'s
+harness now exists and has run against a synthetic population: **0 sweep-caused overdrafts in 590
+sweeps.** Zero events is not zero risk. By the rule of three, that bounds the per-sweep rate at
+**≤0.51%** with 95% confidence — which *rules out* the >1% world and sits **5× above** the ~0.1%
+all-in breakeven it cannot exclude. It is also a bound on 60 simulated households, not on the
+world.
+
+So the trade is unchanged and better understood: **~$36/yr of the household's money to take a third
+as many draws on a tail we can now bound but not yet size.** Cheap insurance, and the same posture
+we take everywhere else — not a free lunch. Promoting that bound to a result is exactly the move
+this document exists to forbid.
+
+*(Two caveats on the numbers above. The ~$36/yr figure predates the payday double-count fix
+described in [5.2], which moved 41 of the demo household's 90 projections; it has not been
+re-derived. And an earlier draft claimed daily also cost ~$48/yr in ACH fees and that the two
+"cancelled" — that figure was assumed, not sourced, and is wrong under most processor pricing. It
+is corrected rather than deleted because it was the second plugged-in number in this investigation
+to point the right way for the wrong reason.)*
 
 **Sweeps are now spaced at least a week apart**, as a user policy value rather than a hardcoded
 constant. The forecast still runs every day and a held day is still graded: the cadence limits what
@@ -225,15 +236,38 @@ shrink the buffer. It is now banned from the dashboard.
 KPI** — a period where interest avoided rises and the overdraft rate rises with it is a failure,
 not a win. Reviewed independently of the growth team.
 
+**This guardrail has now been breached once, and catching it is the argument for how we measure.**
+`derive_cash_events` emitted *today's* events as future ones — but the balance is already
+end-of-day, so on a payday the forecast counted the paycheck **twice**. A phantom $2,600 inflow, a
+projected low thousands too high, and a sweep against money that was never there: the exact inverse
+of [2.3]'s "money arrives late and small."
+
+Across a 60-household population it caused **43 sweep-caused overdrafts**. **The single-household
+demo reported zero** — whether the bug bites depends on the cash position on whichever paydays a
+given seed happens to produce, and one seed never landed on one. It is fixed, and the population
+now reports **0 in 590 sweeps**.
+
+The lesson is a requirement, not an anecdote: **a guardrail measured on one household is not
+measured.** This metric is only meaningful across a population, and any process that reports it
+from a single account is reporting nothing.
+
 ### [5.3] Supporting
 
 - Reimbursement cost per user per month (the price of our guarantee — watch this like a hawk).
 - Forecast calibration: did the realized low balance fall inside the predicted interval, at the
-  stated rate?
+  stated rate? **First measurement: a 2.3% breach rate** — days the realized low came in *below*
+  our projection — across 4,320 graded days. That is the only number that may ever be traded for a
+  bigger sweep, and [8.1] is what it licensed (and refused).
 - Refusal rate, and the false-refusal rate (money we left idle that was genuinely safe to move —
-  our cost of conservatism).
+  our cost of conservatism). **First measurement: ~$544K** across the same population, deferrals
+  excluded. That figure is the prize for fixing the spend model — and the reason to fix it
+  *properly* rather than quickly.
 - Connected-account retention (the cleanest available trust signal; replaces v0's undefined "user
   trust score").
+
+Every number above comes from a **synthetic** population whose spending our own simulator
+generated. They measure the code, not the world. They are the first honest numbers this engine has
+ever had about itself, and they are not yet evidence about households.
 - Cash-flow variance of the served population (are we drifting into users we cannot forecast?).
 
 ---
@@ -327,3 +361,29 @@ spreadsheet, before it is a strategy.
 
 Shadow mode is the load-bearing step. It gives us the one thing no competitor in this category ever
 had before switching on the money: **a measured tail-risk number.**
+
+### [8.1] Where "Now" actually stands
+
+The **machinery** of shadow mode is built and has run; the **shadow** has not. That distinction is
+the whole of the current status, and collapsing it in either direction would be a lie:
+
+- **Built and run.** The grader (`engine/outcome.py`) has a caller (`backend/replay.py`), and
+  `backend/calibrate.py` grades a population at every setting of the spend model. It has produced
+  the first numbers this engine has ever had about itself ([5.2], [5.3]), and it has already earned
+  its keep twice: it caught the payday double-count that breached [5.2] forty-three times, and it
+  **refused** a forecast change that everyone — including this document's own plan — expected to
+  ship.
+- **Not started.** None of it has touched a real household. No Plaid link, no linked accounts, no
+  live balances. The population is synthetic, and its spending was generated by the same
+  assumptions the engine forecasts with, so it can measure the *code* and cannot yet measure the
+  *world*. Every threshold in the engine is still judgment.
+
+**The refusal is the part worth reading.** The known over-reserve in the spend model — the engine
+reserves more than the household has ever spent in any 30-day stretch — was fixed exactly as
+planned, measured, and the measurement said **no**: the replacement breaches 19.8% of days against
+today's 2.3%, because it reads "their worst month" off 2–5 independent months of history and the
+worst of 3 months badly understates the worst of 36. So the over-reserve is **still shipped**, the
+dial is off, and a test fails if anyone moves it without a measurement.
+
+That is the loop doing its job. A harness that only ever ratifies the change you already wanted is
+not a harness. See `docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`.

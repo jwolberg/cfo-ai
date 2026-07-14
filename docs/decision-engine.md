@@ -17,10 +17,13 @@ plumbing around it, is what the company lives or dies on.
 | `engine/interest.py` | What the debt costs and what a sweep saves — the primary KPI ([`prd.md`](./prd.md) §5.1) and the sentence the user reads, computed in one place ([7]). |
 | `engine/outcome.py` | Grades a decision against what actually happened. The calibration asset ([8]). |
 | `engine/explain.py` | The only file in the engine that contains copy ([1.1]). |
+| `backend/replay.py` | The grader's **caller**. Walks a household day by day, decides, and grades every day it can honestly grade ([8]). |
+| `backend/calibrate.py` | Grades a **population**, at every setting of the spend dial, and licenses at most one ([6.5]). |
 | `tests/test_decide.py` | The spec. Mostly the ways the real world breaks the happy path. |
 | `tests/test_interest.py` | Hand-computable amortization, and the three ways we decline to claim. |
 | `tests/test_outcome.py` | The grader. Mostly the ways a metric can quietly lie to you. |
 | `tests/test_explain.py` | Every code renders; no refusal reads like an error. |
+| `tests/test_calibrate.py` | The licensing rule. Mostly the ways a safety bar can license a regression. |
 
 ## [1] The shape of it
 
@@ -100,7 +103,7 @@ Every uncertain quantity resolves toward the end of its range that hurts the use
 | Obligation timing | expected date **−** jitter (early) |
 | Obligation amount | the **high** end |
 | Obligations we're unsure of | still counted — an uncertain bill is still a bill |
-| Discretionary spend | the **p90**, every day — **and this one is measurably too conservative; see [6.5]** |
+| Discretionary spend | the **p90**, every day — **measurably too conservative, and the fix was measured and refused; see [6.5], [6.6]** |
 | Pending debits | already gone |
 | Pending credits | not yet money |
 | Our own unsettled sweeps | already gone (the bank may not have taken it yet) |
@@ -211,16 +214,36 @@ one a growth target will eventually come for.
 
 ## [6] Known gaps — deliberately not built
 
-### [6.1] Calibration is asserted, not measured
+### [6.1] The thresholds are asserted. The forecast is now measured.
+
+**This gap has split in two, and only half of it is still open.**
 
 `INCOME_CONFIDENCE_FLOOR = 0.80`, `MAX_INCOME_VARIATION = 0.25`, `MAX_BALANCE_AGE_DAYS = 2`
-are judgment, not evidence. The only honest way to set them is shadow mode: run the
-engine against real households, move nothing, and measure how often the realized low
-balance fell below the projection. Then set the thresholds from the observed tail.
+are **still** judgment, not evidence. Nothing here has measured them, and the only honest way
+to set them remains shadow mode against **real** households.
 
-That backtest is the actual first milestone of the company ([`prd.md`](./prd.md) §8),
-and the resulting error distribution is the asset that compounds
-([`strategy.md`](./strategy.md) §3).
+What has changed is that the harness those thresholds would be set *from* now exists and has
+run. `engine/outcome.py` has a caller ([8]), and `backend/calibrate.py` grades a population
+rather than an anecdote. Against **60 synthetic households × 90 days = 4,320 graded days**:
+
+| | |
+|---|---|
+| Breach rate — days the realized low came in **below** our projection (we were optimistic) | **2.3%** |
+| Sweep-caused overdrafts ([`prd.md`](./prd.md) §5.2's guardrail) | **0**, in 590 sweeps |
+| False-refusal cost — our conservatism, deferrals excluded ([9.2]) | ~**$544K** |
+
+Read that table with its own caveat attached: it is **one simulator, three spend shapes, twenty
+seeds**. It is a demo population, not a prior. It cannot set `MAX_INCOME_VARIATION`, because
+`sim/` generates income from the same assumptions the engine forecasts with — a backtest of a
+model against its own generator measures the code, not the world.
+
+What it *can* do is catch the engine being wrong in ways a single household hides, and it
+immediately did ([8.4]).
+
+That backtest against real households is still the first milestone of the company
+([`prd.md`](./prd.md) §8), and the error distribution is still the asset that compounds
+([`strategy.md`](./strategy.md) §3). What is no longer true is that the engine has never been
+told whether it was right.
 
 ### [6.5] The discretionary-spend model over-reserves — measured, not suspected
 
@@ -249,14 +272,88 @@ throws, no alert fires. The product simply refuses more often than it should, qu
 forever — and the only instrument that would ever reveal it is `false_refusal_cost`, which is
 why that metric is a first-class part of the grader rather than a nice-to-have.
 
-**Deliberately not fixed.** The fix loosens the forecast and buys bigger sweeps, which is the
-one direction [3] forbids without evidence — and the evidence is precisely what the harness is
-being built to produce. Sequence: land the grader and the replay driver, ship the new spend
-model with its dial set to reproduce today's refusals, then loosen it only as far as the
-*measured* breach rate licenses. Fixing it first would trade a measurable, safe error for an
-unmeasured, unsafe one.
+**Still not fixed — and now for a much better reason than "we haven't measured it yet."**
 
-Write-up: [`learnings/2026-07-13-the-spend-model-over-reserves.md`](./learnings/2026-07-13-the-spend-model-over-reserves.md).
+The sequence this section prescribed has run to completion: the grader landed, the replay driver
+landed, the new spend model shipped behind a dial set to reproduce today's refusals, and the
+breach rate was measured across a population. **The measurement refused the fix.**
+
+Write-up: [`learnings/2026-07-13-the-spend-model-over-reserves.md`](./learnings/2026-07-13-the-spend-model-over-reserves.md)
+(the bug) and
+[`learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`](./learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md)
+(why the fix does not work).
+
+### [6.6] The fix was measured, and it is not safe to ship
+
+The proposed replacement was non-parametric and, on paper, unimprovable: reserve against the
+household's **own** enumerated worst 30-day window (`spend_30d_high`), rather than against
+`30 × p90_daily`. No distributional assumption, their real skew, their real autocorrelation.
+
+Measured across the same 4,320 graded days, against today's **2.3%** breach rate:
+
+| Dial (`SPEND_QUANTILE`) | Breach rate | Sweep-caused overdrafts |
+|---|---|---|
+| **today** — `30 × p90_daily` | **2.3%** | 0 |
+| `q = 1.0` — their worst month **ever** | **19.8%** | 1 |
+| `q = 0.90` | 24.4% | 1 |
+
+Reserving against the worst 30-day stretch a household has *ever actually had* breaches nearly
+**nine times as often** as the model this section calls an over-reserver. Nothing at any setting
+is licensed. `SPEND_QUANTILE` ships as `None`, `forecast.py` falls back to
+`daily_discretionary_high`, and a test fails if anyone moves the dial without a measurement.
+
+**The model is not wrong. It is starved.** It reads that worst-ever window off the 60–150 days
+of history the engine actually has — which is **2–5 *independent* months**, because overlapping
+windows flatter the sample count without adding information. *The worst of 3 months is a badly
+biased estimate of the worst of 36.* Against three years of ground truth, it estimates the true
+worst month at:
+
+| Household | Its true worst 30 days (3y) | What the model estimates |
+|---|---|---|
+| Typical | $2,059 | $1,580 — **77%** |
+| **High-variance** | $4,383 | $2,548 — **58%** |
+| Steady | $1,742 | $1,503 — **86%** |
+
+**The bias is worst exactly where it is most dangerous.** A fat tail means the bad month is
+*rare*, which means a short history almost never contains one — so the household most likely to
+blow up gets a reserve covering **58%** of its true worst month. The error is anti-correlated
+with safety.
+
+This is [5]'s trap wearing different clothes. There, σ flatters the skewed household; here, a
+short window does. Both instruments are least trustworthy on the household that needs them most.
+
+Given three years of history instead of sixty days, the same model's breach rate falls from
+**19.3% to 3.7%**, and on the fat-tailed household to **zero**. The idea was right. The data is
+not there.
+
+So the honest options are now: **gate the empirical model on history length** rather than on a
+quantile (it beats the incumbent for households with years of data and is dangerous for the ones
+we just onboarded — that is a second model with an eligibility rule, not a dial); scale the
+estimate to cover the tail it cannot see (but the correction needed is *shape-dependent*, 58% vs
+86%, so a single global scalar reintroduces exactly the flattering-the-skewed-household problem
+this model was chosen to avoid); or leave it. The incumbent is expensive, but it is expensive in
+the **safe** direction, and it is the only model here measured to overdraft nobody.
+
+What is no longer available is shipping the swap because the reasoning is elegant. It was.
+
+### [6.7] A safety bar that only measures safety will license a regression
+
+`calibrate.py:licensed()` originally asked two questions: does this setting overdraft anyone, and
+is its breach rate no worse than today's on every shape.
+
+**Both get easier to pass the more you reserve.** They are monotone in the size of the reserve,
+so a dial swept far enough in the *tightening* direction eventually satisfies both — and gets
+pronounced "licensed" for the sole achievement of being more conservative than the model it
+replaces.
+
+`q = 3.0` does exactly this. It clears both bars, and it costs **$1.62M** in false-refusal cost
+against today's **$544K** — and the report would have announced that $1.08M regression as a
+buy-back of `$-1,078,015.78`.
+
+There is now a third condition: **it has to actually buy something back.** A setting that
+reserves more than today is a tightening wearing the name of a loosening, whatever its breach
+rate. The generalization is worth keeping: *a metric that only measures the thing you are afraid
+of will happily recommend doing nothing at all.*
 
 ### [6.2] The upstream problems this file assumes away
 
@@ -340,9 +437,15 @@ never-sweeping. They are not double-counted.
 nothing in this repo ever did. The engine's central claim, *"this $220 is not needed"*, had
 never once been checked against the future that followed it.
 
+`outcome.py` then existed for a day and a half and **nothing called it**. `backend/replay.py` is
+the caller, and `backend/calibrate.py` runs it across a population. The engine now has numbers
+about itself ([6.1]), and the first thing they did was refuse a change everyone expected to ship
+([6.6]).
+
 [`strategy.md`](./strategy.md) §3: the only asset that compounds is **calibration** — "the
 empirical distribution of our own errors." This is that distribution's data structure, and it
 is what makes every future change to the forecast **defensible rather than merely plausible**.
+It has now done that job once, in the only way that counts: by saying **no**.
 
 ### [8.1] The signature is the safety property
 
@@ -377,23 +480,51 @@ Uncapped, the metrics satisfy an exact identity: **`false_refusal_cost == projec
 The forecast error, priced in dollars. It is asserted as a test — if they ever drift apart under
 an uncapped policy, one of them has a bug.
 
-### [8.3] The per-sweep cap currently **masks** the spend-model bug
+### [8.3] The per-sweep cap can **mask** the spend-model bug — and the harness still doesn't sweep it
 
-Under the default **$300** cap, [6.5]'s over-reservation costs the user *nothing measurable*.
-The cap binds long before the forecast error does, `false_refusal_cost` reads **$0.00**, and a
-shadow-mode report run at production caps would pronounce the engine healthy.
+When this was written the default per-sweep cap was **$300**, and at that ceiling [6.5]'s
+over-reservation cost the user *nothing measurable*: the cap bound long before the forecast error
+did, `false_refusal_cost` read **$0.00**, and a shadow-mode report run at production caps would
+have pronounced the engine healthy. The bug was **latent, not absent** — lifting the cap on the
+same household, the same day, the same realized future, priced it at **$867.13** immediately.
 
-The bug is **latent, not absent**. Lift the cap on the same household, the same day, the same
-realized future, and it prices out at **$867.13** immediately.
+Two things have changed and one has not.
 
-Which means it starts costing real money precisely when the ceiling is raised — and
-[`prd.md`](./prd.md) §8's *"Then: raise the ceiling as calibration proves out"* is exactly the
-plan to raise it. **The moment the company begins trusting its calibration is the moment this
-bug begins to bite.**
+The cap is now **$1,600**, raised to meet the weekly cap when the cadence went weekly ([9]).
+So it no longer binds first, and the forecast error is no longer hidden: `false_refusal_cost`
+across the population reads ~**$544K**, not zero ([6.1]). The masking that made this section
+urgent is not currently in effect.
 
-So the replay driver — the last unbuilt piece of the shadow-mode harness — **must sweep the cap
-across a range.** Run at production caps alone, it will measure a forecast error of zero and
-issue a false clean bill of health. There is a test that says so.
+**But `calibrate.py` sweeps the spend dial, not the cap.** The requirement this section states —
+*the harness must sweep the cap across a range* — remains **unmet**. It happens not to bite today
+because the shipped cap is generous, which is exactly the sort of accident that stops being true
+the moment someone tunes a policy default. And [`prd.md`](./prd.md) §8's *"raise the ceiling as
+calibration proves out"* still cuts the other way: a harness blind to the cap cannot tell you
+whether the ceiling is the thing bounding your measured error.
+
+The general rule survives its own example: **a metric measured at one policy setting is a
+statement about that setting, not about the engine.**
+
+### [8.4] The bug that justifies the whole harness
+
+`derive_cash_events` emitted **today's** events as future ones. But `Snapshot.accounts[].balance`
+is the balance at the *end of today* — everything that happened today is already inside it. So on
+a payday the forecast counted that paycheck **twice**: a $2,600 phantom inflow, a projected low
+thousands of dollars too high, and a sweep against money that was never there.
+
+It is the exact inverse of [2.3]. Money must arrive **late and small**; counting a paycheck that
+has already landed as though it were still coming makes it arrive *twice*.
+
+Across the 60-household population it caused **43 sweep-caused overdrafts** — [`prd.md`](./prd.md)
+§5.2's guardrail, the one that outranks the KPI, breached forty-three times.
+
+**The single-household demo reported zero.** Not because the bug was absent, but because whether
+it bites depends on the household's cash position on whichever paydays a given seed happens to
+produce. One seed simply never landed on one.
+
+That is the entire argument for grading a **population** rather than an anecdote, and it is worth
+stating plainly: **a guardrail measured on one household is not measured.** The harness's first
+act was to find the thing it was built to find, in the component nobody was looking at.
 
 ## [9] How often we are allowed to act
 
@@ -417,10 +548,30 @@ What buys it back is [`prd.md`](./prd.md) §2.3's guarantee: we reimburse sweep-
 fees, so every debit is a draw we pay for when it goes wrong. Daily takes ~142 draws/yr against
 weekly's ~45, so daily only pays for itself if the **per-sweep overdraft probability is under
 ~1%** — and at a realistic all-in cost per incident (fee, missed rent, a lost customer) the
-breakeven falls to ~**0.1%**. Nobody has measured it. That measurement *is* [8].
+breakeven falls to ~**0.1%**.
 
-**So the cadence is insurance, priced at ~$36/yr, against a tail we cannot yet size.** Full
-working — including two plugged-in numbers that pointed the right way for the wrong reason, an
+**That number is no longer entirely unmeasured — but it is not yet settled either.** [8] has run:
+across the population, **0 sweep-caused overdrafts in 590 sweeps**. Zero events does not mean zero
+risk; by the rule of three, 0 in 590 puts the **95% upper bound at ~0.51%** per sweep.
+
+Read that carefully, because it lands between the two breakevens and licenses nothing:
+
+- It **rules out** the world where the rate is above ~1% — the fee-only breakeven — so daily is
+  not obviously value-destroying.
+- It sits **5× above** the ~0.1% all-in breakeven, and cannot exclude it. So daily still cannot
+  be shown to pay for itself.
+- And it is 590 sweeps against a **synthetic** population whose spend the engine's own forecast
+  assumptions generated. It is a bound on the code, not on the world.
+
+**So the cadence remains insurance, priced at ~$36/yr, against a tail we can now bound but not
+yet size.** The measurement narrowed the question rather than answering it, which is the honest
+outcome and worth saying out loud instead of promoting a bound to a result.
+
+*(The ~$36/yr figure itself predates the payday fix ([8.4]), which moved 41 of the demo
+household's 90 projections. It has not been re-derived since, and should be before it is leaned
+on again.)*
+
+Full working — including two plugged-in numbers that pointed the right way for the wrong reason, an
 interest estimate 5× too high and an ACH-fee claim that was simply wrong —
 [`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md).
 

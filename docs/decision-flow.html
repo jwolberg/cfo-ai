@@ -3,46 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cfo-ai — how the engine decides</title>
+<title>resfi — the bet, the build, and what's still open</title>
 <style>
   /* Light only, deliberately. `color-scheme: light` also stops the browser (or an OS in dark
      mode) from force-inverting the page into a palette nobody checked.
 
-     Palette and shapes follow docs/design/look-and-feel.md — the resfi system: a blue/green
-     two-voice palette, near-white page with a faint blue cast, white cards with a large radius
-     and a soft diffuse shadow (no hard borders), pill-shaped chips.
+     Palette and shapes follow the resfi system: a blue/green two-voice palette, near-white page
+     with a faint blue cast, white cards with a large radius and a soft diffuse shadow (no hard
+     borders), pill-shaped chips.
 
-     Color roles, per that reference: BLUE is informational/neutral and marks the sweep — the
-     thing that moves money. DEEP GREEN marks refusals. Green rather than red on purpose: a
-     refusal is the engine working as designed, not an error, and the page argues exactly that. */
+     Color roles: BLUE is informational/neutral and marks the sweep — the thing that moves money.
+     DEEP GREEN marks refusals. Green rather than red on purpose: a refusal is the engine working
+     as designed, not an error, and this page argues exactly that. */
   :root {
     color-scheme: light;
 
-    /* Brand hexes lifted from docs/design/logos/resfi-brand.svg, not eyedropped:
-       blue #4AAFC9 · deep green #085041 · leaf #1D9E75 · gray #888780.
-       The brand blue and leaf green are ~2.5:1 on white, so text uses a darkened
-       companion of each and the pure brand hex is kept for bars, rules and fills. */
     --bg: #f5f9fa;
     --panel: #ffffff;
     --ink: #15282c;
     --muted: #5c7178;
-    --faint: #949c9a;      /* the tagline gray, lightened */
+    --faint: #949c9a;
     --rule: #e3edef;
-    --kicker: #598278;     /* the stage/file label above every card heading */
+    --kicker: #598278;
 
-    /* refusal — the wordmark's forest-green "fi" */
     --stop: #085041;
     --stop-bg: #eff5f3;
     --stop-rule: #c9dcd6;
 
-    /* sweep — the brand blue */
-    --go: #2c7f98;         /* readable companion of #4AAFC9 */
-    --go-bar: #4aafc9;     /* the brand hex itself */
+    --go: #2c7f98;
+    --go-bar: #4aafc9;
     --go-bg: #edf7fa;
     --go-rule: #c2e3ec;
 
-    /* aside — the leaf */
-    --note: #147257;       /* readable companion of #1D9E75 */
+    --note: #147257;
     --note-bar: #1d9e75;
     --note-bg: #f1f8f5;
     --note-rule: #cfe7dc;
@@ -67,8 +60,6 @@
   .wrap { max-width: 1020px; margin: 0 auto; }
 
   header { margin-bottom: 3.5rem; }
-  /* The brand lockup: docs/design/logos/resfi-brand.svg, kept as a file rather than inlined
-     so it stays byte-identical to the source asset. Its own artboard carries the padding. */
   .brand {
     display: block;
     width: 168px;
@@ -87,6 +78,15 @@
     max-width: 62ch;
     margin: 0 0 1.5rem;
   }
+  .lede-list {
+    font-size: 1.075rem;
+    color: var(--muted);
+    max-width: 62ch;
+    margin: 0 0 1.5rem;
+    padding-left: 1.35rem;
+  }
+  .lede-list li { margin-bottom: .4rem; }
+  .lede-list li:last-child { margin-bottom: 0; }
   .thesis {
     border-left: 4px solid var(--stop);
     padding: .3rem 0 .3rem 1rem;
@@ -95,7 +95,6 @@
   }
   .thesis strong { color: var(--stop); }
 
-  /* The reference's section marker: a short mid-blue bar under the heading, not a full rule. */
   h2 {
     font-size: 1.125rem;
     text-transform: uppercase;
@@ -114,6 +113,22 @@
     border-radius: 2px;
     background: var(--go-bar);
   }
+  .section-num {
+    display: inline-block;
+    font: 700 .8rem/1 var(--mono);
+    color: var(--faint);
+    letter-spacing: normal;
+    text-transform: none;
+    margin-right: .6rem;
+  }
+  .subhead {
+    font: 700 1rem/1 var(--mono);
+    letter-spacing: .03em;
+    text-transform: none;
+    color: var(--kicker);
+    margin: 3rem 0 1.1rem;
+  }
+  .subhead:first-of-type { margin-top: 1.75rem; }
 
   /* --- the flow ------------------------------------------------------- */
 
@@ -126,7 +141,6 @@
     gap: 0;
   }
 
-  /* left column: the spine */
   .node {
     background: var(--panel);
     border: 1px solid transparent;
@@ -164,9 +178,8 @@
   .node.go { border-color: var(--go-rule); background: var(--go-bg); }
   .node.go h3 { color: var(--go); }
 
-  /* the connector column */
   .link { position: relative; }
-  .link::before {  /* vertical spine */
+  .link::before {
     content: "";
     position: absolute;
     left: 50%;
@@ -177,7 +190,7 @@
   }
   .stage.first .link::before { top: 50%; }
   .stage.last  .link::before { bottom: 50%; }
-  .link::after {  /* horizontal branch out to the refusal */
+  .link::after {
     content: "";
     position: absolute;
     left: 50%;
@@ -192,7 +205,6 @@
   .gap .link::before { top: 0; bottom: 0; }
   .gap .link::after { display: none; }
 
-  /* right column: where the money doesn't move */
   .exit {
     background: var(--stop-bg);
     border: 1px solid var(--stop-rule);
@@ -208,7 +220,7 @@
     margin-bottom: .55rem;
   }
   .codes { display: flex; flex-wrap: wrap; gap: .35rem; }
-  .code {  /* pill, per the CTA in the reference */
+  .code {
     font: .72rem/1.5 var(--mono);
     background: var(--panel);
     border: 1px solid var(--stop-rule);
@@ -224,7 +236,7 @@
   }
   .exit.empty { background: none; border: none; }
 
-  /* --- the worst-case table ------------------------------------------- */
+  /* --- tables ----------------------------------------------------------- */
   .rules {
     overflow-x: auto;
     background: var(--panel);
@@ -284,6 +296,8 @@
     font-size: .9rem;
   }
   .callout strong { color: var(--note); }
+  .callout.go { background: var(--go-bg); border-color: var(--go-rule); border-left-color: var(--go-bar); }
+  .callout.go strong { color: var(--go); }
 
   footer {
     margin-top: 4rem;
@@ -309,48 +323,82 @@
 <header>
   <img class="brand" src="./design/logos/resfi-brand.svg"
        alt="resfi — responsible finance" width="259" height="88">
-  <h1>How the engine decides</h1>
+  <h1>The bet, the engineering approach, and distribution</h1>
   <p class="lede">
-    Move the cash a household genuinely doesn&rsquo;t need onto the debt that costs them the most
-    &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; The whole decision, top to bottom.
-    Deterministic: no clock, no network, no LLM, no randomness.
-    <b>The forecast runs every day; the money moves once a week</b> &mdash; the cadence limits what
-    the engine does, never what it knows.
+    Autonomously manage and optimize a household&rsquo;s cashflow &mdash; save on interest expense,
+    pay down debt faster, save more, and invest what&rsquo;s freed up, so there&rsquo;s more left
+    over for life&rsquo;s necessities and desires, not less to think about.
   </p>
+  <p class="lede" style="margin-bottom:.6rem">Here's what's outlined below:</p>
+  <ol class="lede-list">
+    <li>The thesis underneath that promise</li>
+    <li>A real decision engine that tests the hardest slice of it against a synthetic household</li>
+    <li>The open distribution questions nobody's closed yet &mdash; the two I&rsquo;d put at the
+        top of my own list</li>
+  </ol>
 </header>
 
-<h2>What this is</h2>
+<h2><span class="section-num">01</span>The bet</h2>
 
 <div class="loop">
   <div class="beat">
-    <span class="kicker">The product &middot; prd.md</span>
-    <h3>The user does nothing</h3>
-    <p>They connect checking, savings and cards once. From then on we move the cash they do not need
-       onto the debt that costs them the most, and tell them what happened. The promise is not faster
-       paydown &mdash; it is <strong>no longer choosing between paying down debt and being safe.</strong></p>
+    <span class="kicker">The product</span>
+    <h3>Autonomous cashflow optimization</h3>
+    <p>Connect once. The system continuously cuts interest expense, accelerates paydown, and grows
+       savings and investment &mdash; no dashboard, no decisions. This build proves the hardest slice:
+       moving money safely. Save-more and invest-more are the same engine, downstream.</p>
   </div>
   <div class="beat">
-    <span class="kicker">Why it acts &middot; prd.md</span>
-    <h3>Advice does not work</h3>
-    <p>A 40,000-person RCT moved what cardholders <em>chose</em> &mdash; and seven months on, not what
-       they <em>owed</em>. Information is not the missing input. So the money has to actually move;
-       everything below exists to make that safe.</p>
+    <span class="kicker">Why automation</span>
+    <h3>Advice doesn't move debt</h3>
+    <p>Financial education / more information does not push people to make additional interest
+       payments &mdash; the money has to move.</p>
   </div>
   <div class="beat">
-    <span class="kicker">Why it refuses &middot; strategy.md</span>
-    <h3>The worst day sets the price</h3>
-    <p>We sell a promise to loss-averse people, and <strong>one overdraft we caused destroys more value
-       than a hundred correct sweeps create</strong> &mdash; we reimburse the fee when we are wrong. That
-       is what buys the engine the right to say no this often.</p>
+    <span class="kicker">Why it refuses</span>
+    <h3>Bad outcomes cost more than good ones save</h3>
+    <p>One overdraft we cause costs more than a hundred correct sweeps save. We reimburse the fee
+       automatically when we're wrong.</p>
   </div>
 </div>
 
-<h2>What is actually running</h2>
+<div class="callout">
+  <strong>This is a service people want.</strong> Tally: ~$172M raised, $855M valuation, shut down 2024 &mdash; on CAC, not the model, the
+  technology, or the product.Users liked it: <b>4.5 stars</b> across 17k+ App Store
+  reviews, <b>$1B+</b> in debt paid off, <b>~$4,300</b> average lifetime savings per member. <br>
+  The estate split on the CAC line  &mdash; LendingClub took the consumer app, while Pagaya took the
+  decisioning platform to embed into partners it already serves at scale, presumably.
+</div>
+<div class="callout">
+  <strong>Conservative estimates and auditability are must-haves from day one.</strong> Every scaled competitor in this category has ended up in front of a
+  regulator. Dave: FTC + DOJ, 2024. Brigit: $18M FTC settlement.
+  Always stems from consent, fees, harm &mdash; a wrong &ldquo;it&rsquo;s safe to sweep&rdquo; is a textbook
+  UDAAP fact pattern. The guarantee plus an append-only decision log (full frozen input behind
+  every sweep) is what makes refusal auditable rather than asserted; Reg E, NACHA, KYC/AML, and
+  GLBA sign-off comes before any real rail connects.
+</div>
+
+<div class="callout">
+  <strong>A bank won't build this &mdash; sweeping deposits onto a card it issues itself destroys the interest income it earns.</strong> Bank ROE has
+  recovered somewhat over the past year, but the industry still trades near <b>1.0x book,
+  two-thirds below the average for other industries</b> &mdash; the market isn't underwriting the
+  durability of that recovery, and capital allocation inside banks is fracturing by product line
+  rather than lifting uniformly. Distribution has to run <strong>through</strong> the institutions that do have a balance sheet, not around
+  them: B2B2C, not direct-to-consumer &mdash; embedded in a deposit-only neobank, a credit union,
+  an employer benefits channel, or a specialty-finance network, not sold app-by-app to households.
+</div>
+
+
+
+<h2><span class="section-num">02</span>The engineering approach</h2>
+
+<h3 class="subhead">What I built</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  Everything that follows is real code in this repo, running against a <strong>synthetic
-  household</strong>. The engine is dependency-free Python; every dependency in the stack sits
-  <em>around</em> it, never inside the decision.
+  <strong>Status: engine built, and now graded against a synthetic <em>population</em> &mdash; it has
+  real numbers about its own error, and they have already refused one change and caught one bug.
+  Nothing moves real money yet</strong> &mdash; no Plaid link, no ACH rail. Dependency-free engine;
+  everything else in the stack sits around it, never inside the decision.
 </p>
 
 <div class="rules">
@@ -359,30 +407,9 @@
   <tbody>
     <tr>
       <td><b>Decision engine</b><br><code>engine/</code></td>
-      <td>Python 3.10+
-    </tr>
-    <tr>
-      <td><b>Client</b><br><code>mobile/</code></td>
-      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
-          dashboard and explain modal run in a browser.</td>
-    </tr>
-    <tr>
-      <td><b>API</b><br><code>backend/</code></td>
-      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
-          <b>No database and no write path.</b></td>
-    </tr>
-    <tr>
-      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
-      <td><b>Claude Opus 4.8</b>, reaching the decisions through two structured tools. The only path
-          that costs money, and the only one with a rate cap. Every figure in its reply is checked
-          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote a
-          real number against the wrong day.</td>
-    </tr>
-    
-    <tr>
-      <td><b>Hosting &amp; CI</b></td>
-      <td><b>Google Cloud Run</b>, one worker instance for the demo &mdash; but scalable. <b>GitHub Actions</b>: ruff, the Python suite, and the
-          mobile typecheck and tests.</td>
+      <td>Pure Python 3.10+, <b>zero dependencies</b>. Frozen dataclasses, money as
+          <code>Decimal</code> &mdash; <code>money()</code> refuses a float outright. No clock, no
+          network, no LLM.</td>
     </tr>
     <tr>
       <td><b>The household</b><br><code>sim/</code></td>
@@ -393,30 +420,67 @@
     <tr>
       <td><b>Build step</b><br><code>backend/precompute.py</code></td>
       <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
-          <code>backend/data/decisions.json</code>. 
-          <b>Every day gets a decision; about one in eight is a sweep</b> &mdash; the cadence cap
-          alone allows at most one in seven, and the other gates take the rest. The remaining days
-          are refusals, and the held ones still carry their forecast so they stay gradeable.</td>
+          <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a
+          test regenerates it and asserts the bytes match, so a stale demo is a red build.
+          <b>Every day gets a decision; about one in nine is a sweep</b> (10 of 90) &mdash; the
+          cadence cap alone allows at most one in seven, and the other gates take the rest.</td>
     </tr>
-    
+    <tr>
+      <td><b>The grader</b><br><code>engine/outcome.py</code><br><code>backend/replay.py</code></td>
+      <td>Settles the bet. Replays a household day by day and grades every day it can
+          <em>honestly</em> grade &mdash; a blocking refusal never ran a forecast, so it is not
+          graded rather than being scored a perfect zero. It applies the sweep to the household's
+          own path <b>itself</b>, so a caller cannot forget to and quietly report the tail we'd
+          have had if we had never acted.</td>
+    </tr>
+    <tr>
+      <td><b>The calibration</b><br><code>backend/calibrate.py</code></td>
+      <td>Grades a <b>population</b> &mdash; 3 spend shapes &times; 20 seeds, 4,320 graded days
+          &mdash; at every setting of the spend dial, and licenses at most one. <b>A guardrail
+          measured on one household is not measured.</b></td>
+    </tr>
+    <tr>
+      <td><b>API</b><br><code>backend/</code></td>
+      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
+          <b>No database and no write path.</b> Dollars cross the wire as strings, because JSON's
+          only number is a double.</td>
+    </tr>
+    <tr>
+      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
+      <td><b>Claude Sonnet 5</b>, reaching the decisions through two structured tools. The only path
+          that costs money, and the only one with a rate cap. Every figure in its reply is checked
+          against that turn's tool results &mdash; keyed by <b>(date, field)</b>, so it cannot quote
+          a real number against the wrong day.</td>
+    </tr>
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same
+          dashboard and explain modal run in a browser.</td>
+    </tr>
+    <tr>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Cloud Run, one worker on purpose</b> &mdash; the spend cap lives in process memory,
+          and a second worker is a second counter. <b>GitHub Actions</b>: ruff, the Python suite,
+          and the mobile typecheck and tests.</td>
+    </tr>
   </tbody>
 </table>
 </div>
 
-<h2>The decision</h2>
-
-
 <div class="callout">
-  <strong>The LLM is nowhere near the decision.</strong> Sweeps, interest and reason codes are computed
-  deterministically at build time; the LLM only narrates decisions that already exist, and a guard
-  &mdash; not a system prompt &mdash; is what enforces that. The dashboard and the base explanations
-  never call it at all, so an Anthropic outage cannot take the product&rsquo;s main surface down.
-  <strong>What this demo does not do is move money:</strong> there is no Plaid link and no ACH rail
-  &mdash; the arithmetic of refusing is the part worth proving first.
+  <strong>The LLM narrates, never decides.</strong> Sweeps, interest, and reason codes are computed
+  deterministically at build time; a guard &mdash; not a system prompt &mdash; enforces the boundary.
+  The dashboard and base explanations never call the model at all, so a provider outage can't take
+  the product down.
 </div>
 
+<h3 class="subhead">The Decision Engine</h3>
 
-<br>
+<p class="thesis" style="margin: 0 0 1.75rem">
+  A logic diagram for how transfer decisions are made. Note: Almost
+  everything branches <strong>off</strong> it, into a reason to do nothing.
+  <strong>Refusal is a feature of the product.</strong>
+</p>
 
 <div class="flow">
 
@@ -521,29 +585,21 @@
     <div class="node">
       <span class="kicker">Cadence &middot; decide.py</span>
       <h3>Is it simply too soon?</h3>
-      <p>Sweeps are spaced at least a <b>week</b> apart. Every sweep is an independent draw on the
-         tail the PRD says decides the company, so <i>how often</i> we act is a risk control, not a
-         UX detail.</p>
-      <p style="margin-top:.5rem">The engine used to sweep <b>daily</b>. Nobody ever argued for it
-         &mdash; it was inherited from the v0 advice product, whose output was a notification. When
-         it was finally measured, daily was worth about <b>$36/yr</b> of interest timing. That is
-         the whole case for it, and the cadence is <i>not</i> free.</p>
-      <p style="margin-top:.5rem">What buys it back is the guarantee: we reimburse sweep-caused
-         overdrafts, so every debit is a draw we pay for when it goes wrong. Daily takes ~142 draws
-         a year against weekly&rsquo;s ~45 &mdash; so daily only pays for itself if the per-sweep
-         overdraft rate is under <b>~1%</b>, and at a realistic cost per incident, under
-         <b>~0.1%</b>. <b>Nobody has measured it.</b> The cadence is insurance against a tail we
-         cannot yet size.</p>
-      <p style="margin-top:.5rem"><b>Note where this sits: after the forecast, not with the gates.</b>
-         A held day still carries its projected low, so it can still be graded. The cadence limits
-         what the engine <i>does</i> &mdash; never what it <i>knows</i>.</p>
+      <p>Sweeps are spaced a <b>week</b> apart &mdash; a risk control, not a UX choice; every sweep
+         is an independent draw on the tail. Daily was inherited from an earlier prototype, nobody
+         re-examined it. Measured: daily is worth <b>~$36/yr</b> in interest timing, and only pays
+         for itself if the per-sweep overdraft rate stays under <b>~1%</b> (<b>~0.1%</b> at a
+         realistic all-in cost). We now have a bound &mdash; <b>0 overdrafts in 590 sweeps</b>, so
+         <b>&le;0.51%</b> &mdash; which rules out the first and cannot yet exclude the second.
+         <b>The cadence stays weekly.</b> Sits after the forecast, not the gates: a held day still
+         carries its projected low and stays gradeable.</p>
     </div>
     <div class="link"></div>
     <div class="exit">
       <span class="verdict">NOT YET</span>
       <div class="codes"><span class="code">CADENCE_HOLD</span></div>
-      <p>We paid the card recently. The spare cash is safe where it is until the next one &mdash;
-         one good payment beats several small ones.</p>
+      <p>&ldquo;We paid an extra $1,600.00 for you 1 day ago. Our next check-in is in 6 days.&rdquo;
+         What they got, and when we&rsquo;re back &mdash; not a lecture about our cadence policy.</p>
     </div>
   </div>
 
@@ -583,7 +639,7 @@
 
 </div>
 
-<h2>The one rule inside the forecast</h2>
+<h3 class="subhead">The one rule inside the forecast</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
   <em>Money arrives late and small. It leaves early and large.</em> A forecast that is right on
@@ -609,16 +665,32 @@
 </div>
 
 <div class="callout">
-  <strong>That last row is measurably wrong,</strong> and we know it. Charging a p90 of <em>daily</em>
-  spend across all 30 days compounds a per-day quantile into a horizon quantile &mdash; variance grows
-  with &radic;t, not t. Against three years of a household&rsquo;s own spending, the engine reserves
-  <strong>more than they have ever spent in any 30-day stretch.</strong> It fails <em>safe</em>, which
-  is why it could have survived forever unnoticed: nobody overdrafts, nothing throws, we simply refuse
-  too often. Deliberately <strong>not yet fixed</strong> &mdash; the fix buys bigger sweeps, and that
-  must not ship before we can measure the breach rate.
+  <strong>That last row is measurably wrong.</strong> Compounding a per-day p90 across 30 days grows
+  variance with <em>t</em>, not &radic;t &mdash; the engine ends up reserving <strong>more than the
+  household has ever spent in any 30-day stretch.</strong> Fails safe, which is exactly why it would
+  go unnoticed.
 </div>
 
-<h2>What happens after the money moves</h2>
+<div class="callout">
+  <strong>So we fixed it, measured it, and the measurement refused the fix.</strong> The replacement
+  reserves against the household&rsquo;s <em>own</em> worst 30-day window instead &mdash;
+  non-parametric, no distributional assumption, unimprovable on paper. Across 60 households and
+  4,320 graded days it breaches <b>19.8%</b> of days against today&rsquo;s <b>2.3%</b>, even set to
+  their worst month <em>ever</em>. So the dial ships at <code>None</code> and the engine still uses
+  the model we know is wrong.
+  <br><br>
+  <strong>The model isn&rsquo;t wrong &mdash; it&rsquo;s starved.</strong> It reads &ldquo;their worst
+  month&rdquo; off the 60&ndash;150 days of history the engine actually has, which is only
+  <b>2&ndash;5 independent months</b>. The worst of 3 months badly understates the worst of 36 &mdash;
+  it estimates the true worst month at <b>77% / 58% / 86%</b> for the typical / fat-tailed / steady
+  household. <strong>The bias is worst exactly where it&rsquo;s most dangerous</strong>: a fat tail
+  means the bad month is <em>rare</em>, so a short history almost never contains one. Given three
+  years instead of sixty days, the same model&rsquo;s breach rate falls to <b>3.7%</b>, and to
+  <b>zero</b> on the household it was most dangerous for. The idea was right; the data isn&rsquo;t
+  there.
+</div>
+
+<h3 class="subhead">What happens after the money moves</h3>
 
 <div class="loop">
   <div class="beat">
@@ -646,17 +718,108 @@
 </div>
 
 <div class="callout">
-  <strong>This loop is the company.</strong> Moving money is a commodity; forecasting is hard but
-  tractable. What compounds is knowing, across millions of observed outcomes, how often a forecast at
-  a stated confidence was <em>actually right</em> &mdash; because that is what lets us move
-  <em>more</em> money at the <em>same</em> tail risk. It accrues only to a system that acts and then
-  looks. An advice product never finds out whether it was right, because nothing happened.
+  <strong>This loop is the company.</strong> Moving money is a commodity. What compounds is knowing,
+  across millions of outcomes, how often a stated confidence was <em>actually right</em> &mdash;
+  that's what lets <em>more</em> money move at the <em>same</em> tail risk. Only a system that acts
+  and then checks accrues it; advice never finds out.
+</div>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  The loop is closed and it has run. <code>replay.py</code> grades one household;
+  <code>calibrate.py</code> grades sixty. The first numbers the engine has ever had about itself,
+  across <b>4,320 graded days</b>:
+</p>
+
+<div class="rules">
+<table>
+  <thead><tr><th>What we measured</th><th>What it says</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Breach rate</b><br>days the real low came in <em>below</em> our projection</td>
+      <td><b>2.3%</b> &mdash; the days we were optimistic. The only number that may ever be traded
+          for a bigger sweep.</td>
+    </tr>
+    <tr>
+      <td><b>Sweep-caused overdrafts</b><br>the guardrail that outranks the KPI</td>
+      <td><b>0</b>, in <b>590</b> sweeps. Zero events is not zero risk: that bounds the per-sweep
+          rate at <b>&le;0.51%</b> (95%), which rules out the &gt;1% world and cannot yet exclude
+          the 0.1% one.</td>
+    </tr>
+    <tr>
+      <td><b>False-refusal cost</b><br>our conservatism, priced</td>
+      <td>~<b>$544K</b> &mdash; money we left idle that was genuinely safe to move. The prize for
+          fixing the spend model, and the reason it is worth fixing properly.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <strong>The first thing the harness did was catch us overdrafting people.</strong>
+  <code>derive_cash_events</code> emitted <em>today&rsquo;s</em> events as future ones &mdash; but the
+  balance is already end-of-day, so on a payday the forecast counted the paycheck <strong>twice</strong>.
+  A $2,600 phantom inflow, a projected low thousands too high, and a sweep against money that was
+  never there. The exact inverse of the one rule above: counting a paycheck that already landed
+  makes it arrive <em>twice</em>.
+  <br><br>
+  Across the population: <b>43 sweep-caused overdrafts</b>. <strong>The single-household demo
+  reported zero</strong> &mdash; whether it bites depends on the cash position on whichever paydays
+  a seed happens to produce, and one seed never landed on one. <strong>A guardrail measured on one
+  household is not measured.</strong>
+</div>
+
+<h2><span class="section-num">03</span>Open distribution questions</h2>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  This build doesn&rsquo;t resolve either one. Flagging them beats the alternative, which is someone
+  else finding them first.
+</p>
+
+<div class="callout">
+  <strong>Distribution.</strong> D2C is the channel that already failed once, expensively &mdash;
+  Tally died on acquisition cost, not cost-to-serve, and cheaper tooling doesn&rsquo;t move that
+  number. The alternative is an embedded channel, or a distribution insight nobody's found yet.
+</div>
+
+<p class="lede" style="margin: 1.25rem 0">
+  One constraint rules out the obvious embed: a bank that also issues the card being paid down loses
+  revenue on every sweep. Candidates below don't carry that conflict:
+</p>
+
+<div class="rules">
+<table>
+  <thead><tr><th>Candidate channel</th><th>Why it doesn't fight itself</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Deposit-only challenger bank</b></td>
+      <td>No revolving-card book &mdash; a sweep onto someone else's card is free goodwill, not
+          lost revenue.</td>
+    </tr>
+    <tr>
+      <td><b>Credit union</b></td>
+      <td>Member-health incentives already point away from card yield.</td>
+    </tr>
+    <tr>
+      <td><b>Employer benefits channel</b></td>
+      <td>Zero revenue conflict. Slowest option here, possibly the right one.</td>
+    </tr>
+    <tr>
+      <td><b>Specialty-finance / credit network, directly</b></td>
+      <td>Skip the consumer product &mdash; sell the calibration, not a household relationship.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <strong>Monetization.</strong> &ldquo;If the math doesn&rsquo;t improve net worth, we don&rsquo;t
+  ship it&rdquo; rules out late fees, hidden interest, and subscriptions &mdash; which fail as
+  businesses anyway. It doesn't specify a mechanic. A share of interest genuinely avoided fits the
+  constraint and the realized KPI, but hasn't closed on a spreadsheet yet.
 </div>
 
 <footer>
-  Drawn from the engine itself. The detail lives in
-  <a href="./decision-engine.md">decision-engine.md</a>, the argument for the product in
-  <a href="./prd.md">prd.md</a> and <a href="./strategy.md">strategy.md</a>. The tests are the spec.
+  Drawn from the engine itself, and from my own reasoning about the market it's entering.
 </footer>
 
 </div>
