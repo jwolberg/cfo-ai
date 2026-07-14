@@ -795,6 +795,7 @@ def assemble_snapshot(
     checking: Decimal,
     swept_this_week: Decimal = ZERO,
     days_since_last_sweep: int | None = None,
+    last_sweep_amount: Decimal | None = None,
     spend_quantile: float | None = SPEND_QUANTILE,
 ) -> Snapshot:
     """The `Snapshot` the engine sees on `today`, given the walk's state.
@@ -845,6 +846,7 @@ def assemble_snapshot(
         sweeps_in_flight=ZERO,
         swept_this_week=swept_this_week,
         days_since_last_sweep=days_since_last_sweep,
+        last_sweep_amount=last_sweep_amount,
     )
 
 
@@ -912,6 +914,10 @@ def build(
         # holds it did nothing to earn.
         last_sweep = max(sweeps, default=None)
         days_since_last_sweep = (today - last_sweep).days if last_sweep else None
+        # What that sweep was worth, for CADENCE_HOLD's copy. Read from the walk's own record
+        # rather than from `swept_this_week`, which is a rolling total and only coincides with
+        # the last sweep while the cadence stays at 7 days.
+        last_sweep_amount = sweeps[last_sweep] if last_sweep else None
 
         # The card as the engine sees it: the statement already closed, and the charges since
         # that will become next month's. `derive_card` reads both, because a reserve keyed only
@@ -963,6 +969,7 @@ def build(
             sweeps_in_flight=ZERO,
             swept_this_week=swept_this_week,
             days_since_last_sweep=days_since_last_sweep,
+            last_sweep_amount=last_sweep_amount,
         )
 
         decision: Decision = decide(snapshot)

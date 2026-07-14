@@ -119,17 +119,22 @@ def render(reason: Reason) -> str:
 
         case ReasonCode.NO_SURPLUS:
             return (
-                f"Your balance is heading for a low of {usd(p['low'])} on {p['low_day']}. "
-                f"After your {usd(p['buffer'])} buffer and {usd(p['reserved'])} of minimum "
-                "payments, there's nothing spare — so your cash stays where it is."
+                f"Your cash balance will be {usd(p['low'])} on {p['low_day']}. That's after "
+                f"your {usd(p['buffer'])} buffer and {usd(p['reserved'])} for card payments, "
+                "so there's nothing spare to move."
             )
 
         case ReasonCode.CADENCE_HOLD:
-            return (
-                f"We paid your card {days(p['days_since'])} ago, and we space payments at least "
-                f"{days(p['min_days'])} apart. Your spare cash is safe where it is until then — "
-                "we'd rather make one good payment than several small ones."
+            # The amount is optional and the sentence is built in two pieces because of it.
+            # `last_sweep_amount` is `None` when we don't know what the last sweep was worth,
+            # and the copy then says only *when* we paid — never a made-up figure. Same rule
+            # as NO_INTEREST_TO_AVOID: no claim beats a claim we can't stand behind.
+            paid = (
+                f"We paid an extra {usd(p['amount'])} for you {days(p['days_since'])} ago."
+                if p.get("amount") is not None
+                else f"We paid your card {days(p['days_since'])} ago."
             )
+            return f"{paid} Our next check-in is in {days(p['days_until'])}."
 
         case ReasonCode.BELOW_MIN_SWEEP:
             return (
@@ -139,9 +144,9 @@ def render(reason: Reason) -> str:
 
         case ReasonCode.PROJECTION:
             return (
-                f"Your balance is heading for a low of {usd(p['low'])} on {p['low_day']}, "
-                f"after your {usd(p['buffer'])} buffer and {usd(p['reserved'])} set aside for "
-                "your cards."
+                f"Your cash balance will be {usd(p['low'])} on {p['low_day']}. That's the "
+                f"lowest it gets, after your {usd(p['buffer'])} buffer and {usd(p['reserved'])} "
+                "for card payments."
             )
 
         case ReasonCode.STATEMENT_RESERVED:
@@ -176,10 +181,9 @@ def render(reason: Reason) -> str:
 
         case ReasonCode.IDLE_CASH_ELSEWHERE:
             return (
-                f"Separately: you're holding {usd(p['amount'])} in savings. It isn't cash we "
-                "can move from here, and some of it should stay as your buffer — but a buffer "
-                "that size belongs somewhere it earns interest, not in an account paying "
-                "nothing while your card charges you."
+                f"You also have {usd(p['amount'])} in savings. We can't move money from there, "
+                "and some of it should stay as your buffer. But it's earning you nothing while "
+                "your card charges you interest — it belongs somewhere that pays."
             )
 
     raise ValueError(f"no copy for {reason.code}")  # pragma: no cover

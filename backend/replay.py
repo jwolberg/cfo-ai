@@ -219,6 +219,7 @@ def replay(
                 ZERO,
             ),
             days_since_last_sweep=(today - last_sweep).days if last_sweep else None,
+            last_sweep_amount=sweeps[last_sweep] if last_sweep else None,
             spend_quantile=spend_quantile,
         )
 
