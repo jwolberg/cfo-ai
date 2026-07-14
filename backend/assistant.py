@@ -60,7 +60,17 @@ from engine.models import Action, ReasonCode
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-opus-4-8"
+# Sonnet, not Opus. This job is narration over a tiny structured dataset with two tools — the
+# model never decides anything (engine/decide.py does, deterministically, before this file is
+# ever reached) and never has to be right about money (the guard below re-checks every figure
+# against the tool results). Opus was overkill for it, and was itself a drift from the plan,
+# which specified Sonnet-class from the start.
+#
+# Changing this model is not a config tweak. Every bug ever found in verify() was a bug about
+# how a *particular* model phrases things — a projection date read as a claim, "no money moved"
+# parsed as a payment, "$12092.26" truncated to "$120". The fake client in the tests cannot
+# surface those, so a model swap must be re-verified live. See docs/implementation-notes.md.
+MODEL = "claude-sonnet-5"
 
 # Non-streaming is fine at this scale: one household, a handful of decisions per turn, and a
 # reply of a few sentences. Thinking stays adaptive so the model can reason about which day
