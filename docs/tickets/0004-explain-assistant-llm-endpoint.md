@@ -2,7 +2,7 @@
 id: "0004"
 title: Explain-assistant LLM endpoint
 type: security
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-llm-agent

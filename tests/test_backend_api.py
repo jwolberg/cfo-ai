@@ -20,8 +20,10 @@ KEY = "test-key-not-a-real-one"
 
 
 @pytest.fixture(autouse=True)
-def api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Both secrets the service refuses to start without. Neither is ever used to call out."""
     monkeypatch.setenv(API_KEY_ENV, KEY)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-not-a-real-key")
 
 
 @pytest.fixture
@@ -74,6 +76,17 @@ class TestStartup:
         from backend.main import app
 
         with pytest.raises(RuntimeError, match=API_KEY_ENV), TestClient(app):
+            pass  # pragma: no cover
+
+    def test_a_missing_anthropic_key_stops_the_service_coming_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Fail at deploy, not at the moment a user opens the modal and asks a question."""
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        from backend.main import app
+
+        with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"), TestClient(app):
             pass  # pragma: no cover
 
 
@@ -257,3 +270,61 @@ class TestExplain:
 
     def test_narration_still_needs_a_key(self, client: TestClient) -> None:
         assert client.get("/decisions/2026-03-02/explain").status_code == 401
+
+
+class TestAssistantEndpoint:
+    """The endpoint wiring only. The guard's own behaviour is `tests/test_assistant.py`."""
+
+    def fake_model(self, client: TestClient, *responses):
+        from tests.test_assistant import FakeClient
+
+        fake = FakeClient(*responses)
+        client.app.state.assistant = fake
+        return fake
+
+    def test_a_question_gets_a_narrated_answer(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        from tests.test_assistant import says
+
+        self.fake_model(client, says("Which day did you mean?"))
+
+        response = client.post(
+            "/assistant/message",
+            headers=auth,
+            json={"message": "why didn't you pay last Tuesday?", "history": []},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"reply": "Which day did you mean?", "outcome": "answered"}
+
+    def test_the_outcome_distinguishes_a_hallucination_from_an_outage(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """Two failures that read alike to the user and are nothing alike to us. The client
+        gets both the copy and the reason, so a future logging pass can tell them apart."""
+        from tests.test_assistant import says
+
+        self.fake_model(client, says("On 2026-03-02 we paid $9,999.00."))
+
+        body = client.post(
+            "/assistant/message",
+            headers=auth,
+            json={"message": "how much?", "history": []},
+        ).json()
+
+        assert body["outcome"] == "no_record"  # never fetched it — nothing behind the claim
+        assert "9,999" not in body["reply"]
+
+    def test_an_empty_message_is_rejected(self, client: TestClient, auth: dict[str, str]) -> None:
+        response = client.post(
+            "/assistant/message", headers=auth, json={"message": "", "history": []}
+        )
+
+        assert response.status_code == 422
+
+    def test_the_assistant_needs_a_key(self, client: TestClient) -> None:
+        """The one endpoint that costs money per call is not the one to leave open."""
+        response = client.post("/assistant/message", json={"message": "hi", "history": []})
+
+        assert response.status_code == 401

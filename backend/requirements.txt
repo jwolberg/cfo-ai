@@ -4,3 +4,8 @@
 # that way. Everything here is the web layer around it.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
+
+# The explain assistant. Reached only when the user asks a follow-up question — the
+# dashboard and the base narration never touch it, so an Anthropic outage cannot take
+# the product's main surface down with it.
+anthropic>=0.40,<1.0

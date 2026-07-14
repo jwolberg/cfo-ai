@@ -32,8 +32,10 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from backend import artifact as art
+from backend import assistant
 from backend.auth import expected_key, require_api_key
 from engine.explain import explain, render
 
@@ -59,6 +61,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load and validate everything the service needs, or refuse to start."""
     expected_key()  # before the artifact: a public endpoint is the worse failure
     app.state.artifact = art.load()
+    # Built once, at startup, so a deploy without the Anthropic secret fails here rather
+    # than the first time a user opens the modal and asks a question.
+    app.state.assistant = assistant.build_client()
+    app.state.rate_cap = assistant.RateCap()
     yield
 
 
@@ -217,3 +223,41 @@ async def explain_decision(day: str, artifact: ArtifactDep) -> Any:
         **decision_json(record),
         "narration": list(explain(record.decision)),
     }
+
+
+class Turn(BaseModel):
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str
+
+
+class AssistantRequest(BaseModel):
+    """The conversation, resent by the client each turn.
+
+    There is no server-side session store — the modal holds the conversation and sends it
+    back. That is what keeps "the artifact is the only state this service has" true, and it
+    is also why the assistant must re-fetch a decision every turn rather than trusting what
+    it said earlier: the history is the client's word, not the engine's.
+    """
+
+    message: str = Field(min_length=1, max_length=2000)
+    history: list[Turn] = Field(default_factory=list, max_length=40)
+
+
+@app.post("/assistant/message", dependencies=[Depends(require_api_key)])
+async def assistant_message(body: AssistantRequest, request: Request) -> dict[str, Any]:
+    """A follow-up question about a decision. The only path in the service that costs money.
+
+    The reply is whatever survives the verification guard (`backend/assistant.py`) — a
+    narrated answer, an honest "no record", or an availability apology. The `outcome` field
+    says which, so the client can render a caught hallucination and a timeout differently
+    even when their copy reads alike.
+    """
+    reply = assistant.answer(
+        artifact=artifact_of(request),
+        history=[turn.model_dump() for turn in body.history],
+        message=body.message,
+        client=request.app.state.assistant,
+        rate_cap=request.app.state.rate_cap,
+    )
+
+    return {"reply": reply.text, "outcome": reply.outcome.value}

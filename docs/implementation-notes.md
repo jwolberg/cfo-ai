@@ -281,3 +281,65 @@ ledger.
   sweeps — but summing 35 of them is a slightly different number from "total interest avoided
   by the whole window," and the two are close but not identical. Fine for the demo; worth
   naming before it appears on a slide.
+
+---
+
+## 2026-07-13 — Ticket #0004, `backend/assistant.py`
+
+### The guard is the feature; the system prompt is not
+
+R6 says the assistant never states a financial claim it can't trace to a `Decision`. A system
+prompt asking a model not to invent numbers is a *request*, and a request is not a guarantee.
+So the enforcement lives in `verify()`: every dollar figure, outcome, and reason code in the
+model's final text is matched against the tool results **from that turn** before the user sees
+a word of it. Anything unverifiable replaces the whole response with "no record."
+
+Most of `tests/test_assistant.py` is an attempt to get a false claim past it, not a check that
+the happy path works. The rule that earns its keep is the per-`(date, field)` binding: the
+model fetches two *real* decisions and quotes one day's sweep against the other day's date.
+Every number in that sentence is true. A presence-only check ("is $400 anywhere in the tool
+results?") waves it through and the user is told something false assembled from entirely true
+parts. Full contract and its stated limits:
+`docs/decisions/0003-structured-tool-calling-over-embeddings.md`.
+
+### What the guard cannot do — worth saying out loud
+
+Extraction is regex over the final text, not comprehension. A fabrication phrased with no
+parseable figure, no outcome word, and no known reason phrase is not caught. The guard raises
+the cost of a **specific, quotable** false claim — the kind that would actually mislead
+someone about their money — rather than proving the prose true in general. A figure in a
+sentence that names no date can only be checked against the union of the turn's fetched
+decisions, since there is nothing to bind it to. Both limits are accepted deliberately: a
+guard that verified every sentence semantically would need a second model, and would have the
+same problem one level up.
+
+### Deviation: the service now refuses to start without `ANTHROPIC_API_KEY`
+
+Not in the plan, and it changes U2's startup contract. The alternative is a service that comes
+up healthy, passes Cloud Run's probe, and then fails the first time a user opens the modal and
+asks a question — which is the worst possible moment to discover a missing secret. Consistent
+with the artifact and API-key checks already there: fail at deploy, not in front of an
+interviewer. Both backend test fixtures now set it; nothing ever calls out with it.
+
+### The rate cap and `--max-instances=1` are a pair
+
+The in-process rate cap on `POST /assistant/message` is only a real bound on Anthropic spend
+because exactly one instance ever runs. With two instances, each holds its own counter and the
+ceiling silently doubles. `MAX_TURNS_PER_MINUTE` and the deploy flag are one decision in two
+places — noted here and in the code so ticket 0009 doesn't drop the flag.
+
+### Blocked: no live LLM verification
+
+There is no `ANTHROPIC_API_KEY` and no `ant` profile in this environment, so **not one call to
+Anthropic has been made**. Everything is tested against a fake client that replays scripted
+responses. That is the right way to test the guard — it lets us put words in the model's mouth
+that a real model would rarely volunteer — but it means two things are genuinely unverified:
+
+1. **The request shape.** Whether `claude-opus-4-8` accepts this exact combination of
+   `tools` + `thinking: {"type": "adaptive"}` + `output_config: {"effort": "medium"}` has not
+   been observed, only written from the current API reference.
+2. **Whether a real model actually triggers the guard.** The adversarial cases are synthetic.
+   How often a real model would produce one is unknown and unknowable from here.
+
+Needs one live smoke test with a real key before the demo. Everything else in this ticket is
+verified.
