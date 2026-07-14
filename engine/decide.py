@@ -138,7 +138,15 @@ def _cadence_hold(s: Snapshot) -> Reason | None:
 
     return Reason(
         ReasonCode.CADENCE_HOLD,
-        {"days_since": s.days_since_last_sweep, "min_days": limit},
+        {
+            "days_since": s.days_since_last_sweep,
+            "min_days": limit,
+            # For the copy, never for the decision — and `None` when we don't know it, so the
+            # sentence can leave the figure out rather than invent one.
+            "amount": s.last_sweep_amount,
+            # The user does not care what the cadence *is*, they care when we come back.
+            "days_until": limit - s.days_since_last_sweep,
+        },
     )
 
 

@@ -426,18 +426,39 @@ _NEGATED_SWEEP = re.compile(
 # reason for today's decision, not a claim about today, and reading it as one is a false
 # positive that costs an honest answer.
 #
-# CADENCE_HOLD's copy is built on exactly this shape: "We paid your card 1 day ago, and we
-# space payments at least 7 days apart." The word is "paid" and the day is a REFUSE, so the
-# guard called every one of them a fabricated payment — 72 of the 90 days in the demo window,
-# i.e. the assistant could not answer about the most common decision the engine makes. The
-# engine's copy was right; the guard could not read it.
+# CADENCE_HOLD's copy is built on exactly this shape: "We paid an extra $500.00 for you 6 days
+# ago. Our next check-in is in 1 day." The word is "paid" and the day is a REFUSE, so the guard
+# called every one of them a fabricated payment — 72 of the 90 days in the demo window, i.e. the
+# assistant could not answer about the most common decision the engine makes. The engine's copy
+# was right; the guard could not read it.
 #
-# Deliberately narrow. It licenses no figure and no outcome: the amount rules below still bind
+# **Two things here are load-bearing, and both were broken by putting a dollar amount in the
+# sentence.**
+#
+# The gap is 60 characters. It was 30, which fit the old copy ("We paid your card 6 days ago")
+# and does not fit the new one — the amount pushes "paid" and "ago" 34 characters apart.
+#
+# And the sentence guard is a lookahead, not `[^.!?]`. That character class was the real trap:
+# **a dollar amount contains a period.** `$1,600.00` has a decimal point, so `[^.!?]` hard-stops
+# inside the figure and the match dies before it ever reaches "ago" — no widening of the bound
+# can rescue it. The guard rejected the engine's own copy on **59 of 90 days**, the same outage
+# as before, arriving through a character class rather than a phrase list.
+#
+# So a period ends the clause only when it *ends a sentence* — when whitespace follows it. A
+# decimal point is followed by a digit, and is allowed through. That keeps the original promise
+# ("the `ago` must follow the verb within one sentence, so a sweep claim about today cannot
+# borrow a neighbour's `ago`") while letting the verb and the `ago` see each other across a
+# figure.
+#
+# If you edit CADENCE_HOLD's wording, re-measure both. `tests/test_assistant.py` pins this
+# against the engine's *real* rendered sentence rather than a hand-written imitation — which is
+# the only version of the test that would have caught either of these.
+#
+# Still deliberately narrow. It licenses no figure and no outcome: the amount rules below bind
 # every dollar to the decision it was fetched for, and a segment matching this simply asserts
-# nothing about today's action, so no action check runs against it. The `ago` must follow the
-# verb within one clause, so a sweep claim about today cannot borrow a neighbour's "ago".
+# nothing about today's action, so no action check runs against it.
 _PRIOR_PAYMENT = re.compile(
-    r"\b(?:swept|paid|moved|sent|put)\b[^.!?]{0,30}?\bago\b",
+    r"\b(?:swept|paid|moved|sent|put)\b(?:(?!\.\s)[^!?]){0,60}?\bago\b",
     re.IGNORECASE,
 )
 
@@ -458,7 +479,10 @@ def _asserts_sweep(segment: str) -> bool:
 # A phrase the model uses must belong to a reason that decision actually carries.
 _REASON_PHRASES: dict[ReasonCode, tuple[str, ...]] = {
     ReasonCode.WEEKLY_CAP: ("weekly limit", "weekly cap"),
-    ReasonCode.CADENCE_HOLD: ("space payments", "days apart"),
+    # Both phrases moved when the copy was rewritten in plain language. The old pair
+    # ("space payments", "days apart") describe a rule the sentence no longer states — it now
+    # tells the user what they got and when we come back, not what our cadence policy is.
+    ReasonCode.CADENCE_HOLD: ("next check-in", "paid an extra"),
     ReasonCode.PER_SWEEP_CAP: ("single payment limit", "per-payment limit"),
     ReasonCode.CLEARS_THE_CARD: ("clears the card", "cleared the card"),
     ReasonCode.NO_SURPLUS: ("nothing spare", "no surplus"),
