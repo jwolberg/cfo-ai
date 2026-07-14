@@ -397,9 +397,18 @@ honour it anyway: `SWEEP_IN_FLIGHT` blocks while ACH settles, so each sweep alre
 the next several days. The **weekly cap** was doing the pacing, which is not what a cap is for.
 
 Priced across the demo household with the throughput ceiling held constant, daily sweeping is
-worth about **$36/yr** in interest timing over weekly — and costs about **$48/yr more in ACH
-fees**. The advantage and the transaction cost cancel; the extra tail exposure is bought for
-nothing. Full measurement, and the 5×-too-high estimate that preceded it:
+worth about **$36/yr** in interest timing over weekly. That is its whole economic case, and it is
+a real one — the cadence is **not** free.
+
+What buys it back is [`prd.md`](./prd.md) §2.3's guarantee: we reimburse sweep-caused overdraft
+fees, so every debit is a draw we pay for when it goes wrong. Daily takes ~142 draws/yr against
+weekly's ~45, so daily only pays for itself if the **per-sweep overdraft probability is under
+~1%** — and at a realistic all-in cost per incident (fee, missed rent, a lost customer) the
+breakeven falls to ~**0.1%**. Nobody has measured it. That measurement *is* [8].
+
+**So the cadence is insurance, priced at ~$36/yr, against a tail we cannot yet size.** Full
+working — including two plugged-in numbers that pointed the right way for the wrong reason, an
+interest estimate 5× too high and an ACH-fee claim that was simply wrong —
 [`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md).
 
 ### [9.1] The hold runs *after* the forecast, and that placement is the design

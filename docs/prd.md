@@ -137,13 +137,26 @@ not honour it in any case: it already refuses while a sweep is unsettled, so ACH
 suppressing most of those days anyway.
 
 Measured across the demo household with throughput held constant, daily sweeping bought about
-**$36/yr** of interest timing over weekly — and cost about **$48/yr** more in ACH fees. The gain
-and the transaction cost cancel, and the extra tail exposure was being bought for nothing.
+**$36/yr** of interest timing over weekly. That is the entire economic case for it.
+
+**Weigh it against the guarantee in [2.3], because that is what a draw actually costs us.** Daily
+takes ~142 debits a year; weekly takes ~45. Against 97 extra draws at a $35 reimbursement, daily
+pays for itself only if the **per-sweep overdraft probability is under ~1%** — a number nobody has
+measured, and precisely what [8]'s shadow mode exists to produce. And [2] says not to make this bet
+on expected value at all: the true cost of an incident is not $35, it is "a $35 fee, a missed rent
+payment, and a permanently lost customer who tells everyone." At a few hundred dollars all-in, the
+breakeven falls to ~0.1%.
+
+So the trade is **~$36/yr of the household's money to take a third as many draws on the tail, until
+calibration tells us what the tail is.** Cheap insurance, and the same posture we take everywhere
+else — not a free lunch. (An earlier draft of this section claimed daily also cost ~$48/yr in ACH
+fees and that the two "cancelled." That figure was assumed, not sourced, and is wrong under most
+processor pricing — see the learnings note. It is corrected rather than deleted because it was the
+second plugged-in number in this investigation to point the right way for the wrong reason.)
 
 **Sweeps are now spaced at least a week apart**, as a user policy value rather than a hardcoded
 constant. The forecast still runs every day and a held day is still graded: the cadence limits what
-we *do*, never what we *know*. Full measurement — including a first estimate that was 5× too high,
-in the direction that flattered the status quo — in
+we *do*, never what we *know*. Full measurement in
 [`learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`](./learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md);
 the engine's contract is [`decision-engine.md`](./decision-engine.md) §9.
 

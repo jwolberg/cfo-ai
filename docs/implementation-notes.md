@@ -504,12 +504,28 @@ full length of its delay, but the same dollars get swept next period, so only th
 costs anything. The un-swept cash is **deferred, not lost**: it sits in checking. The real cost of
 weekly spacing is **~$9 per 90 days (~$36/yr)**.
 
-And daily costs **~$48/yr more in ACH fees** (11.7 vs 3.7 debits/month at ~$0.50). The interest
-advantage and the transaction cost cancel. Daily was buying 3× the tail exposure for nothing.
-
 The estimate was wrong in the direction that flattered the status quo. `[6.1]`/`[8.3]`'s
 "measure, don't assert" rule exists for exactly this, and it caught its author. Full table:
 `docs/learnings/2026-07-14-the-cadence-was-inherited-not-chosen.md`.
+
+**And then I did it again.** The first version of this note (and of the PRD/engine-doc edits, and
+of the commit message) claimed daily also cost **~$48/yr more in ACH fees** at ~$0.50/debit, and
+that the interest gain and the fee "cancelled." **That $0.50 was assumed, not sourced, and it is
+wrong under most processor pricing.** Dwolla's pay-as-you-go is 0.5% of the *amount*, capped at $5
+— you pay per dollar moved, not per transfer, so batching saves almost nothing (only the cap
+helps). Their monthly plans make the marginal transfer free outright. Only flat per-transaction
+pricing rewards batching, and I never checked which we'd be on.
+
+Corrected everywhere, and left visible rather than deleted: **two plugged-in numbers in one
+investigation, both pointing the right way for the wrong reason.** The lesson is not "measure the
+interest" — I did that. It is that a number I invent to *support* a conclusion I already reached
+gets no scrutiny, and both of these sailed through into four documents.
+
+What actually holds up: daily has a small *positive* economic edge (~$36/yr). It is bought back by
+`prd.md` §2.3's guarantee — ~142 draws/yr vs weekly's ~45, so daily only pays if the per-sweep
+overdraft rate is under ~1% (or ~0.1% at a realistic all-in cost per incident), which **nobody has
+measured**. The honest framing is *insurance*, not a free lunch: ~$36/yr to take a third as many
+draws on a tail we cannot yet size.
 
 ### Decisions taken
 

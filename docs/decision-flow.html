@@ -374,8 +374,9 @@
       <td>Walks the household day by day, calls <code>decide()</code> once per day, and writes
           <code>backend/data/decisions.json</code>. Committed, not built at deploy &mdash; and a test
           regenerates it and asserts the bytes match, so a stale demo is a red build.
-          <b>Every day gets a decision; roughly one in seven is a sweep</b> &mdash; the rest are
-          refusals, and the held days still carry their forecast so they stay gradeable.</td>
+          <b>Every day gets a decision; about one in eight is a sweep</b> &mdash; the cadence cap
+          alone allows at most one in seven, and the other gates take the rest. The remaining days
+          are refusals, and the held ones still carry their forecast so they stay gradeable.</td>
     </tr>
     <tr>
       <td><b>API</b><br><code>backend/</code></td>
@@ -531,8 +532,14 @@
          UX detail.</p>
       <p style="margin-top:.5rem">The engine used to sweep <b>daily</b>. Nobody ever argued for it
          &mdash; it was inherited from the v0 advice product, whose output was a notification. When
-         it was finally measured it bought about <b>$36/yr</b> of interest timing and cost about
-         <b>$48/yr</b> in extra ACH fees.</p>
+         it was finally measured, daily was worth about <b>$36/yr</b> of interest timing. That is
+         the whole case for it, and the cadence is <i>not</i> free.</p>
+      <p style="margin-top:.5rem">What buys it back is the guarantee: we reimburse sweep-caused
+         overdrafts, so every debit is a draw we pay for when it goes wrong. Daily takes ~142 draws
+         a year against weekly&rsquo;s ~45 &mdash; so daily only pays for itself if the per-sweep
+         overdraft rate is under <b>~1%</b>, and at a realistic cost per incident, under
+         <b>~0.1%</b>. <b>Nobody has measured it.</b> The cadence is insurance against a tail we
+         cannot yet size.</p>
       <p style="margin-top:.5rem"><b>Note where this sits: after the forecast, not with the gates.</b>
          A held day still carries its projected low, so it can still be graded. The cadence limits
          what the engine <i>does</i> &mdash; never what it <i>knows</i>.</p>

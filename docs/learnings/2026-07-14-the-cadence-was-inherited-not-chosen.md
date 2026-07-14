@@ -71,16 +71,52 @@ dollars are swept the following week, so only the marginal delay costs anything.
 made *before* the measurement was wrong in the direction that flattered the status quo. The
 repo's own rule ([6.1], [8.3]) exists precisely for this, and it caught its author.
 
-### The finding that settles it
+### What the $36/yr has to be weighed against — and a claim I got wrong
 
-Daily sweeping buys ~$36/yr of interest timing over weekly, and costs **~$48/yr more in ACH
-fees** (11.7 vs 3.7 debits/month at ~$0.50 each). At plausible transfer pricing the interest
-advantage and the transaction cost **cancel** — and what is left over is three times as many
-draws on the tail that [`prd.md`](../prd.md) §2 says decides the company, purchased for nothing.
+**First draft of this note said daily also costs "~$48/yr more in ACH fees," at ~$0.50 a debit.
+That number was assumed, not sourced, and it is mostly wrong.** It is left here rather than
+quietly deleted, because the mistake is instructive: it is the *second* time in this
+investigation that a plugged-in figure pointed the right way for the wrong reason.
+
+Per-transaction ACH cost depends on the **shape** of the processor's pricing, not just its level,
+and only one of the three common shapes rewards batching at all:
+
+| Pricing shape | Example | Does spacing sweeps out save fees? |
+|---|---|---|
+| Flat per transaction | $0.25–$1.00/debit | **Yes** — you pay per transfer |
+| Percentage of amount | [Dwolla pay-as-you-go: 0.5%, capped at $5](https://www.dwolla.com/pricing) | **Barely** — you pay per *dollar*. Only the cap helps: one $1,600 sweep costs $5 (0.31%); four $400 sweeps cost $8 (0.5%). |
+| Flat monthly plan | Dwolla plans from ~$250/mo | **No** — marginal cost per transfer is zero |
+
+The network itself is a rounding error (FedACH/NACHA per-item fees are fractions of a cent).
+
+**What genuinely scales with the number of debits, under every pricing shape, is returns.**
+[Return fees run $2–$5 and up to $20+, and the receiving bank adds an NSF fee of $15–$35](https://stripe.com/resources/more/ach-returns-101-what-they-are-and-how-to-manage-them).
+More seriously, [NACHA polices return *rates* on a rolling 60-day window](https://www.nacha.org/rules/ach-network-risk-and-enforcement-topics)
+— 0.5% unauthorized, 3% administrative, 15% overall — and breaching them puts the ability to
+originate ACH at all on the table. That is an existential per-transaction risk that does not care
+how the processor bills.
+
+### So the honest case for weekly is insurance, not a free lunch
+
+Strip out the bogus fee claim and **daily has a small positive economic edge**: the measured
+$36/yr. What offsets it is [`prd.md`](../prd.md) §2.3's guarantee — we reimburse sweep-caused
+overdraft fees, so every debit is a draw we pay for when it goes wrong.
+
+Daily takes ~142 draws/yr; weekly takes ~45. Setting $36/yr against 97 extra draws at $35 a
+reimbursement, **daily pays for itself only if the per-sweep overdraft probability is under
+~1%.** Nobody has measured that probability — it is exactly what §8's shadow mode exists to
+produce. And §2 says not to make this bet on expected value at all, because the true cost of an
+incident is not $35: it is "a $35 fee, a missed rent payment, and a permanently lost customer who
+tells everyone." At a few hundred dollars all-in, the breakeven falls to ~**0.1%**, a bar the
+engine has never demonstrated it clears.
+
+**The trade is therefore: ~$36/yr of the household's money to take a third as many draws on the
+tail, until calibration tells us what the tail is.** That is cheap insurance and it is the same
+posture the repo takes everywhere else. It is not the free lunch the first draft claimed.
 
 Nine of the daily engine's 35 sweeps were under $100; the smallest was **$23.19**. `MIN_SWEEP`
-is still **$1.00**, so the engine remains licensed to originate a one-dollar ACH — which costs
-more to send than the interest it will ever save.
+is still **$1.00**, so the engine remains licensed to originate a one-dollar ACH — worth
+essentially nothing under any pricing shape, and still a draw.
 
 ## What changed
 
