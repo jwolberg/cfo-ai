@@ -6,29 +6,48 @@
 <title>cfo-ai — how the engine decides</title>
 <style>
   /* Light only, deliberately. `color-scheme: light` also stops the browser (or an OS in dark
-     mode) from force-inverting the page into a palette nobody checked. */
+     mode) from force-inverting the page into a palette nobody checked.
+
+     Palette and shapes follow docs/design/look-and-feel.md — the resfi system: a blue/green
+     two-voice palette, near-white page with a faint blue cast, white cards with a large radius
+     and a soft diffuse shadow (no hard borders), pill-shaped chips.
+
+     Color roles, per that reference: BLUE is informational/neutral and marks the sweep — the
+     thing that moves money. DEEP GREEN marks refusals. Green rather than red on purpose: a
+     refusal is the engine working as designed, not an error, and the page argues exactly that. */
   :root {
     color-scheme: light;
 
-    --bg: #fbfbfa;
+    /* Brand hexes lifted from docs/design/logos/resfi-brand.svg, not eyedropped:
+       blue #4AAFC9 · deep green #085041 · leaf #1D9E75 · gray #888780.
+       The brand blue and leaf green are ~2.5:1 on white, so text uses a darkened
+       companion of each and the pure brand hex is kept for bars, rules and fills. */
+    --bg: #f5f9fa;
     --panel: #ffffff;
-    --ink: #1a1a19;
-    --muted: #6b6b66;
-    --faint: #93938c;
-    --rule: #e3e3df;
-    --spine: #2f2f2c;
+    --ink: #15282c;
+    --muted: #5c7178;
+    --faint: #949c9a;      /* the tagline gray, lightened */
+    --rule: #e3edef;
+    --kicker: #598278;     /* the stage/file label above every card heading */
 
-    --stop: #b4443a;
-    --stop-bg: #fdf2f1;
-    --stop-rule: #eccfcc;
+    /* refusal — the wordmark's forest-green "fi" */
+    --stop: #085041;
+    --stop-bg: #eff5f3;
+    --stop-rule: #c9dcd6;
 
-    --go: #2f6f4f;
-    --go-bg: #f0f7f3;
-    --go-rule: #c7e0d4;
+    /* sweep — the brand blue */
+    --go: #2c7f98;         /* readable companion of #4AAFC9 */
+    --go-bar: #4aafc9;     /* the brand hex itself */
+    --go-bg: #edf7fa;
+    --go-rule: #c2e3ec;
 
-    --note: #7a6432;
-    --note-bg: #fbf6ea;
-    --note-rule: #e8dcbf;
+    /* aside — the leaf */
+    --note: #147257;       /* readable companion of #1D9E75 */
+    --note-bar: #1d9e75;
+    --note-bg: #f1f8f5;
+    --note-rule: #cfe7dc;
+
+    --shadow: 0 1px 2px rgba(22, 38, 46, .04), 0 8px 24px -8px rgba(22, 38, 46, .10);
 
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
@@ -48,6 +67,14 @@
   .wrap { max-width: 1020px; margin: 0 auto; }
 
   header { margin-bottom: 3.5rem; }
+  /* The brand lockup: docs/design/logos/resfi-brand.svg, kept as a file rather than inlined
+     so it stays byte-identical to the source asset. Its own artboard carries the padding. */
+  .brand {
+    display: block;
+    width: 168px;
+    height: auto;
+    margin: 0 0 1.75rem -6px;
+  }
   h1 {
     font-size: clamp(1.7rem, 4vw, 2.4rem);
     line-height: 1.15;
@@ -61,22 +88,31 @@
     margin: 0 0 1.5rem;
   }
   .thesis {
-    border-left: 3px solid var(--stop);
+    border-left: 4px solid var(--stop);
     padding: .3rem 0 .3rem 1rem;
     font-size: 1.05rem;
     max-width: 62ch;
   }
   .thesis strong { color: var(--stop); }
 
+  /* The reference's section marker: a short mid-blue bar under the heading, not a full rule. */
   h2 {
-    font-size: .78rem;
+    font-size: 1.125rem;
     text-transform: uppercase;
     letter-spacing: .12em;
-    color: var(--faint);
+    color: var(--go-bar);
     font-weight: 600;
-    margin: 3.25rem 0 1.25rem;
-    padding-bottom: .5rem;
-    border-bottom: 1px solid var(--rule);
+    margin: 3.5rem 0 1.4rem;
+    padding-bottom: .85rem;
+    position: relative;
+  }
+  h2::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 110px; height: 4px;
+    border-radius: 2px;
+    background: var(--go-bar);
   }
 
   /* --- the flow ------------------------------------------------------- */
@@ -93,16 +129,17 @@
   /* left column: the spine */
   .node {
     background: var(--panel);
-    border: 1px solid var(--rule);
-    border-radius: 10px;
-    padding: 1rem 1.15rem;
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.15rem 1.3rem;
     position: relative;
   }
   .node .kicker {
-    font: 600 .68rem/1 var(--mono);
+    font: 600 .9rem/1 var(--mono);
     letter-spacing: .1em;
     text-transform: uppercase;
-    color: var(--faint);
+    color: var(--kicker);
     display: block;
     margin-bottom: .5rem;
   }
@@ -159,8 +196,8 @@
   .exit {
     background: var(--stop-bg);
     border: 1px solid var(--stop-rule);
-    border-radius: 10px;
-    padding: .85rem 1rem;
+    border-radius: 18px;
+    padding: 1rem 1.15rem;
     align-self: center;
   }
   .exit .verdict {
@@ -168,16 +205,16 @@
     letter-spacing: .1em;
     color: var(--stop);
     display: block;
-    margin-bottom: .5rem;
+    margin-bottom: .55rem;
   }
-  .codes { display: flex; flex-wrap: wrap; gap: .3rem; }
-  .code {
+  .codes { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .code {  /* pill, per the CTA in the reference */
     font: .72rem/1.5 var(--mono);
     background: var(--panel);
     border: 1px solid var(--stop-rule);
     color: var(--stop);
-    border-radius: 5px;
-    padding: .15rem .45rem;
+    border-radius: 999px;
+    padding: .2rem .6rem;
     white-space: nowrap;
   }
   .exit p {
@@ -188,7 +225,14 @@
   .exit.empty { background: none; border: none; }
 
   /* --- the worst-case table ------------------------------------------- */
-  .rules { overflow-x: auto; }
+  .rules {
+    overflow-x: auto;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: .35rem 1.15rem;
+  }
+  .rules tr:last-child td { border-bottom: none; }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -214,15 +258,16 @@
   }
   .beat {
     background: var(--panel);
-    border: 1px solid var(--rule);
-    border-radius: 10px;
-    padding: .9rem 1rem;
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.05rem 1.15rem;
   }
   .beat .kicker {
-    font: 600 .68rem/1 var(--mono);
+    font: 600 .9rem/1 var(--mono);
     letter-spacing: .1em;
     text-transform: uppercase;
-    color: var(--faint);
+    color: var(--kicker);
     display: block;
     margin-bottom: .45rem;
   }
@@ -233,9 +278,9 @@
     margin-top: 1.25rem;
     background: var(--note-bg);
     border: 1px solid var(--note-rule);
-    border-left: 3px solid var(--note);
-    border-radius: 8px;
-    padding: 1rem 1.15rem;
+    border-left: 4px solid var(--note-bar);
+    border-radius: 18px;
+    padding: 1.15rem 1.35rem;
     font-size: .9rem;
   }
   .callout strong { color: var(--note); }
@@ -247,7 +292,7 @@
     font-size: .82rem;
     color: var(--faint);
   }
-  footer a { color: var(--muted); }
+  footer a { color: var(--go); }
 
   @media (max-width: 700px) {
     .stage { grid-template-columns: 1fr; gap: .6rem; }
@@ -262,11 +307,13 @@
 <div class="wrap">
 
 <header>
+  <img class="brand" src="./design/logos/resfi-brand.svg"
+       alt="resfi — responsible finance" width="259" height="88">
   <h1>How the engine decides</h1>
   <p class="lede">
     Every day, move the cash a household genuinely doesn&rsquo;t need onto the debt that costs them
-    the most &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; This is the whole decision,
-    top to bottom. It is deterministic: no clock, no network, no LLM, no randomness.
+    the most &mdash; and be right about &ldquo;doesn&rsquo;t need.&rdquo; The whole decision, top to
+    bottom. Deterministic: no clock, no network, no LLM, no randomness.
   </p>
   <p class="thesis">
     Read the diagram by its <strong>shape</strong>. The spine down the middle is short. Almost
@@ -283,9 +330,9 @@
     <div class="node">
       <span class="kicker">Input &middot; models.py</span>
       <h3>Snapshot</h3>
-      <p>Everything the engine may look at, frozen. Balances, events, pending, debts, policy.
-         <code>today</code> is a field, never <code>date.today()</code> &mdash; which is what makes
-         a sweep replayable and auditable after Plaid rewrites history beneath you.</p>
+      <p>Every input the engine may look at, frozen: balances, events, pending, debts, policy.
+         <code>today</code> is a field, never <code>date.today()</code> &mdash; so a sweep stays
+         replayable after Plaid rewrites history beneath us.</p>
     </div>
     <div class="link"></div>
     <div class="exit empty"></div>
@@ -297,10 +344,10 @@
     <div class="node">
       <span class="kicker">Gate &middot; decide.py</span>
       <h3>Is it safe to look at all?</h3>
-      <p>Seven conditions under which <em>no</em> amount of surplus justifies moving money. They
-         apply to the <strong>funding account</strong> &mdash; the one the debit actually leaves.
-         A stale savings balance can&rsquo;t overdraw checking, so refusing on it would be
-         superstition, not safety.</p>
+      <p>Conditions under which <em>no</em> amount of surplus justifies moving money. They apply to
+         the <strong>funding account</strong> &mdash; the one the debit actually leaves. A stale
+         savings balance can&rsquo;t overdraw checking; refusing on it would be superstition, not
+         safety.</p>
     </div>
     <div class="link"></div>
     <div class="exit">
@@ -315,9 +362,9 @@
         <span class="code">BLACKOUT</span>
         <span class="code">SWEEP_IN_FLIGHT</span>
       </div>
-      <p>Balance older than <b>2 days</b> is a guess. Under <b>60 days</b> of history you cannot
+      <p>A balance older than <b>2 days</b> is a guess. Under <b>60 days</b> of history you cannot
          see a monthly bill. Income variation over <b>0.25</b> means their buffer is a rational
-         hedge and sweeping it is worse than doing nothing.</p>
+         hedge &mdash; sweeping it is worse than doing nothing.</p>
     </div>
   </div>
 
@@ -327,9 +374,9 @@
     <div class="node">
       <span class="kicker">Forecast &middot; forecast.py</span>
       <h3>How low does checking go?</h3>
-      <p>Project the funding account alone over <b>30 days</b> and take the <strong>running
-         low</strong>, not the ending balance &mdash; the user only has to be broke once. Every
-         uncertain quantity resolves toward the end that hurts them.</p>
+      <p>Project the funding account <b>30 days</b> out and take the <strong>running low</strong>,
+         not the ending balance &mdash; a household only has to be broke once. Every uncertain
+         quantity resolves toward the end that hurts them.</p>
     </div>
     <div class="link"></div>
     <div class="exit empty"></div>
@@ -341,8 +388,8 @@
     <div class="node">
       <span class="kicker">Target &middot; decide.py</span>
       <h3>Which card?</h3>
-      <p>Highest APR wins. But Plaid doesn&rsquo;t report APR for many issuers &mdash; and with two
-         cards and no rates, paying the wrong one <em>looks exactly like working</em> while quietly
+      <p>Highest APR wins. But Plaid doesn&rsquo;t report APR for many issuers, and with two cards
+         and no rates, paying the wrong one <em>looks exactly like working</em> while quietly
          destroying the entire point. So we say so instead.</p>
     </div>
     <div class="link"></div>
@@ -364,7 +411,7 @@
       <h3>What isn&rsquo;t ours to move?</h3>
       <p><code>available = low &minus; buffer_floor &minus; reserved_minimums</code></p>
       <p style="margin-top:.5rem">The minimum payment is not surplus. Sweeping it and then missing
-         it would cause the exact late fee we exist to prevent.</p>
+         it causes the exact late fee we exist to prevent.</p>
     </div>
     <div class="link"></div>
     <div class="exit">
@@ -380,15 +427,15 @@
     <div class="node">
       <span class="kicker">Caps &middot; decide.py</span>
       <h3>What are we allowed to move?</h3>
-      <p>Cut down to the per-sweep cap, then the weekly cap, then the card balance. The engine may
-         never exceed the user&rsquo;s guardrails &mdash; only fall short of them.</p>
+      <p>Cut to the per-sweep cap, then the weekly cap, then the card balance. The engine may never
+         exceed the user&rsquo;s guardrails &mdash; only fall short of them.</p>
     </div>
     <div class="link"></div>
     <div class="exit">
       <span class="verdict">NOT WORTH IT</span>
       <div class="codes"><span class="code">BELOW_MIN_SWEEP</span></div>
-      <p>Under <b>$1.00</b>, the ACH risk and the noise of a notification cost more than the
-         interest saved.</p>
+      <p>Under <b>$1.00</b>, the ACH risk and the noise of a notification cost more than the interest
+         saved.</p>
     </div>
   </div>
 
@@ -399,9 +446,9 @@
       <span class="kicker">Output</span>
       <h3>Sweep</h3>
       <p>An amount, a target card, and the <strong>reason codes</strong> that produced them &mdash;
-         never sentences. <code>explain.py</code> is the only file with copy in it, so a wording
-         change cannot break a financial calculation, and the LLM narrates <em>from</em> the codes
-         rather than paraphrasing a finished financial claim.</p>
+         never sentences. <code>explain.py</code> holds the only copy in the system, so a wording
+         change cannot break a calculation, and the LLM narrates <em>from</em> the codes rather than
+         paraphrasing a finished financial claim.</p>
     </div>
     <div class="link"></div>
     <div class="exit empty"></div>
@@ -413,8 +460,7 @@
 
 <p class="lede" style="margin-bottom:1.25rem">
   <em>Money arrives late and small. It leaves early and large.</em> A forecast that is right on
-  <em>average</em> overdrafts half its users half the time. This asymmetry is the entire safety
-  property.
+  <em>average</em> overdrafts half its users half the time. This asymmetry is the safety property.
 </p>
 
 <div class="rules">
@@ -436,23 +482,22 @@
 </div>
 
 <div class="callout">
-  <strong>That last row is measurably wrong,</strong> and we know it. Charging a p90 of
-  <em>daily</em> spend across all 30 days compounds a per-day quantile into a horizon quantile &mdash;
-  but variance grows with &radic;t, not t. Measured against three years of a household&rsquo;s own
-  spending, the engine reserves <strong>more than they have ever spent in any 30-day stretch.</strong>
-  It fails <em>safe</em>, which is exactly why it would have survived forever: nobody is overdrawn,
-  nothing throws, and the product simply refuses more often than it should. It is deliberately
-  <strong>not yet fixed</strong> &mdash; the fix loosens the forecast and buys bigger sweeps, and that
-  must not happen before we can measure the breach rate.
+  <strong>That last row is measurably wrong,</strong> and we know it. Charging a p90 of <em>daily</em>
+  spend across all 30 days compounds a per-day quantile into a horizon quantile &mdash; variance grows
+  with &radic;t, not t. Against three years of a household&rsquo;s own spending, the engine reserves
+  <strong>more than they have ever spent in any 30-day stretch.</strong> It fails <em>safe</em>, which
+  is why it could have survived forever unnoticed: nobody overdrafts, nothing throws, we simply refuse
+  too often. Deliberately <strong>not yet fixed</strong> &mdash; the fix buys bigger sweeps, and that
+  must not ship before we can measure the breach rate.
 </div>
 
-<h2>What happens after &mdash; and why any of this is knowable</h2>
+<h2>What happens after the money moves</h2>
 
 <div class="loop">
   <div class="beat">
     <span class="kicker">1 &middot; decide.py</span>
     <h3>A prediction</h3>
-    <p>&ldquo;This $220 is not needed.&rdquo; That is a claim about the future, and it is falsifiable.</p>
+    <p>&ldquo;This $220 is not needed.&rdquo; A claim about the future &mdash; and a falsifiable one.</p>
   </div>
   <div class="beat">
     <span class="kicker">2 &middot; reality</span>
@@ -463,27 +508,27 @@
     <span class="kicker">3 &middot; outcome.py</span>
     <h3>The bet is settled</h3>
     <p>Did they overdraft, and was it <em>us</em>? How wrong was the projection? How much safe money
-       did we leave sitting there?</p>
+       did we leave on the table?</p>
   </div>
   <div class="beat">
     <span class="kicker">4 &middot; the asset</span>
     <h3>Calibration</h3>
-    <p>The empirical distribution of our own errors. Not the data &mdash; every competitor can buy
-       that. <strong>The graveyard of our own mistakes.</strong></p>
+    <p>The distribution of our own errors. Not the data &mdash; any competitor can buy that.
+       <strong>The graveyard of our own mistakes.</strong></p>
   </div>
 </div>
 
 <div class="callout">
   <strong>This loop is the company.</strong> Moving money is a commodity; forecasting is hard but
-  tractable. What compounds is knowing, from millions of observed outcomes, how often a forecast at
-  a stated confidence was <em>actually right</em> &mdash; because that is what lets you move
-  <em>more</em> money at the <em>same</em> tail risk. It only accrues to a system that acts and then
-  looks. An advice product never learns whether it was right, because nothing happens.
+  tractable. What compounds is knowing, across millions of observed outcomes, how often a forecast at
+  a stated confidence was <em>actually right</em> &mdash; because that is what lets us move
+  <em>more</em> money at the <em>same</em> tail risk. It accrues only to a system that acts and then
+  looks. An advice product never finds out whether it was right, because nothing happened.
 </div>
 
 <footer>
-  Generated from the engine itself. The prose lives in
-  <a href="./decision-engine.md">decision-engine.md</a>; the argument for the product lives in
+  Drawn from the engine itself. The detail lives in
+  <a href="./decision-engine.md">decision-engine.md</a>, the argument for the product in
   <a href="./prd.md">prd.md</a> and <a href="./strategy.md">strategy.md</a>. The tests are the spec.
 </footer>
 
