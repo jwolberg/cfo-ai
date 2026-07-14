@@ -665,3 +665,67 @@ against 72/90 days of honest answers being destroyed.
 day's engine copy through the guard. Any new reason code whose copy trips it now fails on the day
 it is added, rather than months later as "the LLM can't see the data." Deliberately across all 90
 days, not a sample: 18 days passed, so a sampled test could easily have reported green.
+
+---
+
+## 2026-07-14 — two more guard false-negatives, found behind the first one
+
+Fixing the `CADENCE_HOLD` rejection above only exposed the next two. Both are the same species —
+the guard refusing the engine's own truthful narration — and both are now fixed.
+
+### The projection horizon, again — but this time it was the word order
+
+The guard already knew a *supporting* date (a projection horizon the engine quoted inside a
+decision) may be **mentioned** but never **attributed to**. It enforced that by rejecting any
+segment where a supporting date and a sweep verb co-occurred. That is too blunt: the engine's own
+sweep copy names both in one sentence — "heading for a low of $748.79 on 2026-06-05, so we swept
+$400" — every word of it true. Whether the answer survived came down to nothing but whether the
+model happened to split that sentence in two.
+
+What actually separates the two cases is what the date is *doing*, and English puts that in the
+word order. Projection reaches the date through its figure ("a low of **$748.79** on 2026-06-05" —
+figure first). Attribution leads with the date and the money follows ("**On** 2026-06-05 we swept
+$748.79"). Same date, same figure, same verb; only the order differs, and the order *is* the claim.
+
+So `Facts.supporting` went from `set[date]` to `dict[date, set[Decimal]]` — each horizon now
+carries the figures the engine quoted *alongside* it, scoped to the sentence, so a figure from
+elsewhere in the decision cannot license a date. A supporting date is doing projection work only
+when one of its own figures appears **earlier in the segment** than the date does. Leading with the
+date still rejects — including the nastiest recombination, "on 2026-06-05, low $748.79, we swept
+$400", which pairs a real date and its real low with a false outcome and which a co-occurrence test
+waves straight through.
+
+### Aggregates forced the model into arithmetic, and the guard was right to kill it
+
+"How much have you saved me" had no answerable path: no tool returned a total, so the model's only
+move was to fetch the decisions and add them up — arithmetic, in the one product that exists to
+keep the LLM out of the arithmetic. The guard rejected it every time, and *correctly*: a figure the
+model computed matches no decision. The user saw "I don't have that on record" about a number
+sitting on their own dashboard.
+
+**Fix.** A `get_summary` tool returning the engine's precomputed totals, plus a system-prompt rule
+forbidding manual arithmetic outright. The guard is untouched — these figures are **retrieved, not
+computed**, and recording them in `facts.totals` is what makes them quotable, on the same contract
+as any decision. They are pooled rather than keyed by date, because a window total is a fact about
+the window, not about any one day.
+
+**A bug inside the fix, worth recording.** The first `get_summary` payload included the window's
+start date. The model dutifully wrote "since 2026-03-02" next to the interest total, the guard saw
+a date it had fetched no decision for, and killed a true answer — the same failure, reintroduced by
+the fix for it. The dates are simply not in the payload now. They are not the model's to state
+anyway, and if a question ever genuinely needs the range, they have to become *fetched facts*
+first.
+
+### Still open: this has not been verified live against Sonnet
+
+**The acceptance bar in the entry above is not met for this work, and it matters more here than
+usual.** That bar exists because every guard bug ever found has been a bug about how a *particular
+model phrases things* — and this work landed on `main` after the Opus→Sonnet swap (#24) merged
+underneath it. It has only ever been exercised by the fake test client, which cannot produce a real
+model's sentences. The word-order rule above is *especially* exposed: it is an assumption about how
+a model orders a figure and a date in a clause, and it has never been tested against a real
+sentence from the model now actually configured.
+
+The end-to-end run that would have closed this (`scratchpad/e2e.py`, all four question shapes)
+errored before it produced a result and was never re-run. Committed green-on-unit-tests and
+explicitly *unverified live*, so the gap is visible rather than assumed closed.

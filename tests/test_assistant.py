@@ -156,6 +156,45 @@ class TestTools:
         assert result["count"] > 0
         assert all("interest_avoided" in d["reason_codes"] for d in result["decisions"])
 
+    def test_the_summary_is_fetched_not_computed(self, artifact: art.Artifact) -> None:
+        """Covers the aggregate question, which previously had no tool at all.
+
+        "How much interest have you saved me" left the model one way to answer: fetch the
+        decisions and add them up. It did, and it got $4,354.79 — exactly right, and rejected,
+        because a figure the model computed matches no decision the engine made. The user was
+        told "I don't have that on record" about a total that is on the dashboard.
+
+        The fix is a tool, not a looser guard. The engine already computed these.
+        """
+        facts = Facts()
+
+        result = run_tool("get_summary", {}, artifact, facts)
+
+        assert result["interest_avoided_total"] == str(artifact.summary.interest_avoided_total)
+        assert result["sweep_count"] == artifact.summary.sweep_count
+        # Fetched, therefore quotable — the same contract a decision gets.
+        assert artifact.summary.interest_avoided_total in facts.all_amounts()
+        assert not facts.empty
+
+    def test_a_total_the_model_worked_out_itself_is_still_refused(
+        self, artifact: art.Artifact
+    ) -> None:
+        """The tool must not become a licence to do arithmetic.
+
+        With the summary fetched, its own figures are quotable. A *different* total — one the
+        model derived rather than retrieved — still matches nothing and must still be caught.
+        This is the line the new tool must not blur.
+        """
+        facts = Facts()
+        run_tool("get_summary", {}, artifact, facts)
+
+        honest = f"You've avoided ${artifact.summary.interest_avoided_total} in interest."
+        assert verify(honest, facts) is None
+
+        rejection = verify("You've avoided $9,999.99 in interest.", facts)
+        assert rejection is not None
+        assert "no decision fetched this turn" in rejection.reason
+
     def test_a_nonsense_date_is_malformed_not_empty(self, artifact: art.Artifact) -> None:
         """It must raise rather than quietly return "no record" — a model that sent garbage
         needs to be told, not handed an answer that looks like a fact about the household."""
@@ -558,6 +597,59 @@ class TestSupportingDates:
         rejection = verify("On 2026-06-05 we swept $748.79 onto your card.", facts)
         assert rejection is not None
         assert "2026-06-05" in rejection.reason
+
+    def test_a_projection_horizon_may_share_a_sentence_with_the_sweep_it_explains(
+        self, artifact: art.Artifact
+    ) -> None:
+        """The engine explains a sweep *by* its projection, so both land in one sentence.
+
+        "Heading for a low of $4,024.53 on 2026-04-07, so we paid $1,600.00" names a supporting
+        date and a payment verb together, and every word is true. Rejecting on that
+        co-occurrence alone killed real sweep-day answers at random — the identical question
+        answered six times and was rejected the seventh, decided by nothing but whether the
+        model happened to break the sentence in two.
+
+        What licenses it is word order: the projection reaches the date through its own figure,
+        so the figure comes first. See the attribution cases below, which must still be caught.
+        """
+        record = artifact.by_day(date(2026, 3, 8))
+        assert record is not None
+        assert record.decision.action is Action.SWEEP
+        facts = facts_for(record)
+        assert date(2026, 4, 7) in facts.supporting, (
+            "fixture drift: 2026-04-07 is no longer 2026-03-08's projection horizon"
+        )
+
+        true_and_now_allowed = [
+            "Your balance was heading for a low of $4,024.53 on 2026-04-07, "
+            "so the engine paid $1,600.00 onto your card.",
+            "The projection showed a low of $4,024.53 on 2026-04-07, and we still moved $1,600.00.",
+        ]
+        for text in true_and_now_allowed:
+            assert verify(text, facts) is None, f"the guard rejected a true sentence: {text}"
+
+    def test_leading_with_the_horizon_date_still_attributes_and_is_caught(
+        self, artifact: art.Artifact
+    ) -> None:
+        """The other half of the word-order rule, and the reason it is word order.
+
+        The second sentence is the one a co-occurrence test would wave through: it quotes the
+        horizon's *own* low figure, so "did the model mention the projection?" answers yes —
+        and it still asserts a payment on a day that never had one. Leading with the date is
+        attribution no matter what else the sentence carries.
+        """
+        record = artifact.by_day(date(2026, 3, 8))
+        assert record is not None
+        facts = facts_for(record)
+
+        attributions = [
+            "On 2026-04-07 we paid $1,600.00 onto your card.",
+            "On 2026-04-07, with a low of $4,024.53, we swept $1,600.00.",
+        ]
+        for text in attributions:
+            rejection = verify(text, facts)
+            assert rejection is not None, f"the guard passed a false attribution: {text}"
+            assert "2026-04-07" in rejection.reason
 
     def test_an_unfetched_date_is_still_rejected(self, refuse_day: art.DayRecord) -> None:
         """The original rule is intact: a date we never fetched in any form carries nothing."""

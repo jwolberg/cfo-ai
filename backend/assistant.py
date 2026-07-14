@@ -157,26 +157,49 @@ class Facts:
     #
     # They are emphatically NOT decision dates. Nothing may be attributed to one: `verify()`
     # still refuses to let an outcome ("we swept") hang off a supporting date, and amounts are
-    # still bound to real decisions. This set only buys the right to *mention* the date.
-    supporting: set[date] = field(default_factory=set)
+    # still bound to real decisions. This only buys the right to *mention* the date.
+    #
+    # Each maps to the figures the engine quoted *alongside* it — for a projection horizon,
+    # its own low, buffer and reserved. That pairing is what lets `verify()` tell "the low is
+    # $748.79 on 2026-06-05, so we swept $400" (true; the date is doing projection work) from
+    # "on 2026-06-05 we swept $400" (false; the date is doing attribution work). Both name a
+    # supporting date next to a sweep verb, and nothing else distinguishes them.
+    supporting: dict[date, set[Decimal]] = field(default_factory=dict)
 
     def record(self, record: DayRecord) -> None:
         self.by_date[record.day] = record
-        # Derived from `explain()` — the same call `_decision_payload` uses — so this set is
-        # exactly the dates the model was actually shown, and cannot drift from the payload.
+        # Derived from `explain()` — the same call `_decision_payload` uses — so this is
+        # exactly what the model was actually shown, and cannot drift from the payload.
         for sentence in explain(record.decision):
-            self.supporting |= _dates_in(sentence, {record.day}) - {record.day}
+            named = _dates_in(sentence, {record.day}) - {record.day}
+            if not named:
+                continue
+            # The figures in the same sentence as the date. Sentence-scoped, not decision-
+            # scoped: a date earns the exemption only from the figures it was actually
+            # quoted with, so a figure from elsewhere in the decision cannot license it.
+            alongside = {
+                value for raw in _MONEY.findall(sentence) if (value := _to_decimal(raw)) is not None
+            }
+            for day in named:
+                self.supporting.setdefault(day, set()).update(alongside)
+
+    # Figures from the artifact's precomputed summary, once `get_summary` has fetched it.
+    # They belong to the window as a whole rather than to any one day, so they are pooled
+    # rather than keyed by date — there is no date for them to be bound to, and a sentence
+    # citing a decision date still may not reach for them (see `amounts_for`).
+    totals: set[Decimal] = field(default_factory=set)
 
     def amounts_for(self, day: date) -> set[Decimal]:
         record = self.by_date.get(day)
         return set(money_facts(record).values()) if record else set()
 
     def all_amounts(self) -> set[Decimal]:
-        return {amount for day in self.by_date for amount in self.amounts_for(day)}
+        pooled = {amount for day in self.by_date for amount in self.amounts_for(day)}
+        return pooled | self.totals
 
     @property
     def empty(self) -> bool:
-        return not self.by_date
+        return not self.by_date and not self.totals
 
 
 # --- tools ---------------------------------------------------------------------------
@@ -224,6 +247,19 @@ TOOLS: list[dict[str, Any]] = [
             },
             "required": ["start", "end"],
         },
+    },
+    {
+        "name": "get_summary",
+        "description": (
+            "The totals for the whole window, already computed: interest avoided, total "
+            "swept, how many days were payments and how many were holds, and where the "
+            "targeted card stands now. Call this for any question about an aggregate — "
+            "'how much have you saved me', 'how much have you paid off', 'how often do you "
+            "actually pay'. Always call it rather than adding up the individual decisions "
+            "yourself: these are the figures the engine itself stands behind, and a total "
+            "you compute by hand is one this service cannot verify and will refuse to show."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
     },
 ]
 
@@ -292,6 +328,40 @@ def run_tool(name: str, args: dict[str, Any], artifact: Artifact, facts: Facts) 
         return {
             "count": len(found),
             "decisions": [_decision_payload(record) for record in found],
+        }
+
+    if name == "get_summary":
+        # The engine's own totals, not the model's. Without this tool a question like "how
+        # much interest have you saved me" left the model no way to answer but to fetch the
+        # decisions and add them up — arithmetic, in the one product that exists to keep the
+        # LLM out of the arithmetic. The guard caught it every time (correctly: a figure it
+        # computed matches no decision), so the honest-looking outcome was "I don't have that
+        # on record" about a number sitting on the dashboard.
+        #
+        # Recording the figures in `facts` is what makes them quotable — same contract as a
+        # decision. The guard is untouched: these are retrieved, not computed.
+        summary = artifact.summary
+        facts.totals |= {
+            summary.interest_avoided_total,
+            summary.total_swept,
+            summary.current_buffer,
+            summary.targeted_debt_balance,
+        }
+        # Deliberately no window dates in this payload. They were here, and they cost an
+        # answer: the model quoted "since 2026-03-02" next to the interest total, the guard
+        # saw a date it had fetched no decision for, and killed a true reply. The bounds are
+        # not the model's to state anyway — a total is a fact about the window, not about its
+        # first day, and the system prompt already tells it which day is "today". If a future
+        # question genuinely needs the range, the dates have to become fetched facts first.
+        return {
+            "interest_avoided_total": str(summary.interest_avoided_total),
+            "total_swept": str(summary.total_swept),
+            "current_buffer": str(summary.current_buffer),
+            "targeted_debt_id": summary.targeted_debt_id,
+            "targeted_debt_balance": str(summary.targeted_debt_balance),
+            "sweep_count": summary.sweep_count,
+            "refuse_count": summary.refuse_count,
+            "paid_off": summary.paid_off,
         }
 
     raise MalformedToolCall(f"no such tool: {name}")
@@ -409,26 +479,36 @@ def _to_decimal(raw: str) -> Decimal | None:
         return None
 
 
-def _dates_in(text: str, window: set[date]) -> set[date]:
-    """Every date the text names that we could plausibly be talking about."""
-    found: set[date] = set()
+def _dated_spans(text: str, window: set[date]) -> list[tuple[date, int]]:
+    """Every date the text names, with the offset it was named at.
 
-    for raw in _ISO_DATE.findall(text):
+    The offset is what lets `verify()` read a date's *role* from its position — see the
+    projection-vs-attribution test there. Everything else only needs the dates themselves.
+    """
+    found: list[tuple[date, int]] = []
+
+    for match in _ISO_DATE.finditer(text):
         try:
-            found.add(date.fromisoformat(raw))
+            found.append((date.fromisoformat(match.group(1)), match.start()))
         except ValueError:
             continue
 
-    for month, day_str, year_str in _LONG_DATE.findall(text):
+    for match in _LONG_DATE.finditer(text):
+        month, day_str, year_str = match.groups()
         day_num = int(day_str)
         years = [int(year_str)] if year_str else sorted({d.year for d in window})
         for year in years:
             try:
-                found.add(date(year, _MONTHS[month.lower()], day_num))
+                found.append((date(year, _MONTHS[month.lower()], day_num), match.start()))
             except ValueError:
                 continue
 
     return found
+
+
+def _dates_in(text: str, window: set[date]) -> set[date]:
+    """Every date the text names that we could plausibly be talking about."""
+    return {day for day, _ in _dated_spans(text, window)}
 
 
 def _segments(text: str) -> list[str]:
@@ -476,8 +556,8 @@ def verify(text: str, facts: Facts) -> Rejection | None:
         #   supporting   — a date *inside* a fetched decision (the projection horizon). May be
         #                  mentioned; may not be claimed about.
         #   unknown      — never fetched in any form. Nothing may be said about it.
-        supporting = (named - window) & facts.supporting
-        unknown_dates = named - window - facts.supporting
+        supporting = (named - window) & set(facts.supporting)
+        unknown_dates = named - window - set(facts.supporting)
 
         amounts = [d for raw in _MONEY.findall(segment) if (d := _to_decimal(raw)) is not None]
 
@@ -489,12 +569,42 @@ def verify(text: str, facts: Facts) -> Rejection | None:
 
         # An outcome may never hang off a supporting date. "On 2026-06-05 we swept $400" names
         # a date the model really was shown and an amount that really exists — every part true,
-        # the attribution invented. Only a *decision* date can carry an outcome, so this is a
-        # rejection precisely when the segment offers no real decision to attribute it to.
+        # the attribution invented. Only a *decision* date can carry an outcome.
+        #
+        # But the horizon date is *also* how the engine explains a sweep, and a model narrating
+        # that faithfully writes "heading for a low of $748.79 on 2026-06-05, so we swept $400"
+        # — one sentence, both the date and the verb, and every word of it true. Rejecting on
+        # the co-occurrence alone killed those answers intermittently, depending on nothing but
+        # whether the model happened to split the sentence.
+        #
+        # What separates them is what the date is *doing*, and English puts that in the word
+        # order. The engine's projection copy reaches the date through its figure — "a low of
+        # $748.79 **on** 2026-06-05" — so the figure that belongs to the horizon lands *before*
+        # it. An attribution leads with the date and the money follows: "**On** 2026-06-05 we
+        # swept $748.79." Same date, same figure, same verb; only the order differs, and the
+        # order is the claim.
+        #
+        # So a supporting date is doing projection work only when a figure the engine itself
+        # quoted alongside it appears *earlier in the segment* than the date does. Leading with
+        # the date attributes, and still rejects — including the recombination that puts the
+        # horizon's own low next to a false outcome ("on 2026-06-05, low $748.79, we swept
+        # $400"), which a co-occurrence test would have waved through.
         if supporting and not cited and _asserts_sweep(segment):
-            return Rejection(
-                f"outcome asserted about {sorted(supporting)[0]}, which is not a decision"
+            money_at = [
+                (value, match.start())
+                for match in _MONEY.finditer(segment)
+                if (value := _to_decimal(match.group(1))) is not None
+            ]
+            projecting = any(
+                value in facts.supporting[day] and money_start < day_start
+                for day, day_start in _dated_spans(segment, window)
+                if day in supporting
+                for value, money_start in money_at
             )
+            if not projecting:
+                return Rejection(
+                    f"outcome asserted about {sorted(supporting)[0]}, which is not a decision"
+                )
 
         for amount in amounts:
             if cited:
@@ -579,6 +689,10 @@ extrapolate from nearby days, or explain what "probably" happened.
 - Write dollar figures exactly as the tool returned them ($400.00, not "about four hundred").
 - Write dates as YYYY-MM-DD.
 - Never attribute one day's figure to another day.
+- Never do arithmetic on the figures — no totalling, averaging, or differencing, even when \
+it looks trivial. For any aggregate ("how much in total", "how many times"), call \
+get_summary and quote what it returns. A number you worked out yourself is one this service \
+cannot trace to a decision, and it will be refused before the user sees it.
 
 Today is {today} — the most recent day on record. Resolve relative dates ("last Tuesday", \
 "yesterday") against that, not against the real-world date.
