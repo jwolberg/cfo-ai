@@ -40,7 +40,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from enum import Enum
 
-from engine.models import ZERO, money
+from engine.models import ZERO, PaymentBehavior, money
 
 
 def _money(value: float) -> Decimal:
@@ -67,6 +67,18 @@ class TxnKind(str, Enum):
     DISCRETIONARY = "discretionary"
     CARD_PAYMENT = "card_payment"
     SHOCK = "shock"
+    # A charge on a card ledger. **Not a checking outflow** — it is a checking outflow
+    # scheduled for the due date of the statement it lands on, and the CARD_PAYMENT txn is
+    # where it finally leaves. Anything that sums checking must exclude this kind, or the
+    # same dollar is spent twice: once when it is charged, once when the statement is paid.
+    CARD_CHARGE = "card_charge"
+
+
+# Every kind that actually moves the checking balance. CARD_CHARGE is the one that does not,
+# and keeping this list explicit is what stops a future kind from being silently double-counted.
+CHECKING_KINDS = frozenset(
+    {TxnKind.PAYROLL, TxnKind.BILL, TxnKind.DISCRETIONARY, TxnKind.CARD_PAYMENT, TxnKind.SHOCK}
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +89,8 @@ class Txn:
     amount: Decimal
     label: str
     kind: TxnKind
+    # Which card ledger this belongs to. Set on CARD_CHARGE and CARD_PAYMENT; None otherwise.
+    card_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +134,13 @@ class SpendSpec:
     zero_day_probability: float
     median: Decimal
     log_sigma: float
+    # The fraction of discretionary spend that goes on a card rather than out of checking.
+    #
+    # Zero is today's behaviour and the default *deliberately*: at 0.0 the generated history
+    # is byte-identical to the one this repo has always produced, so every existing number
+    # stays put until a caller opts in. Every household in the real world is somewhere above
+    # zero, which is the whole problem this feature exists to fix.
+    card_share: float = 0.0
 
     def __post_init__(self) -> None:
         if not 0.0 <= self.zero_day_probability <= 1.0:
@@ -128,17 +149,60 @@ class SpendSpec:
             raise ValueError(f"log_sigma={self.log_sigma} cannot be negative")
         if self.median <= ZERO:
             raise ValueError(f"median={self.median} must be positive")
+        if not 0.0 <= self.card_share <= 1.0:
+            raise ValueError(f"card_share={self.card_share} must be in [0, 1]")
 
 
 @dataclass(frozen=True)
 class CardSpec:
+    """A card the household holds — and, now, actually charges.
+
+    `payment` is no longer what the household pays. It is what a REVOLVER *habitually* pays.
+    What actually leaves checking each month is a function of `behavior` and the statement
+    that closed — see `_card_payment_for`. That is the change this whole feature turns on:
+    once the payment is determined by what was charged, there is no constant left to hardcode,
+    and `backend/precompute.py`'s ORDINARY workaround has nothing left to stand on.
+    """
+
     balance: Decimal
     apr: Decimal  # a rate, never money() — money() would quantize 0.2399 to 0.24
     minimum_payment: Decimal
-    # What the household actually pays each month, above the minimum. This is the
-    # counterfactual `engine/interest.py` measures a sweep against (prd.md §5.1).
+    # What a REVOLVER habitually pays, above the minimum. This is the counterfactual
+    # `engine/interest.py` measures a sweep against (prd.md §5.1). A TRANSACTOR ignores it and
+    # pays the closed statement; a MINIMUM_ONLY household ignores it and pays the minimum.
     payment: Decimal
     payment_day_of_month: int = 20
+    card_id: str = "card-1"
+    behavior: PaymentBehavior = PaymentBehavior.REVOLVER
+    # When the statement closes. The payment lands `payment_day_of_month` — which in the real
+    # world is the due date, a grace period after this.
+    close_day_of_month: int = 20
+    # The share of *card* spend that lands on this card, when a household holds several.
+    # Normalized across cards at generation time.
+    charge_weight: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.charge_weight < 0:
+            raise ValueError(f"charge_weight={self.charge_weight} cannot be negative")
+        if self.balance < ZERO:
+            raise ValueError(f"balance={self.balance} cannot be negative")
+
+
+def _card_payment_for(spec: CardSpec, closed_statement: Decimal) -> Decimal:
+    """What actually leaves checking on this card's payment day.
+
+    The minimum is what the *issuer* will accept. This is what the *household* pays, and for
+    two of the three behaviours those are very different numbers — which is precisely why the
+    reserve may not use the minimum as a proxy for the obligation.
+    """
+    if spec.behavior is PaymentBehavior.TRANSACTOR:
+        # They clear the statement. Reserving their minimum against it is the $1,960 hole.
+        return closed_statement
+    if spec.behavior is PaymentBehavior.MINIMUM_ONLY:
+        return min(spec.minimum_payment, closed_statement)
+    # REVOLVER (and UNKNOWN, which the engine blocks on rather than simulating differently):
+    # a habitual amount above the minimum, but never more than is owed.
+    return min(max(spec.payment, spec.minimum_payment), closed_statement)
 
 
 @dataclass(frozen=True)
@@ -162,8 +226,28 @@ class HouseholdSpec:
     payroll: PayrollSpec
     bills: tuple[BillSpec, ...]
     spend: SpendSpec
-    card: CardSpec
+    # Plural, because a portfolio reserve and a coverage gate need more than one card to have
+    # anything to bite on. The second card is the one that overdraws you: you sweep optimally
+    # to the 24% card while a transactor card you also hold quietly takes $2,000 on the 20th.
+    cards: tuple[CardSpec, ...]
     shocks: ShockSpec = field(default_factory=ShockSpec)
+
+    def __post_init__(self) -> None:
+        if not self.cards:
+            raise ValueError("a household with no cards has nothing to sweep to")
+        ids = [c.card_id for c in self.cards]
+        if len(set(ids)) != len(ids):
+            raise ValueError(f"duplicate card_id in {ids} — ledgers would silently merge")
+
+    @property
+    def card(self) -> CardSpec:
+        """The first card. A convenience for single-card callers and tests.
+
+        Deliberately *not* a compatibility shim for the reserve: anything that reserves, ranks
+        or forecasts must iterate `cards`, because reading `.card` on a two-card household is
+        exactly the bug this feature exists to fix.
+        """
+        return self.cards[0]
 
 
 @dataclass(frozen=True)
@@ -202,16 +286,48 @@ class History:
         The replay driver (#4) walks every day of every household and asks for balances at
         each step. Naive `sum(t for t in txns if ...)` per day is quadratic, and a backtest
         nobody wants to run is a backtest nobody runs.
+
+        With no `kind`, this is **checking only** — CARD_CHARGE is excluded. A card charge does
+        not move the checking balance on the day it posts; it moves it on the day the statement
+        it landed on is paid, and the CARD_PAYMENT txn already carries that. Counting both is
+        spending the same dollar twice.
         """
         totals: dict[date, Decimal] = {}
         for t in self.txns:
-            if kind is None or t.kind is kind:
-                totals[t.day] = totals.get(t.day, ZERO) + t.amount
+            if kind is None:
+                if t.kind not in CHECKING_KINDS:
+                    continue
+            elif t.kind is not kind:
+                continue
+            totals[t.day] = totals.get(t.day, ZERO) + t.amount
         return totals
 
     def balance_on(self, day: date) -> Decimal:
-        """The checking balance at the end of `day`."""
-        return self.opening_balance + sum((t.amount for t in self.txns if t.day <= day), ZERO)
+        """The checking balance at the end of `day`.
+
+        Card charges are excluded — see `_by_day`. This is the single most important line in
+        the file: a charge is not a checking outflow.
+        """
+        return self.opening_balance + sum(
+            (t.amount for t in self.txns if t.day <= day and t.kind in CHECKING_KINDS), ZERO
+        )
+
+    def card_charges(self, card_id: str | None = None) -> tuple[Txn, ...]:
+        """Every charge on a card ledger, optionally for one card."""
+        return tuple(
+            t
+            for t in self.txns
+            if t.kind is TxnKind.CARD_CHARGE and (card_id is None or t.card_id == card_id)
+        )
+
+    def card_charged_between(self, card_id: str, start: date, through: date) -> Decimal:
+        """What was charged to `card_id` in `[start, through]`, as a positive magnitude.
+
+        This is what a statement *is*: the charges that landed between one close and the next.
+        """
+        return -sum(
+            (t.amount for t in self.card_charges(card_id) if start <= t.day <= through), ZERO
+        )
 
     def daily_balances(self, start: date, through: date) -> tuple[Decimal, ...]:
         """The realized balance on each day in `[start, through]`.
@@ -286,6 +402,36 @@ def _monthly(first: date, day_of_month: int, through: date) -> Iterator[date]:
         year, month = (year + 1, 1) if month == 12 else (year, month + 1)
 
 
+def _last_close_on_or_before(day: date, close_day_of_month: int) -> date:
+    """The statement close on or before `day`. Clamped to the month's length."""
+    last = calendar.monthrange(day.year, day.month)[1]
+    this_month = date(day.year, day.month, min(close_day_of_month, last))
+    if this_month <= day:
+        return this_month
+
+    year, month = (day.year - 1, 12) if day.month == 1 else (day.year, day.month - 1)
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, min(close_day_of_month, last))
+
+
+def _weighted_choice(
+    cards: tuple[CardSpec, ...], weights: list[float], total: float, draw: float
+) -> CardSpec:
+    """Pick a card by weight from a single uniform draw.
+
+    One draw, not `rng.choices` — the sequence of rng calls is the determinism contract here,
+    and a helper that draws a variable number of times would make the history depend on how
+    many cards a household happens to hold.
+    """
+    target = draw * total
+    running = 0.0
+    for card, weight in zip(cards, weights, strict=True):
+        running += weight
+        if target < running:
+            return card
+    return cards[-1]
+
+
 def generate(spec: HouseholdSpec, start: date, days: int, seed: int) -> History:
     """Produce one household's realized life. Deterministic in `(spec, start, days, seed)`."""
     if days < 1:
@@ -327,18 +473,18 @@ def generate(spec: HouseholdSpec, start: date, days: int, seed: int) -> History:
 
             txns.append(Txn(day=when, amount=-_money(amount), label=bill.label, kind=TxnKind.BILL))
 
-    # --- the card payment the household was already making --------------------------
-    for day in _monthly(start, spec.card.payment_day_of_month, through):
-        txns.append(
-            Txn(
-                day=day,
-                amount=-spec.card.payment,
-                label="card payment",
-                kind=TxnKind.CARD_PAYMENT,
-            )
-        )
+    # --- daily discretionary spend, now split by channel -----------------------------
+    #
+    # Collected here but appended *after* the card payments below, so the assembled txn order
+    # matches what this function has always produced. What actually preserves byte-identity at
+    # `card_share=0` is that the rng is drawn in the same sequence as before — not the order
+    # things are appended.
+    spend_txns: list[Txn] = []
+    charges: list[Txn] = []
 
-    # --- daily discretionary spend --------------------------------------------------
+    weights = [c.charge_weight for c in spec.cards]
+    total_weight = sum(weights)
+
     for offset in range(days):
         day = start + timedelta(days=offset)
 
@@ -354,9 +500,77 @@ def generate(spec: HouseholdSpec, start: date, days: int, seed: int) -> History:
             if day >= from_day:
                 amount *= float(multiplier)
 
-        txns.append(
-            Txn(day=day, amount=-_money(amount), label="discretionary", kind=TxnKind.DISCRETIONARY)
+        # Short-circuited on the left, deliberately: at card_share=0 the rng is never drawn,
+        # so the sequence is identical to the one this generator produced before cards existed
+        # and every number already in the repo stays put until a caller opts in.
+        on_card = spec.spend.card_share > 0.0 and rng.random() < spec.spend.card_share
+
+        if not on_card:
+            spend_txns.append(
+                Txn(
+                    day=day,
+                    amount=-_money(amount),
+                    label="discretionary",
+                    kind=TxnKind.DISCRETIONARY,
+                )
+            )
+            continue
+
+        # Which card. Short-circuited too — a one-card household draws no extra rng.
+        card = spec.cards[0]
+        if len(spec.cards) > 1 and total_weight > 0:
+            card = _weighted_choice(spec.cards, weights, total_weight, rng.random())
+
+        charges.append(
+            Txn(
+                day=day,
+                amount=-_money(amount),
+                label="discretionary",
+                kind=TxnKind.CARD_CHARGE,
+                card_id=card.card_id,
+            )
         )
+
+    # --- the card payment, now a consequence rather than a constant ------------------
+    #
+    # This is the change the whole feature turns on. The payment is no longer a hardcoded
+    # number — it is what `behavior` does to the statement that closed. A TRANSACTOR clears it;
+    # a MINIMUM_ONLY household pays the floor; a REVOLVER pays their habitual amount. Once the
+    # payment is determined by what was charged, there is no constant left to hardcode, and
+    # `backend/precompute.py`'s ORDINARY workaround has nothing left to stand on.
+    for card in spec.cards:
+        outstanding = card.balance
+        unbilled = [t for t in charges if t.card_id == card.card_id]
+
+        for pay_day in _monthly(start, card.payment_day_of_month, through):
+            close = _last_close_on_or_before(pay_day, card.close_day_of_month)
+
+            # The statement is everything owed as of its close: what was already carried, plus
+            # everything charged up to that close.
+            billed = -sum((t.amount for t in unbilled if t.day <= close), ZERO)
+            statement = max(outstanding + billed, ZERO)
+            payment = _card_payment_for(card, statement)
+
+            outstanding = statement - payment
+            # Those charges are now part of `outstanding`. Billing them again next cycle would
+            # pay for the same coffee twice.
+            unbilled = [t for t in unbilled if t.day > close]
+
+            if payment <= ZERO:
+                continue
+
+            txns.append(
+                Txn(
+                    day=pay_day,
+                    amount=-payment,
+                    label="card payment",
+                    kind=TxnKind.CARD_PAYMENT,
+                    card_id=card.card_id,
+                )
+            )
+
+    txns.extend(spend_txns)
+    txns.extend(charges)
 
     # --- one-off shock --------------------------------------------------------------
     if shocks.large_expense:

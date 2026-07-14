@@ -729,3 +729,49 @@ sentence from the model now actually configured.
 The end-to-end run that would have closed this (`scratchpad/e2e.py`, all four question shapes)
 errored before it produced a result and was never re-run. Committed green-on-unit-tests and
 explicitly *unverified live*, so the gap is visible rather than assumed closed.
+
+---
+
+## 2026-07-14 — U2 (`0011`): the simulator charges a card, and nothing else moved
+
+**Deviation from the ticket, in the safe direction.** `0011` predicted that
+`tests/test_spend_model.py` and `test_the_committed_artifact_is_the_one_the_code_generates` would
+both fail "by design" and the numbers would need re-deriving. **Neither failed.** The artifact
+regenerates byte-for-byte identical and the full suite is green.
+
+That is not luck, and it is worth understanding rather than celebrating. `SpendSpec.card_share`
+defaults to `0.0`, and `DEMO_SPEC` does not opt in — so the simulator has *learned* to charge a card
+while the demo household still charges nothing. The generator can now do the thing; it is not yet
+doing it.
+
+Two details make the byte-identity real rather than approximate:
+
+- The channel decision is **short-circuited on the left** (`card_share > 0.0 and rng.random() < ...`),
+  so at zero the rng is never drawn and the whole random sequence is the one the generator has always
+  produced. Draw it unconditionally and every committed figure in the repo shifts on the same day the
+  feature lands, for no behavioural reason at all.
+- Card payments are computed *after* the spend loop (they depend on what was charged) but **appended
+  before** it, preserving the txn order the function has always emitted. The rng order is what
+  guarantees identity; the append order is what keeps the diff empty.
+
+**So the churn moves to U4, which is where it belongs.** Turning `card_share` on for the demo changes
+what the engine *decides*, and that change should land with the reserve that can survive it — not a
+release earlier, where it would look like an unexplained artifact diff.
+
+**The one genuinely load-bearing line in the diff** is in `History._by_day`: checking totals now
+exclude `TxnKind.CARD_CHARGE`. A card charge is not a checking outflow — it is a checking outflow
+scheduled for the due date of the statement it lands on, and `CARD_PAYMENT` already carries that.
+Counting both would spend the same dollar twice. `CHECKING_KINDS` is an explicit allow-list rather
+than a `!= CARD_CHARGE` check, so the next txn kind someone adds has to make a deliberate choice
+about which side of that line it falls on.
+
+**`CardSpec.payment` is no longer what the household pays.** It is what a REVOLVER *habitually* pays.
+What actually leaves checking is `_card_payment_for(behavior, closed_statement)` — a transactor
+clears the statement, a minimum-only household pays the floor. This is the sentence the whole feature
+turns on: once the payment is determined by what was charged, there is no constant left to hardcode,
+and `precompute.py`'s ORDINARY workaround has nothing left to stand on.
+
+**`HouseholdSpec.card` survives as a read-only property** returning `cards[0]`, for single-card
+callers and tests. It is deliberately *not* a compatibility shim for the engine: anything that
+reserves, ranks or forecasts must iterate `cards`, because reading `.card` on a two-card household is
+precisely the bug this feature exists to fix.

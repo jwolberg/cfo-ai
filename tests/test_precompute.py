@@ -38,7 +38,7 @@ def spec_with(**kw) -> HouseholdSpec:
         payroll=DEMO_SPEC.payroll,
         bills=DEMO_SPEC.bills,
         spend=DEMO_SPEC.spend,
-        card=card,
+        cards=(card,),
         shocks=DEMO_SPEC.shocks,
     )
 

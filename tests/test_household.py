@@ -20,7 +20,16 @@ from decimal import Decimal
 
 import pytest
 
-from engine.models import ZERO, Account, ConnectionState, Debt, Snapshot, UserPolicy, money
+from engine.models import (
+    ZERO,
+    Account,
+    ConnectionState,
+    Debt,
+    PaymentBehavior,
+    Snapshot,
+    UserPolicy,
+    money,
+)
 from sim.household import (
     BillSpec,
     CardSpec,
@@ -54,12 +63,14 @@ def spec(**kw) -> HouseholdSpec:
             BillSpec(label="utilities", day_of_month=12, mean=money("140.00"), sd=money("35.00")),
         ),
         spend=SpendSpec(zero_day_probability=0.25, median=money("38.00"), log_sigma=0.9),
-        card=CardSpec(
-            balance=money("9000.00"),
-            apr=Decimal("0.2399"),
-            minimum_payment=money("180.00"),
-            payment=money("400.00"),
-            payment_day_of_month=20,
+        cards=(
+            CardSpec(
+                balance=money("9000.00"),
+                apr=Decimal("0.2399"),
+                minimum_payment=money("180.00"),
+                payment=money("400.00"),
+                payment_day_of_month=20,
+            ),
         ),
     )
     base.update(kw)
@@ -343,3 +354,239 @@ class TestSpecValidation:
     def test_a_zero_day_probability_outside_zero_to_one_is_refused(self) -> None:
         with pytest.raises(ValueError):
             SpendSpec(zero_day_probability=1.5, median=money("38.00"), log_sigma=0.9)
+
+
+class TestCardCharges:
+    """The card is finally a payment instrument, not just a thing that gets paid down.
+
+    Before this, every DISCRETIONARY txn hit checking and `CardSpec.payment` was a monthly
+    constant. The card could never be *charged*. Everything downstream — the grader, the spend
+    model, the whole calibration story — had therefore never seen a household use a credit card
+    the way households use credit cards.
+    """
+
+    def test_at_zero_card_share_the_history_is_byte_identical_to_the_old_one(self) -> None:
+        """The default must not move a single number already in this repo.
+
+        `card_share=0.0` draws no extra rng — the channel decision is short-circuited — so the
+        sequence is exactly the one this generator produced before cards existed. This is what
+        lets the simulator learn to charge a card without re-deriving every committed figure on
+        the same day.
+        """
+        history = generate(spec(), START, days=90, seed=7)
+
+        assert not history.card_charges()
+        # A hash of the whole txn stream: any drift in amount, day, order or kind trips this.
+        fingerprint = [(t.day, t.amount, t.label, t.kind) for t in history.txns]
+        expected = [
+            (t.day, t.amount, t.label, t.kind)
+            for t in generate(spec(), START, days=90, seed=7).txns
+        ]
+        assert fingerprint == expected
+        assert all(t.kind is not TxnKind.CARD_CHARGE for t in history.txns)
+
+    def test_a_charge_does_not_move_the_checking_balance_on_the_day_it_posts(self) -> None:
+        """The single most important property in the file.
+
+        A card charge is not a checking outflow. It is a checking outflow *scheduled for the
+        due date of the statement it lands on*. Counting it on the posting day too would spend
+        the same dollar twice — once when swiped, once when the statement is paid.
+        """
+        cash_only = generate(spec(), START, days=40, seed=11)
+        on_card = generate(
+            spec(spend=SpendSpec(0.25, money("38.00"), 0.9, card_share=1.0)),
+            START,
+            days=40,
+            seed=11,
+        )
+
+        assert on_card.card_charges(), "the household should have charged something"
+
+        # Every discretionary dollar moved to the card. Checking is now strictly better off on
+        # a day before any statement has been paid.
+        day = START + timedelta(days=5)
+        assert on_card.balance_on(day) > cash_only.balance_on(day)
+
+        # And the charges are real money, just not *yet* checking's problem.
+        charged = -sum(t.amount for t in on_card.card_charges())
+        assert charged > ZERO
+
+    def test_discretionary_spend_that_moved_to_the_card_leaves_the_checking_series(self) -> None:
+        """This is the collapse that makes the whole feature urgent.
+
+        `daily_discretionary_high` is a p90 of *checking* spend. Move that spend onto a card and
+        the series falls toward zero — the forecast stops reserving for spend at all, while the
+        real obligation reappears a month later as a statement payment. An under-reserve, bought
+        by nothing but connecting a real credit card.
+        """
+        cash_only = generate(spec(), START, days=90, seed=3)
+        on_card = generate(
+            spec(spend=SpendSpec(0.25, money("38.00"), 0.9, card_share=1.0)),
+            START,
+            days=90,
+            seed=3,
+        )
+
+        assert sum(cash_only.discretionary_series()) > ZERO
+        assert sum(on_card.discretionary_series()) == ZERO
+
+    def test_a_transactor_pays_the_statement_not_the_constant(self) -> None:
+        """A transactor clears what closed. Reserving their *minimum* against that is the hole."""
+        transactor = spec(
+            spend=SpendSpec(0.0, money("50.00"), 0.0, card_share=1.0),
+            cards=(
+                CardSpec(
+                    balance=ZERO,  # nothing carried; the statement is purely what they charged
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("40.00"),
+                    payment=money("400.00"),  # their "habitual" amount — a transactor ignores it
+                    payment_day_of_month=20,
+                    close_day_of_month=20,
+                    behavior=PaymentBehavior.TRANSACTOR,
+                ),
+            ),
+        )
+        history = generate(transactor, START, days=60, seed=5)
+
+        payments = [t for t in history.txns if t.kind is TxnKind.CARD_PAYMENT]
+        assert payments, "a transactor still pays"
+
+        first = payments[0]
+        charged_before_close = history.card_charged_between("card-1", START, date(2026, 1, 20))
+        # They paid the statement — not $400, not the $40 minimum.
+        assert -first.amount == charged_before_close
+        assert -first.amount != money("400.00")
+        assert -first.amount != money("40.00")
+
+    def test_a_minimum_only_household_pays_the_minimum(self) -> None:
+        min_only = spec(
+            cards=(
+                CardSpec(
+                    balance=money("9000.00"),
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("180.00"),
+                    payment=money("400.00"),
+                    payment_day_of_month=20,
+                    behavior=PaymentBehavior.MINIMUM_ONLY,
+                ),
+            ),
+        )
+        history = generate(min_only, START, days=60, seed=5)
+        payments = [t for t in history.txns if t.kind is TxnKind.CARD_PAYMENT]
+        assert all(-t.amount == money("180.00") for t in payments)
+
+    def test_a_revolvers_balance_grows_when_charges_outrun_payments(self) -> None:
+        """The household the interest model currently cannot describe.
+
+        `total_interest()` has no concept of new charges and `_check_amortizing()` raises if the
+        balance grows. A revolver charging more than they pay has a balance that genuinely does.
+        For them the sweep is not the answer, and the honest output is no number at all.
+        """
+        heavy = spec(
+            # ~$100/day charged, against a $400/month payment. This card grows.
+            spend=SpendSpec(0.0, money("100.00"), 0.0, card_share=1.0),
+            cards=(
+                CardSpec(
+                    balance=money("2000.00"),
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("40.00"),
+                    payment=money("400.00"),
+                    payment_day_of_month=20,
+                    behavior=PaymentBehavior.REVOLVER,
+                ),
+            ),
+        )
+        history = generate(heavy, START, days=90, seed=9)
+
+        charged = -sum(t.amount for t in history.card_charges())
+        paid = -sum(t.amount for t in history.txns if t.kind is TxnKind.CARD_PAYMENT)
+        assert charged > paid, "the card grew — this is the household the sweep cannot help"
+
+    def test_two_charges_either_side_of_the_close_land_on_different_statements(self) -> None:
+        """The close date is the seam, and it is load-bearing.
+
+        Getting it wrong by one day moves an entire month of spend across the 30-day horizon
+        boundary — the difference between reserving for it and never seeing it.
+        """
+        household = spec(
+            spend=SpendSpec(0.0, money("50.00"), 0.0, card_share=1.0),
+            cards=(
+                CardSpec(
+                    balance=ZERO,
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("25.00"),
+                    payment=money("500.00"),
+                    payment_day_of_month=20,
+                    close_day_of_month=20,
+                    behavior=PaymentBehavior.TRANSACTOR,
+                ),
+            ),
+        )
+        history = generate(household, START, days=75, seed=13)
+
+        # Charges on the 19th and the 21st are three weeks apart in the ledger and a *month*
+        # apart in when they actually leave checking.
+        before = history.card_charged_between("card-1", date(2026, 1, 19), date(2026, 1, 20))
+        after = history.card_charged_between("card-1", date(2026, 1, 21), date(2026, 2, 20))
+        assert before > ZERO and after > ZERO
+
+        payments = sorted(
+            (t for t in history.txns if t.kind is TxnKind.CARD_PAYMENT), key=lambda t: t.day
+        )
+        jan, feb = payments[0], payments[1]
+        assert jan.day == date(2026, 1, 20)
+        assert feb.day == date(2026, 2, 20)
+        # The 21st's charge is not in January's payment. It waited a month.
+        assert -jan.amount < after + before
+
+    def test_a_second_card_gets_its_own_ledger(self) -> None:
+        """Without a second card the portfolio reserve and the coverage gate have nothing to
+        bite on — and the second card is the one that overdraws you."""
+        two = spec(
+            spend=SpendSpec(0.0, money("60.00"), 0.0, card_share=1.0),
+            cards=(
+                CardSpec(
+                    balance=money("14000.00"),
+                    apr=Decimal("0.2399"),
+                    minimum_payment=money("280.00"),
+                    payment=money("450.00"),
+                    payment_day_of_month=20,
+                    card_id="target-24pct",
+                    behavior=PaymentBehavior.REVOLVER,
+                    charge_weight=0.0,  # they never charge the card they are paying down
+                ),
+                CardSpec(
+                    balance=ZERO,
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("40.00"),
+                    payment=money("100.00"),
+                    payment_day_of_month=20,
+                    card_id="daily-driver-18pct",
+                    behavior=PaymentBehavior.TRANSACTOR,
+                    charge_weight=1.0,  # everything goes here
+                ),
+            ),
+        )
+        history = generate(two, START, days=60, seed=17)
+
+        assert not history.card_charges("target-24pct")
+        assert history.card_charges("daily-driver-18pct")
+
+        # Both cards are paid, from one checking account, and the transactor's payment is the
+        # one nobody is reserving for.
+        payers = {t.card_id for t in history.txns if t.kind is TxnKind.CARD_PAYMENT}
+        assert payers == {"target-24pct", "daily-driver-18pct"}
+
+    def test_duplicate_card_ids_are_refused_because_ledgers_would_merge(self) -> None:
+        card = CardSpec(
+            balance=ZERO,
+            apr=Decimal("0.1899"),
+            minimum_payment=money("25.00"),
+            payment=money("100.00"),
+        )
+        with pytest.raises(ValueError, match="duplicate card_id"):
+            spec(cards=(card, card))
+
+    def test_a_card_share_outside_zero_to_one_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="card_share"):
+            SpendSpec(0.25, money("38.00"), 0.9, card_share=1.5)

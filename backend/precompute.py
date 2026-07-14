@@ -148,18 +148,26 @@ DEMO_SPEC = HouseholdSpec(
         BillSpec(label="rent", day_of_month=1, mean=money("1800.00")),
         BillSpec(label="utilities", day_of_month=8, mean=money("180.00"), sd=money("35.00")),
     ),
+    # card_share stays at its default of 0.0 in this unit. The demo household still charges
+    # nothing, so this artifact is byte-for-byte the one already committed — the simulator can
+    # now issue charges, but turning them on for the demo is a decision that changes what the
+    # engine decides, and it belongs with the reserve that can survive it (U4), not here.
     spend=SpendSpec(zero_day_probability=0.25, median=money("38.00"), log_sigma=0.9),
-    card=CardSpec(
-        # A $9,000 card — the low end of the persona's band — is one this household clears
-        # almost exactly inside a 90-day window, which lands the demo on a $0 balance and a
-        # "paid off" banner instead of the engine's actual daily work. $14,000 sits in the
-        # middle of the band (USERS.md) and still has a real balance at the end of the
-        # window, which is the story worth showing.
-        balance=money("14000.00"),
-        apr=Decimal("0.2399"),
-        minimum_payment=money("280.00"),
-        payment=money("450.00"),
-        payment_day_of_month=STATEMENT_DAY,
+    cards=(
+        CardSpec(
+            # A $9,000 card — the low end of the persona's band — is one this household clears
+            # almost exactly inside a 90-day window, which lands the demo on a $0 balance and a
+            # "paid off" banner instead of the engine's actual daily work. $14,000 sits in the
+            # middle of the band (USERS.md) and still has a real balance at the end of the
+            # window, which is the story worth showing.
+            balance=money("14000.00"),
+            apr=Decimal("0.2399"),
+            minimum_payment=money("280.00"),
+            payment=money("450.00"),
+            payment_day_of_month=STATEMENT_DAY,
+            card_id=CARD_ID,
+            close_day_of_month=STATEMENT_DAY,
+        ),
     ),
 )
 
