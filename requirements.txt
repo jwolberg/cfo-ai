@@ -1,0 +1,11 @@
+# The Cloud Run build's dependency manifest (ticket 0009).
+#
+# This file exists for one reason: Python buildpacks install from a `requirements.txt` at the
+# *source root*, and ours lives in `backend/`. They will not read `pyproject.toml`'s optional
+# `[api]` extra, so without this the deployed image builds cleanly and then crashes on
+# `import fastapi`.
+#
+# It deliberately does not restate the dependencies — one list, in one place. `backend/` is
+# the runtime, so `backend/requirements.txt` stays the source of truth and this defers to it.
+# CI is unaffected: it installs `pip install -e ".[dev]"` and never reads this file.
+-r backend/requirements.txt

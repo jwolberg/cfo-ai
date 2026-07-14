@@ -343,3 +343,49 @@ that a real model would rarely volunteer — but it means two things are genuine
 
 Needs one live smoke test with a real key before the demo. Everything else in this ticket is
 verified.
+
+## 2026-07-14 — ticket 0009 groundwork: the build config, not the deploy
+
+Adds the three files `gcloud run deploy --source .` needs, without deploying anything. No GCP
+project has been created and no `gcloud` command has been run against one.
+
+### Buildpacks cannot infer this build (0009 said "only if buildpacks can't infer" — they can't)
+
+Two independent reasons, hence two files:
+
+- **`Procfile`.** Python has no conventional entrypoint the way Node has `npm start`. Without
+  it the image builds and then has nothing to run.
+- **`requirements.txt` (root).** Buildpacks install from a manifest at the *source root*; ours
+  is at `backend/requirements.txt`, and the API deps are an *optional* `[api]` extra in
+  `pyproject.toml`, which they will not install. The image would build clean and crash on
+  `import fastapi`. The root file is a one-line `-r backend/requirements.txt` include rather
+  than a second copy of the list — `backend/` stays the source of truth. CI is untouched
+  (`pip install -e ".[dev]"` never reads it).
+
+A `backend/Dockerfile` would also have solved both. Buildpacks won the coin-flip because 0009
+named them first and they mean no base image to patch.
+
+### `.gcloudignore`: a 418 MB upload nobody would have noticed
+
+Without one, gcloud synthesizes a default that includes the **root** `.gitignore` via
+`#!include:.gitignore`. Nested `.gitignore` files are not honored — and our `node_modules`
+rule lives in `mobile/.gitignore`. Result: `mobile/node_modules` (418 MB, measured) uploads to
+Cloud Build on every deploy. It would have worked, just slowly and billably, which is exactly
+the kind of thing that never gets diagnosed.
+
+`sim/` is deliberately **not** excluded despite being unused at request time: `pyproject.toml`
+lists it as a package and `backend/precompute.py` imports it, so excluding 40 KB risks a build
+failure. `backend/data/decisions.json` must never be excluded — it is the service's entire
+state (ADR 0002), and without it the container will not boot.
+
+### `--workers 1` is the same decision as `--max-instances=1`
+
+Already noted above for the instance cap; the Procfile is the second place it has to hold. The
+`/assistant/message` rate cap is per-process, so a second Uvicorn worker doubles the ceiling on
+Anthropic spend just as a second instance would. One process, one counter.
+
+### Still not done
+
+The deploy itself. Placeholders (project, region, service) are unset, and no live Anthropic
+smoke test has run — see the "Blocked: no live LLM verification" note above, which is now
+unblocked (a key exists) but still unexercised.
