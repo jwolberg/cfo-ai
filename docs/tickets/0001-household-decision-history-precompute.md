@@ -2,7 +2,7 @@
 id: "0001"
 title: Household decision-history precompute
 type: feature
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
