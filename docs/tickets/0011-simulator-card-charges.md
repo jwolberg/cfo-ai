@@ -2,7 +2,7 @@
 id: "0011"
 title: Simulator — actually charge the card
 type: feature
-status: todo
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent

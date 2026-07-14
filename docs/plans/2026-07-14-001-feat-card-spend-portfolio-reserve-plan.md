@@ -29,6 +29,106 @@ deferred — see U8 and Scope Boundaries).
 
 ---
 
+## Build Progress
+
+*Last updated 2026-07-14.*
+
+**Every implementation unit in this plan is built and on `main`.** 357 Python tests, 39 mobile
+tests, ruff and typecheck clean.
+
+| Unit | Ticket | Status | Landed in |
+|------|--------|--------|-----------|
+| U1 Types: card, cycle, portfolio, spend profile | `0010` | done | #28 |
+| U2 Simulator: card charges, behaviour-driven payment, 2nd card | `0011` | done | #28 |
+| U3 Derivation: cards, spend profile, coverage detector | `0012` | done | #28 |
+| U4 **Engine: the obligation reserve** | `0013` | done | #28 |
+| U5 Interest: charges, grace, transactor zero-claim | `0014` | done | #29 |
+| U6 Backend: `GET /spend` | `0015` | done | #29 |
+| U7 Mobile: tabs + Spending screen | `0016` | done | #29 — **attestation action not built, see below** |
+| U8 Grader + replay driver | `0017` | done | #29 |
+
+### The first measured numbers the engine has ever had about itself
+
+U8's whole purpose was to produce these. On the demo household, 72 of 90 days gradeable (the rest
+are blocking refusals that never ran a forecast, and grading them as zero error would flatter us
+precisely on the days we knew least):
+
+| | |
+|---|---|
+| Breach rate (days we were *optimistic*) | **6.9%** |
+| Sweep-caused overdrafts (`prd.md` §5.2's guardrail) | **0** |
+| Worst projection error | **−$1,656** |
+| False-refusal cost — our conservatism | **$3,516** |
+| Deferred (cadence holds) — *not* a cost | **$11,973** |
+
+**The deferral partition is 77% of that number.** Totalled naively, "false refusal cost" comes to
+$15,489, of which $11,973 is money that moves next week. Counting it would turn the metric into a
+measure of *how long the cadence made someone wait* rather than of our forecast error — and the
+calibration dial would then learn to talk us out of the cadence rule, and out of this feature's
+coverage gates with it.
+
+> **6.9% is a starting reading, not a licence.** One household, one seed, 72 days. See "What is
+> next" below.
+
+### Two things this plan claimed that turned out to be wrong
+
+**The first design of `obligation_in_horizon` opened the hole it exists to close** — reserving only
+the *closed* statement drops the reserve to $0 for the last third of every cycle. Caught by
+adversarial review, before any code existed. The reserve covers two statements. See `## Review
+History`.
+
+**The invariant test was green against broken code, twice.** Verified by deleting the fix and
+checking the test went red. It did not — the first draft never paid off the statement (so term 1
+masked the missing term 2), the second skipped a statement that closed the same day. A safety test
+that has never been *seen* to fail is not evidence.
+
+### What was deliberately NOT built
+
+**The attestation action (U7).** `UNATTESTED` is a blocking refusal and its copy surfaces in the
+Decisions feed — but *attesting* is a **write**, and this backend has no database by design
+(`docs/decisions/0002-generated-json-artifact-over-database.md`). A button that appears to save an
+attestation and cannot would be theatre of the worst kind: it would look like the coverage gate was
+handled.
+
+**Consequence, stated plainly:** the demo household attests trivially, so
+`CARD_COVERAGE_INCOMPLETE` is the one refusal in this feature that **nobody has seen end-to-end in
+the product.**
+
+---
+
+## What is next
+
+Nothing in this plan is outstanding. These are the threads it leaves behind, in the order they
+should be pulled:
+
+1. **Verify the assistant guard live against Sonnet.** `docs/implementation-notes.md` sets live
+   verification as the acceptance bar for anything touching `verify()`, and that bar is **currently
+   unmet on `main`**. Every guard bug ever found has been about how a *particular model* phrases
+   things — and this feature added two new dollar-figure phrasings (`UNBILLED_ACCRUING`,
+   `NO_INTEREST_TO_AVOID`) plus a word-order rule that is an assumption about how a model orders a
+   figure and a date in a clause. It has only ever met the fake test client. **This is the highest
+   unpriced risk on `main`.**
+
+2. **Turn 6.9% into a distribution.** The breach rate is one household, one seed. Replay a
+   *population* — the three household shapes in
+   `docs/learnings/2026-07-13-the-spend-model-over-reserves.md`, across many seeds — before anyone
+   reads a licence off it.
+
+3. **Then, and only then, the spend model.** With a measured distribution, ship `SpendProfile` into
+   the forecast **with its dial set to reproduce today's refusals** (no behaviour change, no new
+   risk), and loosen only as far as the measurement licenses. The learning's sequencing is intact
+   and this is the last step of it.
+
+4. **The attestation write path.** Needs a decision about state that ADR `0002` deliberately
+   deferred. Until it exists, the coverage gate is real in the engine and unexercised in the
+   product.
+
+5. **`BELOW_MIN_SWEEP` still hides `cap_reasons`** and tells the user something untrue ("what's left
+   is under $1.00") when the real cause is an exhausted weekly cap. Pre-existing, unticketed, and
+   now adjacent to code this feature touched.
+
+---
+
 ## Problem Frame
 
 ### The diagnosis, corrected

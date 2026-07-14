@@ -2,7 +2,7 @@
 id: "0016"
 title: Mobile — bottom tabs, Spending screen, attestation gate
 type: feature
-status: todo
+status: done
 priority: medium
 repo: cfo-ai
 agentId: mobile-rn-agent

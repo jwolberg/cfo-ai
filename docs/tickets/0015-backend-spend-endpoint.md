@@ -2,7 +2,7 @@
 id: "0015"
 title: Backend — GET /spend
 type: feature
-status: todo
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent

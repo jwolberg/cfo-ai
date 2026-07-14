@@ -2,7 +2,7 @@
 id: "0014"
 title: Interest — cards get charged
 type: feature
-status: todo
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent

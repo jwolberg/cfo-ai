@@ -2,7 +2,7 @@
 id: "0012"
 title: Derivation — cards, spend profile, coverage detector
 type: feature
-status: todo
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
