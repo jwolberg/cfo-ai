@@ -862,3 +862,169 @@ not which Tuesday the engine happened to sweep on.
 `engine/interest.py` still takes a `Debt` and still models a balance that only ever shrinks.
 `decide.py` adapts a `Card` to it via `_as_debt()` — a labelled, temporary adapter and **not** a
 second source of truth: the reserve reads `Card` and only `Card`. U5 (`0014`) removes it.
+
+---
+
+## 2026-07-14 — U5 (`0014`): the interest model admits that cards get charged
+
+`total_interest()` projected a balance that could only ever **shrink**. It had no concept of new
+charges, so a revolver putting $1,500/month onto the card we sweep against got a payoff date that
+never arrives and an interest-avoided figure overstated *by construction* — the one number
+`prd.md` §5.1 says the company is graded on.
+
+`Card` gains `observed_monthly_charges`, derived in `precompute.py` from the household's own
+history. `_check_amortizing()` has always been there; what is new is that it can finally **fire for
+the right reason**. Until charges entered the model, the one household it exists to protect was
+invisible to it.
+
+**Charges post at the close, before the payment — not daily.** That understates the days they spend
+accruing, so it understates the interest, so it understates what we claim to have saved. Wrong in
+the safe direction, deliberately: the alternative is a model that flatters us on the single figure
+we are paid on.
+
+**A TRANSACTOR's `total_interest` is `ZERO`, not `None`.** The distinction carries weight. `None`
+means *we cannot say*; `ZERO` means *we can, and it is nothing*. They hold the grace period, which
+already does exactly what our sweep claims to do, so sweeping their cash onto a card they were
+going to clear is a **prepayment, not a saving** — and taking a share of it (§7.2, "profit only on
+progress") would be charging for nothing. `decide()` already refuses to target them (U4); this is
+the model agreeing.
+
+### The demo's interest claim moved, and it is not an error
+
+**$6,678 -> $9,916.** Decisions did not change (still 10 sweeps / 80 refusals, same $11,719 swept) —
+only the claim did. The model now knows the household keeps charging the card, so *their own*
+payoff takes longer, so a sweep genuinely avoids more interest. Their real trajectory is worse than
+we were modelling, which makes our help worth **more**, not less. The figure got bigger because the
+model got honest, and those are not usually the same thing — worth stating plainly rather than
+letting it read as inflation.
+
+### The `_as_debt` adapter is gone
+
+`decide.py` no longer imports `Debt` at all. `engine/interest.py` takes a `Card`. There is now
+exactly one source of truth for what a household owes and what they pay against it.
+
+`Debt` itself survives, unused by the engine. Removing it is a separate cleanup and not this
+ticket's.
+
+### Hand-computed amortization is unchanged
+
+Every existing test in `tests/test_interest.py` still passes, because the `card()` helper defaults
+to `charges="0.00"`. The old arithmetic is still exactly right — for a household that has stopped
+using the card. That is a real household, and it is no longer the *only* one the model can describe.
+
+---
+
+## 2026-07-14 — U6/U7 (`0015`, `0016`): the spend surface, and one thing deliberately not built
+
+### `GET /spend` feeds no decision, and a test enforces that
+
+The rolling 30-day series is the exact structure that will eventually replace
+`daily_discretionary_high` in the forecast. It ships here as a **dashboard**, a release before it
+is trusted with a decision — so it earns its way into the forecast having already been looked at by
+real households. `test_the_spend_surface_feeds_no_decision` asserts `engine/forecast.py` never reads
+it. That swap would *loosen* the reserve, and loosening needs the measured breach rate `0017` has
+not produced yet. It does not get to arrive quietly inside a dashboard ticket.
+
+### The "no router" stance is retired, and no router was added
+
+`App.tsx` argued that file-based routing was scaffolding for navigation that did not exist. That was
+right with one screen. There are two now, and they are **co-equal** — someone opening the app to see
+where their money went is not on a detour from the decision feed, they are doing the other half of
+the thing the product is for.
+
+`expo-router` (SDK 57) is capable and it is a great deal of machinery for a boolean. Two screens, no
+nesting, no deep links, no URL state: a `useState` and two `Pressable`s. Both screens stay **mounted**
+(`display: none`, not unmount) so a half-scrolled feed does not reset every time you glance at
+spending.
+
+The strip chart is hand-rolled from `View`s. A charting dependency would be more code than the chart
+and another package in the bundle.
+
+### The growing-card panel is not styled like an error
+
+`theme.ts` contains **no red**, deliberately: a refusal is the product working, and colouring it like
+a failure would quietly turn the most common outcome in the feed into a fault. That argument applies
+here too. A household whose card grew is being told the truth about their spending, not shown an app
+error. Deep green, the same voice as a refusal.
+
+### NOT BUILT: the attestation action
+
+[9.1] makes `UNATTESTED` a **blocking** refusal, which makes "these are all my cards" a hard
+onboarding precondition. The engine half is real and tested (`0013`), and the refusal copy already
+surfaces in the Decisions feed.
+
+**The action is missing, and it should stay missing until there is somewhere to put it.** Attesting
+is a *write*, and this backend has no database — it serves one committed JSON artifact
+(`docs/decisions/0002-generated-json-artifact-over-database.md`). A button that appears to save an
+attestation and cannot would be theatre, and the worst kind: it would look like the coverage gate was
+handled.
+
+The demo household attests trivially (`attested=True` — one card, and we generated it), so
+`CARD_COVERAGE_INCOMPLETE` never fires in the served window. **That means the gate is unexercised
+end-to-end**, and it is the one refusal in this feature nobody has seen in the product. Worth
+knowing before it meets a real portfolio.
+
+---
+
+## 2026-07-14 — U8 (`0017`): the grader has a caller, and the engine has a measured error
+
+`engine/outcome.py` existed for a day and a half and **nothing called it**. `backend/replay.py` is
+the caller. The artifact is byte-identical after it — the replay observes and changes nothing.
+
+**The first numbers the engine has ever had about itself**, on the demo household (72 of 90 days
+gradeable; the rest are blocking refusals that never ran a forecast):
+
+| | |
+|---|---|
+| Breach rate (days we were *optimistic*) | **6.9%** |
+| Sweep-caused overdrafts | **0** |
+| Worst projection error | **−$1,656** |
+| False-refusal cost (our conservatism) | **$3,516** |
+| Deferred (cadence holds — *not* a cost) | **$11,973** |
+
+### The deferral partition is not a nicety — it is 77% of the number
+
+Totalled naively, "false refusal cost" comes to **$15,489**. Of that, **$11,973 is deferred money
+that moves next week.** Counting it would make the metric a measure of *how long the cadence made
+someone wait*, not a measure of our forecast error — and the calibration dial would then learn to
+talk us out of the cadence rule, and out of this feature's coverage gates with it.
+
+`DEFERRING_REASONS` names all three: `CADENCE_HOLD` (the money moves next week),
+`CARD_COVERAGE_INCOMPLETE` (resolves on attestation), `CARD_BEHAVIOR_UNKNOWN` (resolves by itself
+after three cycles). `NO_SURPLUS` is deliberately **not** in it — that refusal is simply correct, and
+being right costs nothing.
+
+### Two bugs caught while writing it
+
+**The shadow replay must apply its own sweeps.** The first version assumed we had never acted —
+`days_since_last_sweep=None`, `swept_this_week=0`. It never tripped `CADENCE_HOLD`, so it observed
+**zero deferrals**, so the entire partition above was untested and invisible. It would have reported
+a clean $0 deferred and nobody would have questioned it. If the engine had been running, it *would*
+have swept, and the cadence *would* have held — so the walk carries the sweep state, exactly as
+`precompute.build()` does.
+
+What our sweeps are **not** in is `Realized`. That is the household's own movement, and `grade()`
+applies the decision's sweep to it itself — the caller cannot forget, because the caller is not the
+one who applies it.
+
+**A cold start throws away most of the window.** Without the 60-day warm-up runway that `build()`
+walks, the first 60 days are `INSUFFICIENT_HISTORY` — blocking refusals with no projection, and
+therefore ungradeable. 12 gradeable days instead of 72. The warm-up is walked and not graded: those
+refusals are true, and they are not forecast errors.
+
+### One definition of a Snapshot, not two
+
+`assemble_snapshot()` is exported from `precompute.py` and used by both the artifact walk and the
+replay. Two copies of "how a Snapshot is assembled" would drift, and the day they drifted the
+calibration numbers would quietly start describing an engine that never shipped. Same argument
+`untouchable()` and `apply_caps()` are exported under — and it has already paid for itself once.
+
+### What this unlocks, and what it does not
+
+`daily_discretionary_high` **still has not moved**, and this ticket does not move it. What exists now
+is the *evidence* required to move it: a measured breach rate. The learning's sequencing is intact —
+land the grader and the driver (**done**), ship the new spend model with its dial set to reproduce
+today's refusals, and loosen only as far as the measurement licenses.
+
+**6.9% is a starting reading, not a licence.** It is one household, one seed, 72 days. A population
+and a distribution come before anyone touches the forecast.

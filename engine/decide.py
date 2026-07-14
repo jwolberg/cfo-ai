@@ -28,7 +28,6 @@ from engine.models import (
     CardPortfolio,
     ConnectionState,
     CoverageState,
-    Debt,
     Decision,
     PaymentBehavior,
     Reason,
@@ -160,27 +159,6 @@ def _idle_elsewhere(s: Snapshot) -> list[Reason]:
         return []
 
     return [Reason(ReasonCode.IDLE_CASH_ELSEWHERE, {"amount": idle})]
-
-
-def _as_debt(card: Card) -> Debt:
-    """A `Card` seen through the old `Debt` shape, for `engine/interest.py`.
-
-    A deliberate, temporary adapter and **not** a second source of truth: the reserve reads
-    `Card` and only `Card`. This exists because the interest model still amortizes a balance
-    that only ever shrinks, and teaching it about new charges is its own unit (0014 / U5). When
-    that lands, this function goes with it.
-
-    `interest_bearing_balance`, not `total_owed`: a transactor's unbilled charges are covered
-    by the grace period and accrue nothing.
-    """
-    return Debt(
-        debt_id=card.card_id,
-        balance=card.interest_bearing_balance,
-        minimum_payment=card.minimum_payment,
-        minimum_due_date=card.statement_due_date,
-        apr=card.apr,
-        observed_monthly_payment=card.observed_monthly_payment,
-    )
 
 
 def _select_target(portfolio: CardPortfolio) -> tuple[Card | None, Reason | None]:
@@ -457,7 +435,7 @@ def decide(snapshot: Snapshot) -> Decision:
     # What the sweep saves — the number the user is told and the number the company is
     # graded on (prd.md §5.1). None when the APR is unknown or the card does not amortize,
     # in which case no claim is emitted at all rather than a guessed one.
-    if (saved := claimable_interest_avoided(_as_debt(target), amount, snapshot.today)) is not None:
+    if (saved := claimable_interest_avoided(target, amount, snapshot.today)) is not None:
         reasons.append(
             Reason(ReasonCode.INTEREST_AVOIDED, {"amount": saved, "debt_id": target.card_id})
         )

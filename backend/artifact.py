@@ -52,7 +52,7 @@ from engine.models import (
     ReasonCode,
 )
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Where the committed artifact lives. Shipped in the source tree (not built at deploy
 # time) so Cloud Run's buildpacks package it with everything else — see the plan's
@@ -311,6 +311,86 @@ def summarize(days: tuple[DayRecord, ...]) -> Summary:
 
 
 @dataclass(frozen=True)
+class SpendSnapshot:
+    """What the household spends, and what their card is about to take.
+
+    Comprehension, not a decision. Every figure here is *reported*; none of it feeds
+    `forecast.py`. Swapping the forecast onto `worst_30d` would **loosen** the reserve, and
+    loosening needs the measured breach rate `engine/outcome.py` cannot yet produce (U8).
+
+    The two obligations are kept separate because they are due a **month apart**, and a single
+    "what you owe" number hides exactly the thing the user needs to see.
+    """
+
+    # The statement that has already closed. Inside the horizon, and reserved.
+    statement_balance: Decimal
+    statement_due: date
+    # Charged since that close. Not yet due — this is next month's bill, forming now.
+    unbilled_balance: Decimal
+    unbilled_due: date
+    # What the engine is holding back for the closed statement. The line that ties the
+    # dashboard to the reserve and stops it looking arbitrary.
+    reserved: Decimal
+
+    # Every overlapping 30-day total in the trailing window, by channel. The strip chart.
+    rolling_30d_cash: tuple[Decimal, ...]
+    rolling_30d_card: tuple[Decimal, ...]
+
+    # Did the card grow last cycle? If charges outran payments the sweep is not their answer,
+    # and the product should say so rather than staying quiet about it.
+    charged_last_cycle: Decimal
+    paid_last_cycle: Decimal
+
+    @property
+    def card_grew_by(self) -> Decimal:
+        return self.charged_last_cycle - self.paid_last_cycle
+
+    @property
+    def worst_30d_cash(self) -> Decimal:
+        return max(self.rolling_30d_cash, default=ZERO)
+
+    @property
+    def worst_30d_card(self) -> Decimal:
+        return max(self.rolling_30d_card, default=ZERO)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "statement_balance": _encode(self.statement_balance),
+            "statement_due": self.statement_due.isoformat(),
+            "unbilled_balance": _encode(self.unbilled_balance),
+            "unbilled_due": self.unbilled_due.isoformat(),
+            "reserved": _encode(self.reserved),
+            "rolling_30d_cash": [_encode(v) for v in self.rolling_30d_cash],
+            "rolling_30d_card": [_encode(v) for v in self.rolling_30d_card],
+            "charged_last_cycle": _encode(self.charged_last_cycle),
+            "paid_last_cycle": _encode(self.paid_last_cycle),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> SpendSnapshot:
+        if not isinstance(raw, dict):
+            raise ArtifactError("spend is not a JSON object")
+        try:
+            return cls(
+                statement_balance=_decimal(raw["statement_balance"], "statement_balance"),
+                statement_due=date.fromisoformat(raw["statement_due"]),
+                unbilled_balance=_decimal(raw["unbilled_balance"], "unbilled_balance"),
+                unbilled_due=date.fromisoformat(raw["unbilled_due"]),
+                reserved=_decimal(raw["reserved"], "reserved"),
+                rolling_30d_cash=tuple(
+                    _decimal(v, "rolling_30d_cash") for v in raw["rolling_30d_cash"]
+                ),
+                rolling_30d_card=tuple(
+                    _decimal(v, "rolling_30d_card") for v in raw["rolling_30d_card"]
+                ),
+                charged_last_cycle=_decimal(raw["charged_last_cycle"], "charged_last_cycle"),
+                paid_last_cycle=_decimal(raw["paid_last_cycle"], "paid_last_cycle"),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ArtifactError(f"malformed spend: {exc}") from exc
+
+
+@dataclass(frozen=True)
 class Artifact:
     """The whole served window, plus the stats derived from it."""
 
@@ -319,6 +399,7 @@ class Artifact:
     window_end: date
     days: tuple[DayRecord, ...]
     summary: Summary
+    spend: SpendSnapshot
 
     def by_day(self, day: date) -> DayRecord | None:
         """The record for `day`, or None — the single source of "no record".
@@ -340,6 +421,7 @@ class Artifact:
                 "end": self.window_end.isoformat(),
             },
             "summary": self.summary.to_dict(),
+            "spend": self.spend.to_dict(),
             "days": [d.to_dict() for d in self.days],
         }
 
@@ -357,6 +439,7 @@ class Artifact:
                 window_end=date.fromisoformat(window["end"]),
                 days=tuple(DayRecord.from_dict(d) for d in raw["days"]),
                 summary=Summary.from_dict(raw["summary"]),
+                spend=SpendSnapshot.from_dict(raw["spend"]),
             )
         except ArtifactError:
             raise

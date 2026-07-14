@@ -43,8 +43,15 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from backend.artifact import SCHEMA_VERSION, Artifact, DayRecord, dump, summarize
-from engine.decide import decide
+from backend.artifact import (
+    SCHEMA_VERSION,
+    Artifact,
+    DayRecord,
+    SpendSnapshot,
+    dump,
+    summarize,
+)
+from engine.decide import decide, untouchable
 from engine.models import (
     MIN_GRACE_DAYS,
     ZERO,
@@ -516,6 +523,31 @@ def observed_monthly_payment(history: History, card: CardSpec, today: date) -> D
     return money(sum(payments, ZERO) / len(payments))
 
 
+def observed_monthly_charges(history: History, card: CardSpec, today: date) -> Decimal | None:
+    """What the household puts on this card each cycle.
+
+    Without this the interest model projects a balance that can only ever *shrink* — so a
+    household charging more than they pay gets a payoff date that never arrives and an
+    interest-avoided figure overstated by construction. That is the number prd.md §5.1 says the
+    company is graded on.
+
+    Derived from observed charges over observed cycles. `None` below three cycles, which means
+    the model assumes **zero** future charges — the old, flattering behaviour, and reachable
+    only while `CARD_BEHAVIOR_UNKNOWN` is already blocking the sweep outright.
+    """
+    seen = history.as_of(today)
+    charges = seen.card_charges(card.card_id)
+    if not charges:
+        return ZERO
+
+    cycles = len({(t.day.year, t.day.month) for t in seen.txns if t.kind is TxnKind.CARD_PAYMENT})
+    if cycles < MIN_CYCLES_TO_CLASSIFY:
+        return None
+
+    charged = -sum((t.amount for t in charges), ZERO)
+    return money(charged / cycles)
+
+
 def infer_close_day(history: History, card: CardSpec, today: date) -> tuple[int, bool]:
     """The statement close day, and whether we are *sure* of it.
 
@@ -579,6 +611,7 @@ def derive_card(history: History, card: CardSpec, today: date, ledger_balance: D
         next_close_date=next_close,
         behavior=behavior,
         observed_monthly_payment=observed_monthly_payment(seen, card, today),
+        observed_monthly_charges=observed_monthly_charges(seen, card, today),
     )
 
 
@@ -683,6 +716,66 @@ def derive_spend_profile(history: History, today: date) -> SpendProfile:
         by_category={},
         rolling_30d_cash=_rolling_30d(cash),
         rolling_30d_card=_rolling_30d(card),
+    )
+
+
+def assemble_snapshot(
+    history: History,
+    today: date,
+    spec: HouseholdSpec,
+    policy: UserPolicy,
+    ledger_balance: Decimal,
+    checking: Decimal,
+    swept_this_week: Decimal = ZERO,
+    days_since_last_sweep: int | None = None,
+) -> Snapshot:
+    """The `Snapshot` the engine sees on `today`, given the walk's state.
+
+    Exported for `backend/replay.py`, and defined **here** on purpose. The replay driver has to
+    grade the engine that shipped, not a second reconstruction of it: two copies of "how a
+    Snapshot is assembled" would drift, and the day they drifted the calibration numbers would
+    quietly start describing an engine that never existed. That is the same argument
+    `untouchable()` and `apply_caps()` are exported under, and it has already paid for itself once.
+
+    The sweep state is **passed in**, not inferred. A replay that assumed we had never swept would
+    never trip `CADENCE_HOLD` — and would therefore never observe a deferral, which is precisely
+    the thing the calibration has to partition on. If the engine had been running, it would have
+    swept, and the cadence would have held.
+    """
+    cards = tuple(
+        derive_card(history, card_spec, today, ledger_balance=ledger_balance)
+        for card_spec in spec.cards
+    )
+
+    return Snapshot(
+        today=today,
+        accounts=(
+            Account(
+                account_id=CHECKING_ID,
+                balance=money(checking),
+                connection=ConnectionState.HEALTHY,
+                balance_age_days=0,
+                kind=AccountKind.CHECKING,
+            ),
+            Account(
+                account_id=SAVINGS_ID,
+                balance=SAVINGS_BALANCE,
+                connection=ConnectionState.HEALTHY,
+                balance_age_days=0,
+                kind=AccountKind.SAVINGS,
+            ),
+        ),
+        funding_account_id=CHECKING_ID,
+        events=derive_cash_events(spec, today),
+        pending=(),
+        portfolio=derive_portfolio(history, cards, today, attested=True),
+        policy=policy,
+        daily_discretionary_high=daily_discretionary_high(history, today),
+        income_variation=income_variation(history, today),
+        history_days=(today - history.start).days + 1,
+        sweeps_in_flight=ZERO,
+        swept_this_week=swept_this_week,
+        days_since_last_sweep=days_since_last_sweep,
     )
 
 
@@ -822,6 +915,8 @@ def build(
                     history_days=snapshot.history_days,
                 )
             )
+            # The last served day's view of the card is the one the Spending screen renders.
+            final = (today, portfolio, untouchable(snapshot)[1])
 
     days = tuple(served)
     _assert_demo_is_worth_showing(days)
@@ -832,6 +927,63 @@ def build(
         window_end=days[-1].day,
         days=days,
         summary=summarize(days),
+        spend=derive_spend_snapshot(history, *final),
+    )
+
+
+def derive_spend_snapshot(
+    history: History, today: date, portfolio: CardPortfolio, reserved: Decimal
+) -> SpendSnapshot:
+    """What the Spending screen renders. Comprehension, not a decision.
+
+    Every figure here is *reported*. None of it feeds `forecast.py` — swapping the forecast onto
+    `worst_30d_cash` would **loosen** the reserve, and loosening needs the measured breach rate
+    `engine/outcome.py` cannot yet produce (U8). The panel ships a release *before* it is trusted
+    with a decision, deliberately: it earns its way into the forecast having already been looked
+    at by real households.
+    """
+    profile = derive_spend_profile(history, today)
+    card = portfolio.cards[0] if portfolio.cards else None
+
+    if card is None:
+        return SpendSnapshot(
+            statement_balance=ZERO,
+            statement_due=today,
+            unbilled_balance=ZERO,
+            unbilled_due=today,
+            reserved=reserved,
+            rolling_30d_cash=profile.rolling_30d_cash,
+            rolling_30d_card=profile.rolling_30d_card,
+            charged_last_cycle=ZERO,
+            paid_last_cycle=ZERO,
+        )
+
+    # The cycle just gone — what they put on the card against what they took off it. If the
+    # first number is bigger, the card grew, and a sweep is not what fixes that.
+    window_start, close = _cycle_bounds(today, card.cycle.close_day_of_month)
+    seen = history.as_of(today)
+    charged = seen.card_charged_between(card.card_id, window_start, close)
+    paid = -sum(
+        (
+            t.amount
+            for t in seen.txns
+            if t.kind is TxnKind.CARD_PAYMENT
+            and t.card_id == card.card_id
+            and window_start <= t.day <= close
+        ),
+        ZERO,
+    )
+
+    return SpendSnapshot(
+        statement_balance=card.statement_balance,
+        statement_due=card.statement_due_date,
+        unbilled_balance=card.unbilled_balance,
+        unbilled_due=card.cycle.due_for(card.next_close_date),
+        reserved=reserved,
+        rolling_30d_cash=profile.rolling_30d_cash,
+        rolling_30d_card=profile.rolling_30d_card,
+        charged_last_cycle=charged,
+        paid_last_cycle=paid,
     )
 
 

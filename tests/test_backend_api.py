@@ -328,3 +328,80 @@ class TestAssistantEndpoint:
         response = client.post("/assistant/message", json={"message": "hi", "history": []})
 
         assert response.status_code == 401
+
+
+class TestSpend:
+    """`GET /spend` — comprehension, not a decision.
+
+    Nothing served here feeds the engine. The rolling series is the exact structure that will
+    eventually replace `daily_discretionary_high` in the forecast, rendered a release *before* it
+    is trusted with a decision — so it earns its way in having already been looked at.
+    """
+
+    def test_it_requires_an_api_key(self, client: TestClient) -> None:
+        assert client.get("/spend").status_code == 401
+
+    def test_the_two_obligations_are_reported_separately(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """They fall due a **month apart**. A single "what you owe" figure hides exactly the
+        thing the user needs to see: what is committed, and what is quietly forming behind it."""
+        body = client.get("/spend", headers=auth).json()
+        cycle = body["this_cycle"]
+
+        assert cycle["statement"]["reserved"] is True
+        assert cycle["unbilled"]["reserved"] is False
+        # The unbilled statement comes due strictly later — that is what makes it unbilled.
+        assert cycle["unbilled"]["due"] > cycle["statement"]["due"]
+
+    def test_the_reserve_is_shown_so_it_does_not_look_arbitrary(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """ "We're holding back $X of your cash for this." The line that ties the dashboard to
+        the engine."""
+        body = client.get("/spend", headers=auth).json()
+        assert body["this_cycle"]["held_back"] is not None
+
+    def test_every_money_field_crosses_the_wire_as_a_string(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """A float here is a rounding bug with a long fuse. The convention is repo-wide."""
+        body = client.get("/spend", headers=auth).json()
+
+        money_fields = [
+            body["this_cycle"]["statement"]["amount"],
+            body["this_cycle"]["unbilled"]["amount"],
+            body["this_cycle"]["held_back"],
+            body["last_cycle"]["charged"],
+            body["last_cycle"]["paid"],
+            body["last_cycle"]["grew_by"],
+            body["normal"]["worst_30d_cash"],
+            body["normal"]["worst_30d_card"],
+            *body["normal"]["rolling_30d_cash"],
+            *body["normal"]["rolling_30d_card"],
+        ]
+        for value in money_fields:
+            assert isinstance(value, str), f"{value!r} crossed the wire as a number"
+
+    def test_the_worst_window_is_the_worst_of_the_series(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        from decimal import Decimal
+
+        body = client.get("/spend", headers=auth).json()
+        series = [Decimal(v) for v in body["normal"]["rolling_30d_cash"]]
+
+        assert series, "a 90-day window has overlapping 30-day totals"
+        assert Decimal(body["normal"]["worst_30d_cash"]) == max(series)
+
+    def test_a_growing_card_is_reported_as_growing(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """If charges outran payments the sweep is not the answer, and `grew_by` is how the
+        product knows to say so instead of staying quiet about it."""
+        from decimal import Decimal
+
+        body = client.get("/spend", headers=auth).json()
+        last = body["last_cycle"]
+
+        assert Decimal(last["grew_by"]) == Decimal(last["charged"]) - Decimal(last["paid"])

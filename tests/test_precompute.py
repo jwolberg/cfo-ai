@@ -732,3 +732,42 @@ class TestDerivation:
     def test_derivation_changes_no_decision(self) -> None:
         """U3 is derivation only. The artifact must be exactly what it was."""
         assert art.DEFAULT_PATH.read_text() == art.to_json(build())
+
+
+class TestTheSpendSnapshot:
+    """Serialization of the spend surface. `SCHEMA_VERSION` bumped to 2."""
+
+    def test_the_spend_snapshot_round_trips_without_losing_a_cent(self) -> None:
+        """Money crosses the wire as strings, never JSON numbers. A float here is a rounding
+        bug with a very long fuse — it surfaces as a cent of disagreement between the dashboard
+        and the KPI, months later, with no obvious cause."""
+        original = build()
+        restored = art.from_json(art.to_json(original))
+
+        assert restored.spend == original.spend
+        assert restored.spend.statement_balance == original.spend.statement_balance
+        assert restored.spend.rolling_30d_cash == original.spend.rolling_30d_cash
+
+    def test_the_committed_artifact_carries_the_spend_surface(self) -> None:
+        loaded = art.load()
+        assert loaded.version == art.SCHEMA_VERSION
+        assert loaded.spend.rolling_30d_cash, "the strip chart has no data"
+
+    def test_the_unbilled_statement_is_due_after_the_closed_one(self) -> None:
+        """They are a month apart, and that gap is the whole reason card spend is an engine
+        input: two charges three weeks apart leave checking a month apart."""
+        spend = build().spend
+        assert spend.unbilled_due > spend.statement_due
+
+    def test_the_spend_surface_feeds_no_decision(self) -> None:
+        """U6 is comprehension. If `forecast.py` ever reads the rolling series, that is the
+        change the 2026-07-13 learning says needs a measured breach rate first — and it does not
+        get to arrive quietly inside a dashboard ticket.
+        """
+        import engine.forecast as forecast
+
+        with open(forecast.__file__) as fh:
+            body = fh.read()
+
+        assert "rolling_30d" not in body
+        assert "SpendProfile" not in body

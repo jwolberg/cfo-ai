@@ -56,7 +56,7 @@ from collections.abc import Mapping
 from datetime import date, timedelta
 from decimal import Decimal
 
-from engine.models import ZERO, Debt, money, statement_day
+from engine.models import ZERO, Card, PaymentBehavior, money, statement_day
 
 DAYS_PER_YEAR = Decimal("365")
 
@@ -82,34 +82,55 @@ def _next_close(after: date, day_of_month: int) -> date:
 
 
 def total_interest(
-    debt: Debt,
+    card: Card,
     start: date,
     monthly_payment: Decimal,
     extra: Mapping[date, Decimal] | None = None,
 ) -> Decimal | None:
-    """Total interest paid from `start` until the debt clears, paying `monthly_payment`.
+    """Total interest paid from `start` until the card clears, paying `monthly_payment`.
 
     `monthly_payment` is the counterfactual — what the household actually pays each cycle.
-    It is deliberately *not* read from `Debt.minimum_payment`; see the module docstring.
+    It is deliberately *not* read from `card.minimum_payment`; see the module docstring.
 
     `extra` is money paid beyond that, keyed by the day it lands. A sweep is one entry in it.
 
-    Returns `None` when the APR is unknown. Raises `ValueError` when the payments never
-    cover the accruing interest — the balance grows without bound, there is no payoff, and
-    therefore no total to return.
+    ## The card gets charged, and until now this model denied it
+
+    Every cycle, `card.observed_monthly_charges` lands back on the balance. Without that, this
+    function projected a balance that could only ever *shrink* — so a household charging
+    $1,500/month to the card we are sweeping against got a payoff date that never arrives and
+    an interest-avoided figure overstated by construction. That is the number prd.md §5.1 says
+    the company is graded on.
+
+    Charges are posted **at the close, before the payment**, not daily. That understates the
+    days they spend accruing, so it understates the interest, so it understates what we claim
+    to have saved. Wrong in the safe direction, deliberately: the alternative is a model that
+    flatters us on the one figure we are paid on.
+
+    Returns `None` when the APR is unknown, and **`ZERO` for a TRANSACTOR** — they hold the
+    grace period, so they pay no interest at all and there is nothing for a sweep to save.
+    Raises `ValueError` when the payments never cover the interest *and* the new charges: the
+    balance grows without bound, there is no payoff, and no honest total exists.
     """
-    if debt.apr is None:
+    if card.apr is None:
         return None
 
-    payments = dict(extra or {})
-    daily_rate = debt.apr / DAYS_PER_YEAR
+    if card.behavior is PaymentBehavior.TRANSACTOR:
+        # The grace period already does exactly what our sweep claims to do. They pay nothing,
+        # so there is nothing to avoid — and a "saving" we report here would be a prepayment we
+        # then charged them a share of (prd.md §7.2).
+        return ZERO
 
-    balance = debt.balance
+    payments = dict(extra or {})
+    daily_rate = card.apr / DAYS_PER_YEAR
+    charges = card.observed_monthly_charges or ZERO
+
+    balance = card.interest_bearing_balance
     accrued = ZERO  # unrounded until it posts
     paid = ZERO
 
     day = start
-    close = _next_close(start, debt.minimum_due_date.day)
+    close = _next_close(start, card.statement_due_date.day)
     balance_at_last_close = balance
     cycles = 0
 
@@ -125,14 +146,18 @@ def total_interest(
             paid += posted
             accrued = ZERO
 
+            # What they put on the card this cycle. A REVOLVER has no grace period, so these
+            # begin accruing immediately — which is exactly why a card can outrun its payments.
+            balance += charges
+
             balance -= min(monthly_payment, balance)
 
             if balance > ZERO:
                 cycles += 1
-                _check_amortizing(debt, monthly_payment, balance, balance_at_last_close, cycles)
+                _check_amortizing(card, monthly_payment, balance, balance_at_last_close, cycles)
                 balance_at_last_close = balance
 
-            close = _next_close(close + timedelta(days=1), debt.minimum_due_date.day)
+            close = _next_close(close + timedelta(days=1), card.statement_due_date.day)
 
         if balance <= ZERO:
             return paid
@@ -142,56 +167,65 @@ def total_interest(
 
 
 def _check_amortizing(
-    debt: Debt,
+    card: Card,
     monthly_payment: Decimal,
     balance: Decimal,
     previous: Decimal,
     cycles: int,
 ) -> None:
-    """Refuse to loop forever on a debt that cannot be paid off.
+    """Refuse to loop forever on a card that cannot be paid off.
 
-    A household whose payments do not cover their interest has no payoff date. That is worth
-    detecting loudly — it is the single most important fact about their finances — not
-    smoothing into a plausible-looking number.
+    A household whose payments do not cover their interest **and their new charges** has no
+    payoff date. That is worth detecting loudly — it is the single most important fact about
+    their finances — not smoothing into a plausible-looking number.
+
+    This has always been here. What is new is that it can finally *fire* for the right reason:
+    until charges entered the model, a balance could only shrink, so the one household this
+    check exists to protect was invisible to it. For them the sweep is not the answer, and the
+    honest output is no figure at all plus a sentence saying so.
     """
     if balance >= previous:
         raise ValueError(
-            f"debt {debt.debt_id!r} does not amortize: a payment of {monthly_payment} does "
-            f"not cover the interest accruing on a balance of {balance} at {debt.apr}"
+            f"card {card.card_id!r} does not amortize: a payment of {monthly_payment} does not "
+            f"cover the interest on {balance} at {card.apr} plus "
+            f"{card.observed_monthly_charges or ZERO} of new charges each cycle"
         )
 
     if cycles >= MAX_CYCLES:
         raise ValueError(
-            f"debt {debt.debt_id!r} does not amortize within {MAX_CYCLES} statement cycles"
+            f"card {card.card_id!r} does not amortize within {MAX_CYCLES} statement cycles"
         )
 
 
 def interest_avoided(
-    debt: Debt,
+    card: Card,
     sweep: Decimal,
     on: date,
     monthly_payment: Decimal,
 ) -> Decimal | None:
     """What paying `sweep` on day `on` saves, against the household's ordinary payments alone.
 
-    Returns `None` when the APR is unknown. A sweep larger than the balance saves exactly
-    what clearing the balance saves and no more — overpaying a card does not buy extra
-    interest savings and must not claim to.
+    Returns `None` when the APR is unknown, and **exactly `$0.00` for a TRANSACTOR**: their
+    grace period already does what the sweep claims to do, so a sweep is a *prepayment*, not a
+    saving. Zero is not a rounding artefact here — it is the answer.
+
+    A sweep larger than the balance saves exactly what clearing the balance saves and no more —
+    overpaying a card does not buy extra interest savings and must not claim to.
     """
     if sweep < ZERO:
         raise ValueError(f"sweep={sweep} cannot be negative")
 
-    counterfactual = total_interest(debt, start=on, monthly_payment=monthly_payment)
+    counterfactual = total_interest(card, start=on, monthly_payment=monthly_payment)
     if counterfactual is None:
         return None
 
-    with_sweep = total_interest(debt, start=on, monthly_payment=monthly_payment, extra={on: sweep})
-    assert with_sweep is not None  # same debt, same APR
+    with_sweep = total_interest(card, start=on, monthly_payment=monthly_payment, extra={on: sweep})
+    assert with_sweep is not None  # same card, same APR
 
     return money(counterfactual - with_sweep)
 
 
-def claimable_interest_avoided(debt: Debt, sweep: Decimal, on: date) -> Decimal | None:
+def claimable_interest_avoided(card: Card, sweep: Decimal, on: date) -> Decimal | None:
     """`interest_avoided`, for the decision path — returns `None` instead of raising.
 
     Two layers, deliberately, because they answer different questions:
@@ -208,10 +242,13 @@ def claimable_interest_avoided(debt: Debt, sweep: Decimal, on: date) -> Decimal 
     not amortize the debt. The caller emits no `INTEREST_AVOIDED` reason, and so there is no
     code path anywhere that can render an invented number.
     """
-    if debt.observed_monthly_payment is None:
+    if card.observed_monthly_payment is None:
         return None
 
     try:
-        return interest_avoided(debt, sweep, on, debt.observed_monthly_payment)
+        return interest_avoided(card, sweep, on, card.observed_monthly_payment)
     except ValueError:
+        # Their charges outrun their payments. The card grows, there is no payoff, and no
+        # honest figure exists — so we make no claim, and `decide()` emits no reason. For this
+        # household the sweep is not the answer, and the dashboard should say so (U7).
         return None

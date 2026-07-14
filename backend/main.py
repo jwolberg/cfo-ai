@@ -195,6 +195,60 @@ async def decisions(artifact: ArtifactDep) -> dict[str, Any]:
     }
 
 
+@app.get("/spend", dependencies=[Depends(require_api_key)])
+async def spend(artifact: ArtifactDep) -> dict[str, Any]:
+    """What the household spends, and what their card is about to take.
+
+    **Comprehension, not a decision.** Nothing served here feeds the engine. The rolling 30-day
+    series is the exact structure that will eventually replace `daily_discretionary_high` in the
+    forecast — rendered a release *before* it is trusted with a decision, so it earns its way in
+    having already been looked at by real households. Swapping the forecast onto it today would
+    *loosen* the reserve, and loosening needs a measured breach rate we cannot yet produce.
+
+    The two obligations are reported separately because they fall due a **month apart**. A single
+    "what you owe" figure hides precisely the thing the user needs to see: what is already
+    committed, and what is quietly forming behind it.
+    """
+    s = artifact.spend
+
+    return {
+        "as_of": artifact.window_end.isoformat(),
+        "this_cycle": {
+            # Already closed. Legally due, inside the horizon, and reserved.
+            "statement": {
+                "amount": usd(s.statement_balance),
+                "due": s.statement_due.isoformat(),
+                "reserved": True,
+            },
+            # Charged since. Not yet due — this is next month's bill, forming now, and it is
+            # the number that makes the card an engine input at all.
+            "unbilled": {
+                "amount": usd(s.unbilled_balance),
+                "due": s.unbilled_due.isoformat(),
+                "reserved": False,
+            },
+            # The line that stops the reserve looking arbitrary: "we're holding back $X for
+            # this."
+            "held_back": usd(s.reserved),
+        },
+        "last_cycle": {
+            "charged": usd(s.charged_last_cycle),
+            "paid": usd(s.paid_last_cycle),
+            # Positive means the card GREW. A sweep will not catch that up — the spending is
+            # the thing to change, and the product should say so rather than stay quiet.
+            "grew_by": usd(s.card_grew_by),
+        },
+        "normal": {
+            # Every overlapping 30-day total in the trailing window. The strip chart, and the
+            # answer to "what does a bad month actually look like for me".
+            "rolling_30d_cash": [usd(v) for v in s.rolling_30d_cash],
+            "rolling_30d_card": [usd(v) for v in s.rolling_30d_card],
+            "worst_30d_cash": usd(s.worst_30d_cash),
+            "worst_30d_card": usd(s.worst_30d_card),
+        },
+    }
+
+
 @app.get("/decisions/{day}/explain", dependencies=[Depends(require_api_key)])
 async def explain_decision(day: str, artifact: ArtifactDep) -> Any:
     """Why the engine did what it did on `day`, in plain language. No LLM in this path.

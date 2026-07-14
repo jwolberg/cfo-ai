@@ -96,3 +96,55 @@ export interface Turn {
   role: 'user' | 'assistant';
   content: string;
 }
+
+/**
+ * `GET /spend` — comprehension, not a decision.
+ *
+ * Nothing in this shape feeds the engine. The rolling series is the exact structure that will
+ * eventually replace `daily_discretionary_high` in the forecast, rendered a release *before* it
+ * is trusted with a decision — so it earns its way in having already been looked at.
+ */
+export interface Obligation {
+  amount: Money;
+  due: IsoDate;
+  /**
+   * Whether the engine is already holding cash back for it.
+   *
+   * The closed statement is reserved; the unbilled balance is not — it comes due a *month*
+   * later, outside the 30-day horizon. Two charges three weeks apart leave checking a month
+   * apart, and collapsing them into one "what you owe" number hides precisely that.
+   */
+  reserved: boolean;
+}
+
+export interface ThisCycle {
+  statement: Obligation;
+  unbilled: Obligation;
+  /** "We're holding back $2,240 of your cash for this." The reserve, made legible. */
+  held_back: Money;
+}
+
+export interface LastCycle {
+  charged: Money;
+  paid: Money;
+  /**
+   * Positive means the card **grew**. A sweep will not catch that up — the spending is the
+   * thing to change, and the engine already declines to claim any interest saved for them.
+   */
+  grew_by: Money;
+}
+
+export interface Normal {
+  /** Every overlapping 30-day total in the trailing window. The strip chart. */
+  rolling_30d_cash: Money[];
+  rolling_30d_card: Money[];
+  worst_30d_cash: Money;
+  worst_30d_card: Money;
+}
+
+export interface SpendResponse {
+  as_of: IsoDate;
+  this_cycle: ThisCycle;
+  last_cycle: LastCycle;
+  normal: Normal;
+}
