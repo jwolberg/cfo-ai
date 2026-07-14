@@ -2,7 +2,7 @@
 id: "0010"
 title: Card, cycle, portfolio, and spend-profile types
 type: feature
-status: todo
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent

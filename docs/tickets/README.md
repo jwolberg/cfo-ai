@@ -76,6 +76,20 @@ in full has a $2,000 obligation and a $40 minimum. We reserve $40.
 | [0016](0016-mobile-spending-surface.md) | Mobile — bottom tabs, Spending screen, attestation gate | mobile-rn-agent | 0015 |
 | [0017](0017-grader-and-replay-driver.md) | Wire the grader and build the replay driver | backend-python-agent | — |
 
+## Status: all eight landed (2026-07-14)
+
+`0010`–`0013` shipped in **#28**, `0014`–`0017` in **#29**. 357 Python tests, 39 mobile tests.
+
+Two exceptions worth carrying forward rather than closing quietly:
+
+- **`0016` did not build the attestation action.** `UNATTESTED` is a blocking refusal and its copy
+  reaches the feed, but *attesting* is a write and this backend has no database by design (ADR
+  `0002`). So `CARD_COVERAGE_INCOMPLETE` is the one refusal in this feature nobody has seen
+  end-to-end in the product.
+- **`0017` produced a number, not a licence.** Breach rate **6.9%**, zero sweep-caused overdrafts,
+  on one household and one seed. `daily_discretionary_high` still has not moved and must not until
+  that is a distribution.
+
 ## Three things to know before picking one of these up
 
 **`0013` is the whole feature.** It carries the safety fix, and the first draft of its design opened

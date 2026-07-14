@@ -2,7 +2,7 @@
 id: "0017"
 title: Wire the grader and build the replay driver
 type: feature
-status: todo
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent
