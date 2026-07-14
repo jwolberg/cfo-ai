@@ -160,3 +160,186 @@ trusting its calibration is the moment this bug begins to bite.**
 Implication for #4, written into a test so it cannot be forgotten: the replay driver **must
 sweep the cap across a range**. Run at production caps alone, it will measure a forecast error
 of zero and issue a false clean bill of health.
+
+---
+
+## 2026-07-13 — Ticket #0001, `backend/precompute.py` + `backend/artifact.py`
+
+### The finding: `BELOW_MIN_SWEEP` tells the user something untrue
+
+**This is an engine bug, it is user-facing, and I have not fixed it — it is outside this
+plan's scope (`engine/` is explicitly untouched), so it needs a decision.**
+
+`engine/decide.py` builds up `cap_reasons` from `apply_caps()` — `PER_SWEEP_CAP`,
+`WEEKLY_CAP`, `CLEARS_THE_CARD` — and then, if the capped amount lands under `MIN_SWEEP`,
+**drops them all** and refuses with `BELOW_MIN_SWEEP` alone:
+
+```python
+amount, cap_reasons = apply_caps(snapshot, target, available)
+reasons = [projection, *cap_reasons]
+if amount < MIN_SWEEP:
+    return _refuse(Reason(ReasonCode.BELOW_MIN_SWEEP, {"minimum": MIN_SWEEP}), low=low)
+```
+
+`explain.py` renders that as *"What's left is under $1.00, which isn't worth moving."* But
+when the cause is an exhausted weekly cap, what is actually true is *"you have $2,000 spare
+and you have already hit your $600 weekly limit."* The user is told they have no money. They
+have plenty of money; they have no **headroom**. Those are different facts, and the refusal
+reports the wrong one.
+
+I found this because my first tuning pass produced a window where **65 of 90 days** carried
+that message. The fix looks small — carry `cap_reasons` into the `BELOW_MIN_SWEEP` refusal —
+but it changes the reasons attached to a decision in the tested core, so I have left the
+engine alone and worked around it. Worth its own ticket.
+
+**The workaround, and its cost.** `DEMO_POLICY`'s weekly cap is set wide enough
+(`max_sweep=$400`, `max_weekly_sweep=$1600`) that the household's actual cash position, not
+an exhausted cap, is what does the refusing. The served window now reads honestly: 35 sweeps,
+55 refusals, and the refusals are almost all `NO_SURPLUS` ("your balance is heading for a low
+of $X… there's nothing spare"). The cost is that `WEEKLY_CAP` no longer appears in the demo's
+own data — it is covered by a unit test with a tighter policy instead
+(`test_the_weekly_cap_binds_when_sweeps_stack_up`).
+
+### Sweeps are subtracted from checking; `sim/` does not know we exist
+
+The plan's sketch reads the checking balance straight from `History.balance_on(day)`. That
+history is the household's realized life **without us in it** — it knows nothing of our
+sweeps. Left as written, three months of daily sweeps would drain the card while the checking
+balance sat untouched, and the engine would go on finding surplus that, in the world it had
+just created, was already spent.
+
+So the walk carries a running total of settled sweeps and subtracts it. This is what produces
+the demo's actual shape: the balance falls toward the buffer, the surplus runs out, and the
+engine starts refusing on `NO_SURPLUS`. That equilibrium **is** the product, and without this
+correction the demo would not have shown it.
+
+### The debt ledger: `outstanding = principal + unposted interest`
+
+Mirrors `engine/interest.py` exactly, because the two must agree — that module prices what a
+sweep *saves*, and a ledger that drifted from it would claim savings against a balance the
+engine never believed in. Interest accrues daily on the **principal** at `apr/365` and posts
+at statement close, so unposted interest earns no interest (the average-daily-balance method,
+not compounding). The balance the engine sees is principal plus what has accrued, so it grows
+every day — including a day with no payment and no sweep.
+
+Payments come off **principal first**, overflowing into accrued interest only if they exceed
+it. That overflow is not a rounding detail: `CLEARS_THE_CARD` sweeps exactly `outstanding`,
+and a payment that retired only principal would strand the accrued interest — the card would
+converge on a balance of a few cents it could never clear and the engine would refuse to
+sweep forever. A test pins it (`test_paying_the_full_outstanding_clears_the_card`).
+
+### Income variation is bucketed by 28 days, not by calendar month
+
+`Snapshot.income_variation` is documented as the coefficient of variation of *monthly* income,
+and the gate (`MAX_INCOME_VARIATION`) is 25%. This household is paid **biweekly** — so a
+calendar month holds two paychecks, except the ~4 times a year it holds three. Bucketing by
+calendar month scores that pure calendar artifact as a ~24% swing in income and comes within a
+whisker of tripping `INCOME_TOO_VARIABLE`, refusing to serve a household whose pay is in fact
+identical every fortnight.
+
+28-day buckets are the honest measure of a biweekly earner's variability, and that is what the
+walk computes. Flagging it because it is a deviation from how `Snapshot`'s own docstring
+describes the field — and because the same trap is waiting for the real recurring-event
+detector when it is built.
+
+### The card payment is an ORDINARY event, not `DEBT_MINIMUM`
+
+The household pays $450/month against a $280 minimum. Tagging the whole payment `DEBT_MINIMUM`
+would make `forecast.py` skip all $450 of it (see `EventKind`) while `decide()` reserved only
+the $280 — **under-counting $170 of real outflow**, which is the direction that ends in an
+overdraft. Emitting it as `ORDINARY` at full value instead means the $280 minimum is reserved
+on top of a payment that already includes it: an over-count of $280, which costs a slightly
+smaller sweep and cannot hurt anyone. Wrong in the safe direction, deliberately.
+
+### Demo spec: a $14,000 card, not $9,000
+
+`tests/test_outcome.py`'s household helper (a $9,000 card) is the persona, and I started
+there. But this household clears a $9,000 card almost exactly inside a 90-day window — the
+artifact came out with a **$1.06** balance, which lands the demo on a "paid off" banner
+instead of on the engine's actual daily work. $14,000 sits mid-band for the persona
+(`USERS.md`: $8k–40k) and still has $3,452 outstanding at the end of the window.
+
+The paid-off path is still built and tested (`test_a_card_paid_off_mid_window_keeps_being_served`),
+it is simply not what the demo's own data does — which is what the plan asked for.
+
+### Deliberately not modelled
+
+The gates for stale balances, unhealthy connections, and in-flight sweeps are all about a live
+Plaid connection this demo does not have. Rather than invent failures, the walk holds those
+inputs healthy (fresh balance, healthy connection, nothing in flight) and lets the refusals
+that *do* appear come from the household's real cash position. A sweep settles at the start of
+the next day, which is why yesterday's sweep — not today's — is the one that lands on the
+ledger.
+
+### Follow-ups
+
+- **Ticket needed:** carry `cap_reasons` into `decide()`'s `BELOW_MIN_SWEEP` refusal, so a
+  cap-exhausted refusal says so. User-facing, small, in the tested core.
+- The summary's `interest_avoided_total` sums the engine's own per-sweep `INTEREST_AVOIDED`
+  claims across the window ($6,019 against $8,924 swept). Each claim is honest on its own
+  terms — it is what `engine/interest.py` says that one sweep saved, assuming no further
+  sweeps — but summing 35 of them is a slightly different number from "total interest avoided
+  by the whole window," and the two are close but not identical. Fine for the demo; worth
+  naming before it appears on a slide.
+
+---
+
+## 2026-07-13 — Ticket #0004, `backend/assistant.py`
+
+### The guard is the feature; the system prompt is not
+
+R6 says the assistant never states a financial claim it can't trace to a `Decision`. A system
+prompt asking a model not to invent numbers is a *request*, and a request is not a guarantee.
+So the enforcement lives in `verify()`: every dollar figure, outcome, and reason code in the
+model's final text is matched against the tool results **from that turn** before the user sees
+a word of it. Anything unverifiable replaces the whole response with "no record."
+
+Most of `tests/test_assistant.py` is an attempt to get a false claim past it, not a check that
+the happy path works. The rule that earns its keep is the per-`(date, field)` binding: the
+model fetches two *real* decisions and quotes one day's sweep against the other day's date.
+Every number in that sentence is true. A presence-only check ("is $400 anywhere in the tool
+results?") waves it through and the user is told something false assembled from entirely true
+parts. Full contract and its stated limits:
+`docs/decisions/0003-structured-tool-calling-over-embeddings.md`.
+
+### What the guard cannot do — worth saying out loud
+
+Extraction is regex over the final text, not comprehension. A fabrication phrased with no
+parseable figure, no outcome word, and no known reason phrase is not caught. The guard raises
+the cost of a **specific, quotable** false claim — the kind that would actually mislead
+someone about their money — rather than proving the prose true in general. A figure in a
+sentence that names no date can only be checked against the union of the turn's fetched
+decisions, since there is nothing to bind it to. Both limits are accepted deliberately: a
+guard that verified every sentence semantically would need a second model, and would have the
+same problem one level up.
+
+### Deviation: the service now refuses to start without `ANTHROPIC_API_KEY`
+
+Not in the plan, and it changes U2's startup contract. The alternative is a service that comes
+up healthy, passes Cloud Run's probe, and then fails the first time a user opens the modal and
+asks a question — which is the worst possible moment to discover a missing secret. Consistent
+with the artifact and API-key checks already there: fail at deploy, not in front of an
+interviewer. Both backend test fixtures now set it; nothing ever calls out with it.
+
+### The rate cap and `--max-instances=1` are a pair
+
+The in-process rate cap on `POST /assistant/message` is only a real bound on Anthropic spend
+because exactly one instance ever runs. With two instances, each holds its own counter and the
+ceiling silently doubles. `MAX_TURNS_PER_MINUTE` and the deploy flag are one decision in two
+places — noted here and in the code so ticket 0009 doesn't drop the flag.
+
+### Blocked: no live LLM verification
+
+There is no `ANTHROPIC_API_KEY` and no `ant` profile in this environment, so **not one call to
+Anthropic has been made**. Everything is tested against a fake client that replays scripted
+responses. That is the right way to test the guard — it lets us put words in the model's mouth
+that a real model would rarely volunteer — but it means two things are genuinely unverified:
+
+1. **The request shape.** Whether `claude-opus-4-8` accepts this exact combination of
+   `tools` + `thinking: {"type": "adaptive"}` + `output_config: {"effort": "medium"}` has not
+   been observed, only written from the current API reference.
+2. **Whether a real model actually triggers the guard.** The adversarial cases are synthetic.
+   How often a real model would produce one is unknown and unknowable from here.
+
+Needs one live smoke test with a real key before the demo. Everything else in this ticket is
+verified.

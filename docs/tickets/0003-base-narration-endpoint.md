@@ -2,7 +2,7 @@
 id: "0003"
 title: Base narration endpoint
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent

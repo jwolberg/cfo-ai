@@ -2,7 +2,7 @@
 id: "0002"
 title: FastAPI service scaffold
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent
