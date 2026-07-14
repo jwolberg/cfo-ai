@@ -48,6 +48,10 @@ export interface Summary {
   current_buffer: Money;
   targeted_debt_id: string | null;
   targeted_debt_balance: Money;
+  /** What the card owed on the first served day — the denominator for "how far down is it".
+   *  It measures the *card's* progress, which includes the household's own payments as well
+   *  as our sweeps. The copy must not claim we did all of it. */
+  starting_debt_balance: Money;
   sweep_count: number;
   refuse_count: number;
   paid_off: boolean;

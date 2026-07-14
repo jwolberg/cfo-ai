@@ -6356,6 +6356,9 @@
     },
     "paid_off": false,
     "refuse_count": 80,
+    "starting_debt_balance": {
+      "$dec": "13652.42"
+    },
     "sweep_count": 10,
     "targeted_debt_apr": {
       "$dec": "0.2399"
@@ -6368,7 +6371,7 @@
       "$dec": "11705.45"
     }
   },
-  "version": 2,
+  "version": 3,
   "window": {
     "end": "2026-05-30",
     "start": "2026-03-02"
