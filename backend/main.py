@@ -142,6 +142,10 @@ def summary_json(summary: art.Summary) -> dict[str, Any]:
         "current_buffer": usd(summary.current_buffer),
         "targeted_debt_id": summary.targeted_debt_id,
         "targeted_debt_balance": usd(summary.targeted_debt_balance),
+        # The denominator for "how far down is the card". Sent as a figure, never as a
+        # percentage: the UI can divide, and a percentage computed here would be a second
+        # place the number lives.
+        "starting_debt_balance": usd(summary.starting_debt_balance),
         "sweep_count": summary.sweep_count,
         "refuse_count": summary.refuse_count,
         "paid_off": summary.paid_off,

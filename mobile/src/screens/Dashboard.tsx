@@ -93,7 +93,24 @@ export function Dashboard({ onExplain }: Props) {
   );
 }
 
+/** How far the card has come down since the window opened, as a 0-1 fraction.
+ *
+ * The denominator is the card's balance on the **first served day**, which is why the backend
+ * sends it. Clamped, because a card that grew — the household charged more than we paid off —
+ * would otherwise render a negative bar, and this component is not the right place to argue
+ * about that. It is the right place to refuse to draw it.
+ */
+function paidDownFraction(summary: DecisionsResponse['summary']): number {
+  const start = Number(summary.starting_debt_balance);
+  const now = Number(summary.targeted_debt_balance);
+  if (!Number.isFinite(start) || start <= 0) return 0;
+  return Math.min(1, Math.max(0, (start - now) / start));
+}
+
 function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
+  const progress = paidDownFraction(summary);
+  const percent = Math.round(progress * 100);
+
   return (
     <View>
       <Text style={styles.greeting}>Your money, working.</Text>
@@ -102,11 +119,41 @@ function Header({ summary }: { summary: DecisionsResponse['summary'] }) {
         a reason.
       </Text>
 
-      <View style={styles.statCard}>
-        <Text style={styles.statLabel}>Interest you won&apos;t pay</Text>
-        <Text style={[styles.statValue, { color: colors.blueText }]}>
-          {formatMoney(summary.interest_avoided_total)}
-        </Text>
+      {/* The hero. Deep green, not white — this is the one card that is a reward rather than
+          a readout, and it should not look like the stats beneath it. */}
+      <View style={styles.heroCard}>
+        {summary.sweep_count > 0 && (
+          <Text style={styles.streak}>🔥 {summary.sweep_count}-payment streak</Text>
+        )}
+
+        <Text style={styles.heroLabel}>Beaten the bank out of</Text>
+        <Text style={styles.heroValue}>{formatMoney(summary.interest_avoided_total)}</Text>
+        {/* The engine's claim is conditional — `engine/interest.py` measures it against what
+            they were *already* paying and hedges accordingly. The headline is allowed to
+            celebrate; it is not allowed to drop the condition. */}
+        <Text style={styles.heroFoot}>in interest, as long as you keep your payments up</Text>
+
+        {!summary.paid_off && (
+          <View style={styles.progressBlock}>
+            <View style={styles.progressHead}>
+              <Text style={styles.progressLabel}>Card paid down</Text>
+              <Text style={styles.progressPercent}>{percent}%</Text>
+            </View>
+            {/* accessibility: a bar that only speaks in colour says nothing to a screen
+                reader, and this is the number the whole screen is about. */}
+            <View
+              style={styles.track}
+              accessibilityRole="progressbar"
+              accessibilityValue={{ min: 0, max: 100, now: percent }}
+            >
+              <View style={[styles.fill, { width: `${percent}%` }]} />
+            </View>
+            <Text style={styles.progressFoot}>
+              {formatMoneyRounded(summary.starting_debt_balance)} when we started →{' '}
+              {formatMoneyRounded(summary.targeted_debt_balance)} now
+            </Text>
+          </View>
+        )}
       </View>
 
       <View style={styles.statRow}>
@@ -201,6 +248,39 @@ const styles = StyleSheet.create({
   },
   statLabel: { ...type.label, marginBottom: space.xs },
   statValue: { ...type.stat },
+
+  // The reward card. Brand deep green, reversed out — the only inverted surface on the
+  // screen, which is what makes it read as a prize and not a fourth statistic.
+  heroCard: {
+    backgroundColor: colors.deepGreen,
+    borderRadius: radius.card,
+    padding: space.lg,
+    marginBottom: space.md,
+    ...shadow,
+  },
+  streak: {
+    ...type.label,
+    color: colors.brandBlue,
+    marginBottom: space.sm,
+  },
+  heroLabel: { ...type.label, color: '#8FBFB4' },
+  heroValue: { fontSize: 38, fontWeight: '700', color: '#FFFFFF', marginTop: space.xs },
+  heroFoot: { ...type.small, color: '#8FBFB4', marginTop: space.xs },
+
+  progressBlock: { marginTop: space.lg },
+  progressHead: { flexDirection: 'row', justifyContent: 'space-between' },
+  progressLabel: { ...type.label, color: '#8FBFB4' },
+  progressPercent: { ...type.label, color: '#FFFFFF' },
+  track: {
+    height: 10,
+    borderRadius: 5,
+    // A visible trough, so the bar reads as "how far along" rather than a floating chip.
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    marginTop: space.sm,
+    overflow: 'hidden',
+  },
+  fill: { height: '100%', borderRadius: 5, backgroundColor: colors.leafGreen },
+  progressFoot: { ...type.small, color: '#8FBFB4', marginTop: space.sm },
 
   feedLabel: { ...type.label, marginTop: space.md, marginBottom: space.sm },
 

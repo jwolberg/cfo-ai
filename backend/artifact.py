@@ -52,7 +52,7 @@ from engine.models import (
     ReasonCode,
 )
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Where the committed artifact lives. Shipped in the source tree (not built at deploy
 # time) so Cloud Run's buildpacks package it with everything else — see the plan's
@@ -222,6 +222,13 @@ class Summary:
     targeted_debt_id: str | None
     targeted_debt_balance: Decimal
     targeted_debt_apr: Decimal | None
+    # What the card owed on the **first** served day. The denominator of "how far down is it",
+    # and the only honest one available: the UI cannot derive it, because the per-day
+    # `debt_balance` does not cross the wire.
+    #
+    # Note this measures the *card's* progress, not ours. The household's own payments are in
+    # it alongside our sweeps, and the copy must not claim otherwise.
+    starting_debt_balance: Decimal
     sweep_count: int
     refuse_count: int
     paid_off: bool
@@ -234,6 +241,7 @@ class Summary:
             "targeted_debt_id": self.targeted_debt_id,
             "targeted_debt_balance": _encode(self.targeted_debt_balance),
             "targeted_debt_apr": _encode(self.targeted_debt_apr),
+            "starting_debt_balance": _encode(self.starting_debt_balance),
             "sweep_count": self.sweep_count,
             "refuse_count": self.refuse_count,
             "paid_off": self.paid_off,
@@ -256,6 +264,9 @@ class Summary:
                     raw["targeted_debt_balance"], "targeted_debt_balance"
                 ),
                 targeted_debt_apr=None if apr is None else _decimal(apr, "targeted_debt_apr"),
+                starting_debt_balance=_decimal(
+                    raw["starting_debt_balance"], "starting_debt_balance"
+                ),
                 sweep_count=int(raw["sweep_count"]),
                 refuse_count=int(raw["refuse_count"]),
                 paid_off=bool(raw["paid_off"]),
@@ -304,6 +315,7 @@ def summarize(days: tuple[DayRecord, ...]) -> Summary:
         targeted_debt_id=None if last.paid_off else last.debt_id,
         targeted_debt_balance=last.debt_balance,
         targeted_debt_apr=last.debt_apr,
+        starting_debt_balance=days[0].debt_balance,
         sweep_count=sweeps,
         refuse_count=refusals,
         paid_off=last.paid_off,

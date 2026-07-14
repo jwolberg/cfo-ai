@@ -47,6 +47,7 @@ function body(over: Partial<DecisionsResponse> = {}): DecisionsResponse {
       current_buffer: '800.00',
       targeted_debt_id: 'card_demo',
       targeted_debt_balance: '3451.64',
+      starting_debt_balance: '13652.42',
       sweep_count: 35,
       refuse_count: 55,
       paid_off: false,
@@ -77,7 +78,55 @@ describe('the dashboard', () => {
     await render(<Dashboard onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('$6,019.10')).toBeTruthy());
-    expect(screen.getByText("Interest you won't pay")).toBeTruthy();
+    expect(screen.getByText('Beaten the bank out of')).toBeTruthy();
+  });
+
+  it('celebrates the number without dropping the condition attached to it', async () => {
+    // `engine/interest.py` measures interest-avoided against what the household was *already*
+    // paying, and only makes the claim when it can stand behind it. The headline is allowed to
+    // celebrate. It is not allowed to promise the money is banked.
+    getDecisions.mockResolvedValue(body());
+
+    await render(<Dashboard onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('$6,019.10')).toBeTruthy());
+    expect(
+      screen.getByText('in interest, as long as you keep your payments up'),
+    ).toBeTruthy();
+  });
+
+  it('shows the streak and how far the card has come down', async () => {
+    getDecisions.mockResolvedValue(body());
+
+    await render(<Dashboard onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('🔥 35-payment streak')).toBeTruthy());
+    // $13,652.42 -> $3,451.64 is 74.7% of the way down.
+    expect(screen.getByText('75%')).toBeTruthy();
+    expect(screen.getByText(/\$13,652 when we started/)).toBeTruthy();
+  });
+
+  it('does not show a streak before the first payment', async () => {
+    // "🔥 0-payment streak" is a taunt, not a reward.
+    getDecisions.mockResolvedValue(
+      body({ summary: { ...body().summary, sweep_count: 0 } }),
+    );
+
+    await render(<Dashboard onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('Beaten the bank out of')).toBeTruthy());
+    expect(screen.queryByText(/payment streak/)).toBeNull();
+  });
+
+  it('does not draw a progress bar for a card that is already paid off', async () => {
+    getDecisions.mockResolvedValue(
+      body({ summary: { ...body().summary, paid_off: true } }),
+    );
+
+    await render(<Dashboard onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('Beaten the bank out of')).toBeTruthy());
+    expect(screen.queryByText('Card paid down')).toBeNull();
   });
 
   it('shows a refusal in plain language, not as an error', async () => {
