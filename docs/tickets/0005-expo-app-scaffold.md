@@ -2,7 +2,7 @@
 id: "0005"
 title: Expo app scaffold
 type: feature
-status: open
+status: done
 priority: low
 repo: cfo-ai
 agentId: mobile-rn-agent

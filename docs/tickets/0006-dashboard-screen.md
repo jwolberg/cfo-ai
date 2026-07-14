@@ -2,7 +2,7 @@
 id: "0006"
 title: Dashboard screen
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: mobile-rn-agent

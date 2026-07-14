@@ -1,0 +1,9 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    // Jest's globals (`describe`, `it`, `expect`) are ambient, not imported. Without this the
+    // typecheck job — which is the only mobile gate in CI — fails on every test file.
+    "types": ["jest"]
+  }
+}
