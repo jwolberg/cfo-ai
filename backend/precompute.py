@@ -246,11 +246,15 @@ def derive_cash_events(
     with nothing to bite on and quietly turn the conservative forecast into an exact one.
 
     The card payment is emitted as an ORDINARY outflow at its full amount, not as
-    DEBT_MINIMUM. The household pays $400 against a $180 minimum; tagging the whole payment
-    as the minimum would make `forecast.py` skip all $400 of it (see `EventKind`) while
-    `decide()` reserved only the $180 — under-counting $220 of real outflow, in the one
+    DEBT_MINIMUM. The household pays $450 against a $280 minimum (`DEMO_SPEC`); tagging the
+    whole payment as the minimum would make `forecast.py` skip all $450 of it (see `EventKind`)
+    while `decide()` reserved only the $280 — under-counting $170 of real outflow, in the one
     direction that ends in an overdraft. Reserving the minimum on top of the full payment
-    over-counts by $180 instead, which is the direction that costs a slightly smaller sweep.
+    over-counts by $280 instead, which is the direction that costs a slightly smaller sweep.
+
+    Figures are `DEMO_SPEC`'s, and they have drifted once already: this paragraph narrated
+    $400/$180/$220 long after the spec moved to $450/$280, and a scoping document later copied
+    the stale numbers back out of it. If `DEMO_SPEC` changes, change these too.
     """
     through = today + timedelta(days=horizon)
     events: list[CashEvent] = []
