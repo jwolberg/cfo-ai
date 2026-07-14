@@ -43,6 +43,7 @@ to answer" — a distinction that is invisible in the copy and matters enormousl
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import time
@@ -56,6 +57,8 @@ from typing import Any
 from backend.artifact import Artifact, DayRecord
 from engine.explain import explain
 from engine.models import Action, ReasonCode
+
+logger = logging.getLogger(__name__)
 
 MODEL = "claude-opus-4-8"
 
@@ -137,8 +140,22 @@ class Facts:
 
     by_date: dict[date, DayRecord] = field(default_factory=dict)
 
+    # Dates that appear *inside* a fetched decision's own copy, rather than being decisions
+    # themselves. `engine/explain.py` names the projection horizon in its sentences — "heading
+    # for a low of $748.79 on 2026-06-05" — so a model that narrates the engine faithfully will
+    # repeat that date. It was fetched; repeating it is not a fabrication.
+    #
+    # They are emphatically NOT decision dates. Nothing may be attributed to one: `verify()`
+    # still refuses to let an outcome ("we swept") hang off a supporting date, and amounts are
+    # still bound to real decisions. This set only buys the right to *mention* the date.
+    supporting: set[date] = field(default_factory=set)
+
     def record(self, record: DayRecord) -> None:
         self.by_date[record.day] = record
+        # Derived from `explain()` — the same call `_decision_payload` uses — so this set is
+        # exactly the dates the model was actually shown, and cannot drift from the payload.
+        for sentence in explain(record.decision):
+            self.supporting |= _dates_in(sentence, {record.day}) - {record.day}
 
     def amounts_for(self, day: date) -> set[Decimal]:
         record = self.by_date.get(day)
@@ -275,7 +292,18 @@ def run_tool(name: str, args: dict[str, Any], artifact: Artifact, facts: Facts) 
 # "$1,154.67", "$400.00", "$400". Deliberately narrow: a figure the model writes some other
 # way is not a figure the guard can check, and the system prompt tells it to write them
 # exactly as the tool returned them.
-_MONEY = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)")
+# The comma group is `+`, not `*`, and that single character is load-bearing.
+#
+# With `*`, the first alternative matches "$5321.39" as just **"532"**: it takes three digits,
+# finds no comma, finds no decimal point (the next character is "1"), and succeeds — and an
+# alternation never backtracks into its second branch once the first one has matched. So every
+# figure over $1,000 written without a thousands separator was truncated to its first three
+# digits, matched no real amount, and was rejected as fabricated. "$12,092.26" was fine;
+# "$12092.26" became "$120" and got a truthful answer thrown away.
+#
+# Requiring at least one comma group here means an un-separated number falls through to the
+# second branch, which consumes all of it.
+_MONEY = re.compile(r"\$\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)")
 
 _ISO_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 
@@ -296,6 +324,22 @@ _LONG_DATE = re.compile(
 _SWEEP_WORDS = re.compile(r"\b(swept|paid|moved|sent|put)\b", re.IGNORECASE)
 _REFUSE_WORDS = re.compile(
     r"\b(didn't|did not|no payment|nothing|refused|held|skipped|left)\b", re.IGNORECASE
+)
+
+# A *negated* sweep verb — "no money moved", "not a cent was paid", "nothing was swept". This
+# is the single most natural way to describe a refusal, and without it the guard reads the verb
+# and calls the sentence a payment claim: a live model wrote "On 2026-03-13, no money moved"
+# and was told it had fabricated a payment, on 6 of 6 attempts.
+#
+# It is a refusal assertion, not a weakened sweep assertion. Both directions matter: the same
+# sentence about a day that *was* a sweep is a false denial, and must still be caught.
+#
+# The negation has to precede the verb — "we paid nothing" is a different shape and already
+# trips _REFUSE_WORDS. The bounded gap keeps this to one clause, so a negation in a previous
+# sentence cannot silently license a payment claim in this one.
+_NEGATED_SWEEP = re.compile(
+    r"\b(?:no|not|never|nothing)\b[^.!?]{0,30}?\b(?:swept|paid|moved|sent|put)\b",
+    re.IGNORECASE,
 )
 
 # Distinctive phrases from `engine/explain.py`'s copy, mapped back to the code they render.
@@ -378,8 +422,19 @@ def verify(text: str, facts: Facts) -> Rejection | None:
     window = set(facts.by_date)
 
     for segment in _segments(text):
-        cited = _dates_in(segment, window) & window
-        unknown_dates = _dates_in(segment, window) - window
+        named = _dates_in(segment, window)
+        cited = named & window
+
+        # Three kinds of date, and conflating the first two is what made this guard reject the
+        # engine's own copy on 82 of 90 days: the model quoted a projection horizon out of an
+        # explanation it had genuinely fetched, and was told it had fabricated it.
+        #
+        #   cited        — a decision we fetched. Claims may attach to it.
+        #   supporting   — a date *inside* a fetched decision (the projection horizon). May be
+        #                  mentioned; may not be claimed about.
+        #   unknown      — never fetched in any form. Nothing may be said about it.
+        supporting = (named - window) & facts.supporting
+        unknown_dates = named - window - facts.supporting
 
         amounts = [d for raw in _MONEY.findall(segment) if (d := _to_decimal(raw)) is not None]
 
@@ -388,6 +443,15 @@ def verify(text: str, facts: Facts) -> Rejection | None:
         # conversation — the client resends history, and history is not evidence.
         if unknown_dates and (amounts or _SWEEP_WORDS.search(segment)):
             return Rejection(f"claim about {sorted(unknown_dates)[0]}, which was never fetched")
+
+        # An outcome may never hang off a supporting date. "On 2026-06-05 we swept $400" names
+        # a date the model really was shown and an amount that really exists — every part true,
+        # the attribution invented. Only a *decision* date can carry an outcome, so this is a
+        # rejection precisely when the segment offers no real decision to attribute it to.
+        if supporting and not cited and _SWEEP_WORDS.search(segment):
+            return Rejection(
+                f"outcome asserted about {sorted(supporting)[0]}, which is not a decision"
+            )
 
         for amount in amounts:
             if cited:
@@ -408,8 +472,13 @@ def verify(text: str, facts: Facts) -> Rejection | None:
             # "didn't pay" about a sweep, or "paid" about a refusal. The refusal wording is
             # checked only when the segment doesn't also read as a sweep, because "we paid
             # nothing" trips both patterns and means exactly what the refusal means.
-            asserts_sweep = bool(_SWEEP_WORDS.search(segment))
-            asserts_refusal = bool(_REFUSE_WORDS.search(segment))
+            #
+            # A negated sweep verb ("no money moved") is a refusal assertion and emphatically
+            # not a payment one — reading it as a payment is what made the guard reject the
+            # plainest possible description of a refusal.
+            negated = bool(_NEGATED_SWEEP.search(segment))
+            asserts_sweep = bool(_SWEEP_WORDS.search(segment)) and not negated
+            asserts_refusal = bool(_REFUSE_WORDS.search(segment)) or negated
 
             if asserts_sweep and not asserts_refusal and not swept:
                 return Rejection(f"{day} was a refusal, not a payment")
@@ -520,9 +589,17 @@ def answer(
                 messages=messages,
                 timeout=API_TIMEOUT_SECONDS,
             )
-        except Exception:
+        except Exception as exc:
             # Any transport failure — timeout, rate limit, 5xx, a dead socket. The turn is
             # unavailable. It is emphatically not an invitation to answer from memory.
+            #
+            # The user-facing copy deliberately cannot tell these apart ("I couldn't reach the
+            # assistant just then — try asking again"), and it should not try. But *we* need to,
+            # and without this line we couldn't: a deployment with a bad ANTHROPIC_API_KEY
+            # returns that same reassuring "try again" forever, and it reads as a network blip
+            # rather than the permanent failure it is. That is not hypothetical — it cost us an
+            # afternoon. The exception type is the whole diagnosis; log it.
+            logger.warning("assistant turn unavailable: %s: %s", type(exc).__name__, exc)
             return Reply(UNAVAILABLE_REPLY, Outcome.UNAVAILABLE)
 
         if response.stop_reason != "tool_use":
@@ -572,9 +649,14 @@ def answer(
         return Reply(text, Outcome.ANSWERED)
 
     if (rejection := verify(text, facts)) is not None:
-        # A caught hallucination. The user gets the honest answer, not the confident one.
-        # The rejection reason is deliberately not shown to them — it is for our logs.
-        del rejection
+        # A caught hallucination. The user gets the honest answer, not the confident one, and
+        # never the reason — knowing *why* we distrusted a sentence is our business.
+        #
+        # But it has to reach the logs, and it previously did not: the reason was computed,
+        # `del`-ed, and thrown away, while the comment claimed it was "for our logs". A guard
+        # that rejects silently is indistinguishable from a guard that is wrong, and this one
+        # *was* wrong — it rejected the engine's own copy on 82 of 90 days and nothing said so.
+        logger.warning("guard rejected a reply: %s", rejection.reason)
         return Reply(NO_RECORD_REPLY, Outcome.GUARD_REJECTED)
 
     return Reply(text, Outcome.ANSWERED)
