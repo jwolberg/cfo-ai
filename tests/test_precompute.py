@@ -8,6 +8,7 @@ are pinned here directly, not just observed through a finished artifact.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -18,6 +19,7 @@ from backend.precompute import (
     CHECKING_ID,
     DEMO_POLICY,
     DEMO_SPEC,
+    ESTIMATED_APR,
     SAVINGS_BALANCE,
     SEED,
     SERVED_DAYS,
@@ -41,9 +43,11 @@ from backend.precompute import (
     walk,
 )
 from engine.forecast import HORIZON_DAYS
+from engine.interest import total_interest
 from engine.models import (
     ZERO,
     Action,
+    AprSource,
     CoverageState,
     EventKind,
     PaymentBehavior,
@@ -965,7 +969,7 @@ class TestTheSpendDial:
             today=WINDOW_START + timedelta(days=90),
             spec=DEMO_SPEC,
             policy=DEMO_POLICY,
-            ledger_balance=money("9000.00"),
+            ledger_balances={DEMO_SPEC.card.card_id: money("9000.00")},
             checking=money("3000.00"),
         )
         assert snapshot.spend_30d_high is None
@@ -992,3 +996,238 @@ class TestTheSpendDial:
 
         assert worst is not None and scaled is not None
         assert scaled == money(worst * Decimal("1.5"))
+
+
+class TestTheWalkCarriesAPortfolio:
+    """Ticket `0027`. **The walk could not simulate a multi-card household.**
+
+    It built one `DebtLedger` from `spec.card` and handed that single balance to `derive_card` for
+    every card, so a $3,000 card reported the $14,000 card's balance. `_select_target` would rank
+    them equal and pick on APR alone; the obligation reserve would count the same $14,009 twice.
+
+    It survived because the engine's multi-card types, reserve and ranking (`0010`–`0017`) are
+    built and tested, and **every household the walk has ever driven has one card** — so nothing
+    exercised them. `HouseholdSpec.card`'s own docstring warns against exactly the read the walk
+    was doing.
+    """
+
+    @staticmethod
+    def _two_cards() -> HouseholdSpec:
+        """$14,000 at 23.99% and $3,000 at 18.99%. Different balances, so a shared ledger shows."""
+        big, small = DEMO_SPEC.cards[0], DEMO_SPEC.cards[0]
+        return replace(
+            DEMO_SPEC,
+            cards=(
+                replace(big, card_id="card_big", balance=money("14000.00"), apr=Decimal("0.2399")),
+                replace(
+                    small,
+                    card_id="card_small",
+                    balance=money("3000.00"),
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("60.00"),
+                    payment=money("90.00"),
+                ),
+            ),
+        )
+
+    def test_each_card_reports_its_own_balance(self) -> None:
+        """The defect, stated directly. Fails on pre-0027 code with 14009.20 == 14009.20."""
+        spec = self._two_cards()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        day = next(iter(walk(history, spec, WINDOW_START, 150)))
+
+        owed = {
+            c.card_id: c.statement_balance + c.unbilled_balance
+            for c in day.snapshot.portfolio.cards
+        }
+
+        assert owed["card_big"] != owed["card_small"], (
+            "both cards report the same balance — the walk is sharing one ledger across the "
+            "portfolio, so the engine is reasoning about a household that does not exist"
+        )
+        assert owed["card_big"] > money("13000.00")
+        assert owed["card_small"] < money("4000.00")
+
+    def test_a_sweep_settles_against_the_card_it_targeted(self) -> None:
+        """`Decision.target_debt_id` names one card. The money must land on that one and no other.
+
+        Paying the wrong card is not a rounding error: `interest.py` computes what the sweep saved
+        from the *targeted* card's APR, so a sweep credited to the wrong ledger makes the claim in
+        `prd.md` §1 — "that's $31 of interest you won't pay" — a number about a different debt.
+        """
+        spec = self._two_cards()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+
+        prev: dict[str, Decimal] | None = None
+        for w in walk(history, spec, WINDOW_START, 150):
+            if prev is not None and w.swept_yesterday is not None:
+                amount, target = w.swept_yesterday
+                others = [cid for cid in prev if cid != target]
+                # The targeted card fell by at least the sweep, net of the day's accrual.
+                assert w.debt_balances[target] < prev[target], (
+                    f"{w.day}: swept {amount} at {target}, but its balance did not fall"
+                )
+                for cid in others:
+                    # An untargeted card only ever moves by its own accrual or its own payment —
+                    # never by our sweep. It must not fall by the swept amount.
+                    assert w.debt_balances[cid] >= prev[cid] - amount + money("0.01") or (
+                        w.debt_balances[cid] > prev[cid] - amount
+                    ), f"{w.day}: swept {amount} at {target} but {cid} moved like it was paid"
+            prev = dict(w.debt_balances)
+
+    def test_two_cards_paid_on_the_same_day_both_land(self) -> None:
+        """`card_payments` was `{t.day: -t.amount}` — keyed on the day alone, so a second card paid
+        on the same day silently overwrote the first. Both cards here pay on the 20th."""
+        spec = self._two_cards()
+        assert spec.cards[0].payment_day_of_month == spec.cards[1].payment_day_of_month, (
+            "this test is meaningless unless both cards pay on the same day"
+        )
+
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        paid = {c: ZERO for c in ("card_big", "card_small")}
+        for t in history.txns:
+            if t.kind is TxnKind.CARD_PAYMENT and t.card_id in paid:
+                paid[t.card_id] += -t.amount
+
+        assert paid["card_big"] > ZERO and paid["card_small"] > ZERO, "the sim paid only one card"
+
+        # Both cards' payments must reach their own ledgers: each balance ends below its opening.
+        days = list(walk(history, spec, WINDOW_START, 150))
+        assert days[-1].debt_balances["card_small"] < money("3000.00"), (
+            "card_small never received its payments — they were keyed by day and overwritten"
+        )
+
+    def test_each_card_posts_interest_on_its_own_close_day(self) -> None:
+        """`DebtLedger.accrue` posted when `day.day == STATEMENT_DAY`, the module constant — so
+        every card posted on the 20th regardless of its own cycle."""
+        a = DebtLedger(principal=money("1000.00"), apr=Decimal("0.24"), close_day=5)
+        b = DebtLedger(principal=money("1000.00"), apr=Decimal("0.24"), close_day=20)
+
+        for offset in range(40):
+            day = date(2026, 1, 1) + timedelta(days=offset)
+            a.accrue(day)
+            b.accrue(day)
+            if day == date(2026, 1, 5):
+                assert a.accrued == ZERO, "card A did not post on its own close day"
+                assert b.accrued > ZERO, "card B posted on A's close day"
+
+
+class TestBuildStaysSingleCard:
+    """`DayRecord` carries one `debt_balance`, one `debt_apr`, one `debt_id` — the artifact schema
+    has exactly one debt because the demo household has exactly one card.
+
+    Shipping 0027's fix while leaving `build()` to silently report `cards[0]` would re-open the very
+    bug next door.
+    """
+
+    def test_a_multi_card_spec_is_refused_rather_than_half_reported(self) -> None:
+        spec = TestTheWalkCarriesAPortfolio._two_cards()
+        with pytest.raises(ValueError, match="one card"):
+            build(spec=spec)
+
+
+class TestTheAprEstimate:
+    """Ticket `0028`. **Act on the estimate. Never bill for it.**
+
+    `decision-engine.md` §6.3: Plaid does not report APR for many issuers, and the engine used to
+    refuse to rank rather than guess. It now estimates at 23% — and the whole point of the
+    provenance is that the two halves come apart:
+
+    - `decide.py` **ranks** on the guess. A wrong target optimizes worse and overdraws nobody; no
+      safety gate reads `apr_source`.
+    - `interest.py` **refuses to price** it. `prd.md` §5.1's KPI and §1's "that's $31 of interest
+      you won't pay" would otherwise be arithmetic on a number we invented.
+    """
+
+    @staticmethod
+    def _unreported(**over) -> HouseholdSpec:
+        """The demo household, whose issuer will not report the rate."""
+        return replace(DEMO_SPEC, cards=(replace(DEMO_SPEC.cards[0], apr_reported=False, **over),))
+
+    def test_an_unreported_card_is_estimated_and_says_so(self) -> None:
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        card = next(iter(walk(history, spec, WINDOW_START, 150))).snapshot.portfolio.cards[0]
+
+        assert card.apr == ESTIMATED_APR == Decimal("0.23")
+        assert card.apr_source is AprSource.ESTIMATED
+
+    def test_a_reported_card_keeps_its_real_rate(self) -> None:
+        """The demo card reports 23.99%. Nothing about 0028 may touch it — which is also why the
+        committed artifact is byte-identical."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        card = next(iter(walk(history, DEMO_SPEC, WINDOW_START, 150))).snapshot.portfolio.cards[0]
+
+        assert card.apr == Decimal("0.2399")
+        assert card.apr_source is AprSource.REPORTED
+
+    def test_the_engine_still_sweeps_on_an_estimate(self) -> None:
+        """The point of estimating: the engine **acts** where APR_UNKNOWN used to refuse."""
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        days = list(walk(history, spec, WINDOW_START, 150))
+
+        assert any(d.decision.action is Action.SWEEP for d in days), (
+            "the engine refused all 150 days on an estimated card — it is meant to act"
+        )
+        assert not any(d.decision.has(ReasonCode.APR_UNKNOWN) for d in days), (
+            "APR_UNKNOWN fired on a card we estimated"
+        )
+
+    def test_it_never_claims_a_saving_from_an_estimate(self) -> None:
+        """**The half that must not be skipped.** The sweep happens and the feed says nothing about
+        what it saved, because the rate is a guess.
+
+        If this fails, `prd.md` §5.1's realized-interest-avoided — the number the company is graded
+        on — has started reporting arithmetic on an invented APR.
+        """
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        days = list(walk(history, spec, WINDOW_START, 150))
+        swept = [d for d in days if d.decision.action is Action.SWEEP]
+
+        assert swept, "no sweep to check"
+        for d in swept:
+            assert not d.decision.has(ReasonCode.INTEREST_AVOIDED), (
+                f"{d.day}: claimed a saving computed from an estimated APR"
+            )
+
+    def test_a_reported_card_does_still_claim(self) -> None:
+        """The control. Without this, the test above passes on an engine that never claims at
+        all — which would be a different bug wearing the same green tick."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        swept = [
+            d
+            for d in walk(history, DEMO_SPEC, WINDOW_START, 150)
+            if d.decision.action is Action.SWEEP
+        ]
+        assert swept, "no sweep to check"
+        assert any(d.decision.has(ReasonCode.INTEREST_AVOIDED) for d in swept), (
+            "a reported card stopped claiming its saving — 0028 broke the normal path"
+        )
+
+    def test_total_interest_refuses_an_estimate_directly(self) -> None:
+        """At the unit, not through the walk: same card, same balance, only the provenance moves."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        card = derive_card(
+            history,
+            DEMO_SPEC.cards[0],
+            WINDOW_START + timedelta(days=90),
+            ledger_balance=money("9000.00"),
+        )
+
+        reported = replace(card, apr=Decimal("0.23"), apr_source=AprSource.REPORTED)
+        estimated = replace(card, apr=Decimal("0.23"), apr_source=AprSource.ESTIMATED)
+
+        assert total_interest(reported, WINDOW_START, money("450.00")) is not None
+        assert total_interest(estimated, WINDOW_START, money("450.00")) is None
+
+    def test_the_estimate_is_conservative_for_ranking(self) -> None:
+        """23% sits near the bottom of the persona's 20-30% band (`prd.md` §3), so an estimated
+        card loses to most cards we can actually price. That is the safe direction: we
+        under-prioritize the card we cannot see rather than diverting money from one we can."""
+        assert Decimal("0.25") > ESTIMATED_APR, (
+            "the estimate has drifted above the middle of the persona's band — it now out-ranks "
+            "cards we can price, which is the anti-conservative direction for a guess"
+        )
+        assert Decimal("0.20") <= ESTIMATED_APR, "below the persona's band entirely"

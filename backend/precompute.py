@@ -37,7 +37,7 @@ not today's, is the one that lands on the ledger.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -58,6 +58,7 @@ from engine.models import (
     Account,
     AccountKind,
     Action,
+    AprSource,
     Card,
     CardPortfolio,
     CashEvent,
@@ -121,6 +122,21 @@ SEED = 7
 # without evidence. It is set from a measured breach rate over a population — see
 # `backend/calibrate.py`. Do not move it from an argument.
 SPEND_QUANTILE: float | None = None
+
+# --- the APR estimate -----------------------------------------------------------------
+#
+# What we assume a card charges when the issuer will not tell us (`decision-engine.md` §6.3).
+# Ticket 0028 settles `architecture.md` §7.5 on "estimated, with visibly reduced confidence".
+#
+# **23% is near the BOTTOM of the persona's 20-30% band** (`prd.md` §3), and that is the
+# conservative direction for a guess: an estimated card loses the ranking to most cards we can
+# actually price, so we under-prioritize the one we cannot see rather than diverting money away
+# from one we can. Guessing high would do the opposite and inflate every interest claim with it.
+#
+# It is only ever used for **ranking**. `interest.py` refuses to compute a saving from an
+# ESTIMATED rate, so this number never reaches `prd.md` §5.1's KPI or the sentence in §1. See
+# `engine/models.py`'s `AprSource`.
+ESTIMATED_APR = Decimal("0.23")
 
 # Trailing windows for the rolling statistics the engine reads.
 SPEND_LOOKBACK_DAYS = 90
@@ -248,6 +264,11 @@ class DebtLedger:
     principal: Decimal
     apr: Decimal
     accrued: Decimal = ZERO  # unrounded until it posts
+    # The card's own close day, not a shared constant. Defaulted to `STATEMENT_DAY` because the
+    # demo household's card closes on the 20th and its artifact must not move — but a portfolio's
+    # cards close on different days, and posting them all on the 20th would be a statement cycle
+    # nobody has. See ticket 0027.
+    close_day: int = STATEMENT_DAY
 
     @property
     def outstanding(self) -> Decimal:
@@ -283,7 +304,7 @@ class DebtLedger:
         if self.principal > ZERO:
             self.accrued += self.principal * (self.apr / DAYS_PER_YEAR)
 
-        if day.day == STATEMENT_DAY:
+        if day.day == self.close_day:
             self.principal += money(self.accrued)
             self.accrued = ZERO
 
@@ -669,7 +690,13 @@ def derive_card(history: History, card: CardSpec, today: date, ledger_balance: D
 
     return Card(
         card_id=card.card_id,
-        apr=card.apr,
+        # The blindness lives here, not in `sim/`. The card *has* a rate — the household pays it
+        # daily and `DebtLedger` accrues at it — but `decision-engine.md` §6.3 says many issuers
+        # do not report one through Plaid. When they do not, the engine is handed the estimate and
+        # told it is an estimate, so it can rank on the guess and `interest.py` can refuse to
+        # price it. Ticket 0028.
+        apr=card.apr if card.apr_reported else ESTIMATED_APR,
+        apr_source=AprSource.REPORTED if card.apr_reported else AprSource.ESTIMATED,
         cycle=cycle,
         statement_balance=statement_balance,
         statement_due_date=max(due, today),
@@ -791,7 +818,7 @@ def assemble_snapshot(
     today: date,
     spec: HouseholdSpec,
     policy: UserPolicy,
-    ledger_balance: Decimal,
+    ledger_balances: Mapping[str, Decimal],
     checking: Decimal,
     swept_this_week: Decimal = ZERO,
     days_since_last_sweep: int | None = None,
@@ -811,8 +838,11 @@ def assemble_snapshot(
     the thing the calibration has to partition on. If the engine had been running, it would have
     swept, and the cadence would have held.
     """
+    # Each card against **its own** ledger. Passing one balance to every card was ticket 0027's
+    # bug: a $3,000 card reported the $14,000 card's balance, `_select_target` ranked them equal
+    # and chose on APR alone, and the obligation reserve counted the same money twice.
     cards = tuple(
-        derive_card(history, card_spec, today, ledger_balance=ledger_balance)
+        derive_card(history, card_spec, today, ledger_balance=ledger_balances[card_spec.card_id])
         for card_spec in spec.cards
     )
 
@@ -876,7 +906,15 @@ class WalkDay:
     snapshot: Snapshot
     decision: Decision
     checking: Decimal
-    debt_balance: Decimal
+    # Per card, keyed by `card_id`. **Not a scalar** — one balance for a whole portfolio was
+    # ticket 0027's bug, and a `Mapping` is what makes re-introducing it a type error rather than
+    # a household that quietly does not exist.
+    debt_balances: Mapping[str, Decimal]
+    # `(amount, target_card_id)` of the sweep that settled onto a card **this morning**, or None.
+    # Exposed because "the money landed on the card the decision named" is otherwise unobservable
+    # from outside the walk, and it is the property that makes `interest.py`'s saved-interest claim
+    # about the right debt.
+    swept_yesterday: tuple[Decimal, str] | None = None
 
 
 def walk(
@@ -906,37 +944,63 @@ def walk(
     beyond `today` are invisible to the snapshot. `tests/test_precompute.py` asserts it rather
     than trusting it.
     """
-    ledger = DebtLedger(principal=spec.card.balance, apr=spec.card.apr)
-    card_payments = {t.day: -t.amount for t in history.txns if t.kind is TxnKind.CARD_PAYMENT}
+    # One ledger per card. `spec.card` — the singular — is deliberately not used here: its own
+    # docstring says reading it "on a two-card household is exactly the bug this feature exists to
+    # fix", and until ticket 0027 this walk did precisely that. See `WalkDay.debt_balances`.
+    ledgers = {
+        c.card_id: DebtLedger(principal=c.balance, apr=c.apr, close_day=c.close_day_of_month)
+        for c in spec.cards
+    }
 
-    sweeps: dict[date, Decimal] = {}  # the day a sweep was *decided*
+    # Keyed by `(day, card_id)`, and accumulated rather than assigned. `{t.day: -t.amount}` was
+    # 0027's quieter half: it discarded `Txn.card_id` — which `sim/` sets on every CARD_PAYMENT —
+    # and *collided*, so two cards paid on the same day left one payment on the floor.
+    card_payments: dict[tuple[date, str], Decimal] = {}
+    for t in history.txns:
+        if t.kind is TxnKind.CARD_PAYMENT and t.card_id is not None:
+            key = (t.day, t.card_id)
+            card_payments[key] = card_payments.get(key, ZERO) + -t.amount
+
+    # The day a sweep was *decided*, and the card it was aimed at. The target is carried because
+    # `Decision.target_debt_id` names one card and the money must land there: `interest.py`
+    # computes what the sweep saved from the *targeted* card's APR, so crediting the wrong ledger
+    # makes `prd.md` §1's "that's $31 of interest you won't pay" a claim about a different debt.
+    sweeps: dict[date, tuple[Decimal, str]] = {}
     swept_cumulative = ZERO  # settled sweeps, already out of checking
 
     for offset in range(days):
         today = start + timedelta(days=offset)
         yesterday = today - timedelta(days=1)
 
-        # Yesterday's sweep settles at the start of today: off the card, and out of the
-        # checking account that `sim/` — which knows nothing of our sweeps — still shows.
-        if settled := sweeps.get(yesterday, ZERO):
-            ledger.pay(settled)
-            swept_cumulative += settled
+        # Yesterday's sweep settles at the start of today: off the card it targeted, and out of
+        # the checking account that `sim/` — which knows nothing of our sweeps — still shows.
+        settled = sweeps.get(yesterday)
+        if settled is not None:
+            amount, target = settled
+            ledgers[target].pay(amount)
+            swept_cumulative += amount
 
-        # The household's own card payment, straight from the realized history.
-        if payment := card_payments.get(today, ZERO):
-            ledger.pay(payment)
+        # The household's own card payments, straight from the realized history — each to its own
+        # card.
+        for card_id, ledger in ledgers.items():
+            if payment := card_payments.get((today, card_id), ZERO):
+                ledger.pay(payment)
 
-        # Payments land, then the day's interest accrues on what is left.
-        ledger.accrue(today)
+        # Payments land, then the day's interest accrues on what is left — each card on its own
+        # cycle.
+        for ledger in ledgers.values():
+            ledger.accrue(today)
 
         checking = history.balance_on(today) - swept_cumulative
 
         # Sweeps already made in the trailing week, which is what `WEEKLY_CAP` measures its
         # headroom against. Six prior days plus today makes the seven.
+        # Across the whole portfolio, and that is right: `WEEKLY_CAP` is a limit on money leaving
+        # *checking*, which does not care which card it landed on.
         swept_this_week = sum(
             (
                 amount
-                for day, amount in sweeps.items()
+                for day, (amount, _target) in sweeps.items()
                 if today - timedelta(days=6) <= day <= yesterday
             ),
             ZERO,
@@ -952,21 +1016,27 @@ def walk(
             today=today,
             spec=spec,
             policy=policy,
-            ledger_balance=ledger.outstanding,
+            ledger_balances={cid: lg.outstanding for cid, lg in ledgers.items()},
             checking=checking,
             swept_this_week=swept_this_week,
             days_since_last_sweep=(today - last_sweep).days if last_sweep else None,
             # What that sweep was worth, for CADENCE_HOLD's copy. Read from the walk's own
             # record rather than from `swept_this_week`, which is a rolling total and only
             # coincides with the last sweep while the cadence stays at 7 days.
-            last_sweep_amount=sweeps[last_sweep] if last_sweep else None,
+            # `[0]` is the amount; `[1]` is the card it went to. CADENCE_HOLD's copy is about how
+            # much moved, not where it landed.
+            last_sweep_amount=sweeps[last_sweep][0] if last_sweep else None,
             spend_quantile=spend_quantile,
         )
 
         decision: Decision = decide(snapshot)
 
         if decision.action is Action.SWEEP:
-            sweeps[today] = decision.amount
+            # `_select_target` never returns a SWEEP without a target, and a sweep at no card is
+            # money leaving checking for nowhere. Assert rather than default to a card: guessing
+            # here is how the wrong ledger gets paid.
+            assert decision.target_debt_id is not None, "a sweep with no target card"
+            sweeps[today] = (decision.amount, decision.target_debt_id)
 
         yield WalkDay(
             offset=offset,
@@ -974,7 +1044,8 @@ def walk(
             snapshot=snapshot,
             decision=decision,
             checking=checking,
-            debt_balance=ledger.outstanding,
+            debt_balances={cid: lg.outstanding for cid, lg in ledgers.items()},
+            swept_yesterday=settled,
         )
 
 
@@ -991,7 +1062,20 @@ def build(
 
     A thin wrapper over `walk()`. Everything below the `for` is artifact assembly — the shape
     the dashboard reads — and nothing in it decides anything.
+
+    **Single-card, and it refuses rather than pretends.** `DayRecord` carries one `debt_balance`,
+    one `debt_apr`, one `debt_id`, because the artifact schema has exactly one debt and the demo
+    household has exactly one card. `walk()` carries a whole portfolio (ticket 0027); this does
+    not. Silently reporting `cards[0]` of a portfolio is the same class of bug 0027 fixed one
+    function up, so a multi-card spec raises here instead.
     """
+    if len(spec.cards) != 1:
+        raise ValueError(
+            f"build() serves the demo artifact, whose schema holds exactly one card — got "
+            f"{len(spec.cards)}. `walk()` carries a portfolio; `DayRecord` does not, and reporting "
+            f"only cards[0] is the bug ticket 0027 exists to have fixed."
+        )
+
     total_days = warmup_days + served_days
     history = generate(spec, start=start, days=total_days, seed=seed)
 
@@ -1012,7 +1096,10 @@ def build(
                 checking_balance=money(w.checking),
                 savings_balance=SAVINGS_BALANCE,
                 buffer_floor=policy.buffer_floor,
-                debt_balance=w.debt_balance,
+                # The one card, by name — guarded above. `debt_balances` is keyed by `card_id`,
+                # so this reads the demo card's own ledger rather than whichever happened to be
+                # first.
+                debt_balance=w.debt_balances[spec.card.card_id],
                 debt_apr=spec.card.apr,
                 debt_id=CARD_ID,
                 history_days=w.snapshot.history_days,

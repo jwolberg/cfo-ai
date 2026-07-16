@@ -180,6 +180,18 @@ class CardSpec:
     # The share of *card* spend that lands on this card, when a household holds several.
     # Normalized across cards at generation time.
     charge_weight: float = 1.0
+    # Does the issuer report this card's APR through Plaid? `decision-engine.md` §6.3: many do
+    # not. Ticket 0028.
+    #
+    # **A visibility flag, deliberately not a nullable `apr`.** This module models the *world*,
+    # and in the world the card has a rate — the household is being charged it every day, and
+    # `DebtLedger` needs it to accrue at all. What is missing is our *sight* of it. Making `apr`
+    # nullable would encode "this card charges no interest", which is false, and would leave the
+    # simulator unable to say what the household actually pays.
+    #
+    # The derivation is where the blindness belongs: `derive_card` reads this and hands the engine
+    # `apr=ESTIMATED_APR, apr_source=ESTIMATED` instead of the real number.
+    apr_reported: bool = True
 
     def __post_init__(self) -> None:
         if self.charge_weight < 0:

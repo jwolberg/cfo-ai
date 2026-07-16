@@ -110,7 +110,17 @@ cards = Table(
     Column("behavior", Text, nullable=False),  # engine.models.PaymentBehavior
     Column("observed_monthly_payment", MONEY, nullable=True),
     Column("observed_monthly_charges", MONEY, nullable=True),
+    # Where `apr` came from — engine.models.AprSource. Ticket 0028 settles architecture.md
+    # §7.5 on "estimated, with visibly reduced confidence", and the confidence has to be
+    # *stored* or it is not reduced, it is merely absent: a 23% estimate and a reported 23%
+    # are the same number, and only this column tells them apart. `interest.py` refuses to
+    # price an ESTIMATED rate, so losing this would silently start billing the KPI against a
+    # guess.
+    Column("apr_source", Text, nullable=False, server_default=text("'reported'")),
     CheckConstraint("apr IS NULL OR (apr >= 0 AND apr <= 2)", name="ck_cards_apr_range"),
+    CheckConstraint(
+        "apr_source IN ('reported', 'user_entered', 'estimated')", name="ck_cards_apr_source"
+    ),
     CheckConstraint(
         "close_day_of_month BETWEEN 1 AND 28", name="ck_cards_close_day"
     ),  # 28: every month has one

@@ -398,10 +398,41 @@ single word in the dataclass:
 
 ### [6.3] APR is frequently missing
 
-Plaid's Liabilities product does not return APR for many issuers. The engine handles it
-by refusing to rank rather than guessing — a wrong target card looks exactly like
-working while quietly destroying the entire value proposition. A real product needs a
-user-entered fallback.
+Plaid's Liabilities product does not return APR for many issuers. The engine used to handle it
+by refusing to rank rather than guessing — a wrong target card looks exactly like working while
+quietly destroying the entire value proposition.
+
+**It now estimates, at 23%, and the refusal moved rather than disappeared.** Ticket `0028` settles
+[`architecture.md`](./architecture.md) §7.5 on its middle option — *estimated, with visibly reduced
+confidence* — and the confidence is carried by `Card.apr_source` (`AprSource`), not by a comment:
+
+- **Ranking may use the estimate.** `_select_target` needed no change: it ranks any card whose
+  `apr is not None`, so an estimated card sorts naturally and `APR_UNKNOWN` stops firing for it.
+  The engine **acts** where it used to refuse.
+- **`interest.py` may not price it.** `total_interest` returns `None` for an `ESTIMATED` rate, so
+  no `INTEREST_AVOIDED` reason is emitted. The sweep happens and the feed says nothing about what
+  it saved.
+
+**Act on the estimate. Never bill for it.** The warning above is about *ranking*, and overriding it
+is defensible for one reason: **`APR_UNKNOWN` is not a safety gate.** The buffer, the forecast, the
+obligation reserve and the cadence are all untouched — paying the wrong card optimizes worse and
+overdraws nobody, so this loosening cannot move [`prd.md`](./prd.md) §5.2's guardrail. The
+measurement agrees: `calibrate` is unchanged at 2.338% / 0 in 590, because the population is
+all-reported.
+
+What the warning does *not* cover is the **claim**. §5.1 makes realized interest avoided the number
+the company is graded on and §1 makes it the sentence the user reads. Computing either from a rate
+we invented would make both partly fiction — and §5.1 already banned the *projected* KPI for
+exactly that. Hence the split.
+
+**23% is near the bottom of the persona's 20–30% band** ([`prd.md`](./prd.md) §3), which is the
+conservative direction for a guess: an estimated card loses the ranking to most cards we can price,
+so we under-prioritize the one we cannot see rather than diverting money from one we can.
+
+`APR_UNKNOWN` stays live for `apr is None` — a card we decline to even estimate. And §7.5's *"a
+real product needs a user-entered fallback"* is still true and still unbuilt: `USER_ENTERED` exists
+in the enum and the schema because the provenance column is the expensive half to retrofit, but
+nothing can set it yet.
 
 ### [6.4] Money movement
 
