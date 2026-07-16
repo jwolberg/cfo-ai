@@ -1222,3 +1222,78 @@ person to add one.
 their acceptance criteria. They are a record of what was planned, not live docs, and rewriting them
 would erase the fact that the plan was wrong in a way worth remembering. `docs/RUNBOOK.md` *is* live
 and was updated.
+
+---
+
+## 2026-07-16 — Multi-tenant persistence: scoping, and two numbers that were wrong
+
+Scoping for `docs/plans/2026-07-16-001-feat-multi-tenant-persistence-plan.md` (requirements:
+`docs/brainstorms/2026-07-16-…`, decision: `docs/decisions/0004-…`). No code written yet.
+
+### The 18 TB that never existed — and how it got into a permanent doc
+
+`architecture.md` [4.1] was first written with **~10KB/snapshot and 18 TB/yr at 5M households**, and
+a whole "phase 3" was reasoned out from it: object storage, a columnar backtest, an analytics engine.
+**All three numbers were a guess I did not measure**, and they were wrong.
+
+Measured (90 consecutive `Snapshot`s of the demo household, `artifact.py`'s tagged-scalar scheme):
+
+| | mean/snapshot | vs raw |
+|---|---|---|
+| raw JSON | **2,699 B** | — |
+| gzip'd individually | 770 B | 3.5× |
+| gzip'd as a batch | 38 B | **70.7×** |
+| lzma'd as a batch | 25 B | 108× |
+
+The size was ~4× high, and the size was never the point: **consecutive days for one household are
+nearly identical**, so a store sorted by `(household_id, day)` compresses ~70× while Postgres TOAST —
+which compresses each value independently — gets ~3.5×. Scaled honestly for a real household (3–5×
+bigger, 20–30× compression rather than 70×) it lands **under a TB/yr at 5M**. Tens of dollars of
+object storage.
+
+So **the `SnapshotStore` seam survives on a much smaller claim than the one that motivated it**
+(a compression gap, not a volume wall), and **phase 3's trigger cannot fire**. Both docs are
+corrected in place with the correction stated rather than the number quietly swapped.
+
+`prd.md` §2.4 already documents two plugged-in numbers that "pointed the right way for the wrong
+reason" — an interest estimate 5× too high and an ACH-fee claim that was simply wrong. This was the
+third, and it is logged here because it very nearly bought an architecture.
+
+### The defect the scoping found
+
+`calibrate.py` sweeps a dial `build()` structurally cannot read. `assemble_snapshot()`'s docstring
+(`precompute.py:803-812`) says it exists so `build()` and `replay()` do not drift; `build()` does not
+call it, builds a `Snapshot` inline at `943-973` that never sets `spend_30d_high`, and has no
+`spend_quantile` parameter at all. Invisible only because `SPEND_QUANTILE = None`. The day the dial
+moves, `calibrate.py` would license a forecast the artifact cannot ship — the harness grading an
+engine that is not the one serving. U1 of the plan.
+
+### Decisions not in the ask
+
+- **`architecture.md` [4] scoped every table by `user_id`; corrected to `household_id`.** Everything
+  the product reasons about is a household (`sim/`, `engine/`, `prd.md` §3, `USERS.md`). A `user` is
+  a login, and one household may have two — for this product not a footnote, since a spouse's
+  spending is what breaks a forecast. `users` stays in the sketch as the login table.
+- **`architecture.md`'s status line claimed only `engine/` exists.** Stale since `sim/`, `backend/`,
+  and `mobile/` landed. Rewritten to name what is built vs. still intent, and to flag that [2] says
+  Next.js where the frontend is an Expo web export. The file is evergreen and edit-in-place by its
+  own header, so this belongs there rather than in a footnote.
+- **SQLAlchemy Core + Alembic** (U2), a new dependency set. ADR-0002 celebrated "no ORM" — Core is
+  not the ORM, the SQL stays visible, and a schema without migrations drifts. Logged because it
+  reverses a property an ADR was proud of.
+- **The artifact is kept as a golden fixture, not deleted.** ADR-0002 said "superseded rather than
+  extended," and it is: nothing reads it at runtime and there is one system of record. But
+  `tests/test_precompute.py:489-494` is the only evidence U1's refactor preserved behavior, and
+  `artifact.py`'s `$dec` codec is exactly what `SnapshotStore` needs for the JSONB payload. Both
+  survive; only the file-as-persistence dies.
+- **Phase 1 → 2 (Neon → Cloud SQL) has a trigger but not an argument**, and this is flagged in
+  `architecture.md` [4.1] rather than resolved. Neon is SOC 2 Type II; the honest case for Cloud SQL
+  is trust-boundary locality with KMS/Cloud Run, not capability. "Postgres/Cloud SQL" has sat in
+  `architecture.md` since v1 unargued — which is `prd.md` §2.4's exact shape, a decision that
+  survived because no document ever argued for it.
+
+### Open, and deliberately not closed here
+
+`architecture.md` §7.5's **APR fallback** (user-entered / estimated / refuse to rank). Archetype D
+makes the consequence visible on a dashboard, which is a good way to decide it — but seeding it does
+not decide it, and the schema needs to know whether an APR can have a user-entered provenance.
