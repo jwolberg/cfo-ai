@@ -12,21 +12,28 @@ provider-abstraction layer for a product that showed the user a number and moved
 money).
 
 **Status:** partly built, and the line moved on 2026-07-16. [`engine/`](../engine),
-[`sim/`](../sim), [`backend/`](../backend), and [`mobile/`](../mobile) exist. **Ingest,
-normalization, the decision log, money movement, and auth do not** — [3.1], [3.2], [3.3], [5],
-and Clerk in [2] are still intent, and should be read as *what we would build and in what
-order*, not as description. Two things below describe a system that is not the one running:
-[2] names Next.js where the frontend is an Expo web export, and until 2026-07-16 [4] scoped
-every table by `user_id` (see [4]). Corrections belong in this file, not in a footnote —
-it is evergreen and edited in place.
+[`sim/`](../sim), [`backend/`](../backend), and [`mobile/`](../mobile) exist and are described as
+built — [3.4], [3.6], [3.7]. **Ingest, normalization, money movement, and auth do not** — [3.1],
+[3.2], [5], and Clerk in [2] are still intent, and should be read as *what we would build and in
+what order*, not as description.
+
+**The decision log ([3.3]) is the hard case, and it is the one to read first.** Its schema is
+built — tables, forced RLS, partitions, a scoping repository, an IDOR suite. Nothing calls it.
+The service serves a **committed JSON artifact** and holds no write path, so [4]'s "system of
+record" is intent while `backend/data/decisions.json` is fact. [3.6] says so plainly rather than
+letting this section carry it alone.
 
 ---
 
 ## [1] Overview
 
-The system moves a household's surplus cash onto their most expensive debt, daily,
-without asking — and refuses to move anything on days it cannot be sure. See
-[`prd.md`](./prd.md).
+The system moves a household's surplus cash onto their most expensive debt, without asking — and
+refuses to move anything on days it cannot be sure. See [`prd.md`](./prd.md).
+
+**It watches daily and moves weekly**, and those are two different things ([`prd.md`](./prd.md)
+§2.4). The forecast runs every day and a held day is still graded; the cadence limits what we *do*,
+never what we *know*. This section read "daily" until 2026-07-16, which was the same fossil §2.4
+was written to kill — inherited from the v0 advice product, whose output was a notification.
 
 ### [1.1] Principles
 
@@ -73,19 +80,43 @@ Plaid ──webhook──> ingest ──> sync (cursored pull) ──> normalize
                                                                     log + explain + notify
 ```
 
-Thinnest stack that ships this: **Next.js** (web) · **FastAPI on Cloud Run** (API +
-jobs) · **Postgres/Cloud SQL** (system of record) · **Cloud Scheduler** (the daily run) ·
-**Clerk** (auth) · **Secret Manager** · **Sentry**. Add anything else only when a measured
-problem demands it.
+That diagram is the **intended** system. This is the one that runs today:
 
-Where this says **Postgres/Cloud SQL**, read [4.1] — the store is Neon through the demo and
-the move to Cloud SQL has a trigger but not yet an argument.
+```
+sim.generate() ──> History ──> precompute.walk() ──> engine.decide()
+                                                          │
+                                                   decisions.json          ← committed to the repo
+                                                          │
+                                          FastAPI on Cloud Run (read-only, in memory)
+                                                          │
+                                     Expo web export on Firebase Hosting (cfo-ai-1.web.app)
+```
+
+Postgres sits **beside** that pipeline, not inside it — [3.6]. Nothing to the left of
+`decisions.json` runs in production at all: the artifact is generated on a developer's machine and
+committed, and the service reads it at startup.
+
+Thinnest stack that ships this: **Expo / React Native** with `react-native-web`, exported to
+static web (built) · **FastAPI on Cloud Run** (built; API only — there are no jobs yet) ·
+**Postgres** (built, unwired — [3.6]) · **Cloud Scheduler** (the daily run — **not built**;
+nothing is scheduled, because nothing ingests) · **Clerk** (auth — **not built**; the API takes a
+shared key) · **Secret Manager** (the deploy passes the API keys as `--set-secrets` references;
+Neon's connection string is not yet among them — ticket `0026`) · **Sentry** (**not built**;
+it appears nowhere in the tree). Add anything else only when a measured problem demands it.
+
+**The web frontend is an Expo web export, not Next.js.** This line said Next.js from v1 until
+2026-07-16 and the frontend was never built that way — [3.7]. It is corrected here rather than
+footnoted, because a stack list that names a framework nobody chose is how a reader ends up
+arguing from the wrong constraints.
+
+Where this says **Postgres**, read [4.1] — the store is Neon through the demo and the move to
+Cloud SQL has a trigger but not yet an argument.
 
 ---
 
 ## [3] Components
 
-### [3.1] Ingest & sync
+### [3.1] Ingest & sync (not yet built)
 
 The webhook is a **doorbell, not a delivery**. Plaid webhooks are at-least-once and
 unordered, so the handler does exactly two things: persist the raw payload under a natural
@@ -101,7 +132,7 @@ Every item carries `last_successful_sync_at`. That value becomes `Account.balanc
 in the engine — the freshness gate is the thing standing between a dropped webhook and an
 overdraft.
 
-### [3.2] Normalization
+### [3.2] Normalization (not yet built)
 
 The two hard problems, each of which corrupts the forecast *silently* if wrong:
 
@@ -119,9 +150,13 @@ Feeds the **recurring-event engine**, which is where `CashEvent.confidence` come
 It needs ~2 observed cycles of an obligation to know anything, hence the engine's 60-day
 cold-start gate.
 
-### [3.3] The decision log — append-only, and the reason auditability is real
+### [3.3] The decision log — append-only, and the auditability is real (schema built, unwired)
 
 Each run persists the **entire frozen `Snapshot`**, the `Decision`, and the engine version.
+
+**Today no run persists anything** — the tables exist and the walk does not use them ([3.6]).
+Read this section as the argument for the schema, which is built, rather than as a description of
+a running write path, which does not exist.
 
 This is the load-bearing design choice in the system, and it buys three things at once:
 
@@ -149,6 +184,117 @@ financial data, and it is never in the decision path.
 **Transaction descriptions are attacker-influenced text** (a merchant controls the string
 that appears on a statement). Treat all of it as untrusted: constrain LLM output to a
 fixed schema, and never let LLM output touch control flow.
+
+### [3.6] The backend — built
+
+[`backend/`](../backend) is a FastAPI service that serves **one demo household from a committed
+artifact**. Python ≥3.10 and the `anthropic` SDK. SQLAlchemy **Core** (never the ORM), Alembic, and
+`psycopg` are an optional `[api]` extra rather than a base dependency — which is not a packaging
+detail, see below.
+
+| Module | What it does |
+| --- | --- |
+| [`precompute.py`](../backend/precompute.py) | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One `walk()`, three consumers: the artifact builder, the replay driver, and (next) the seeder. There were 2.5 copies and they had drifted — ticket `0019`. |
+| [`replay.py`](../backend/replay.py) | Drives the walk and grades every day it can honestly grade, against realized history rather than the engine's own sweep-adjusted path. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast. |
+| [`calibrate.py`](../backend/calibrate.py) | Grades a **population** — 60 synthetic households, 3 shapes × 20 seeds — at every setting of the spend dial. [`prd.md`](./prd.md) §5.2: a guardrail measured on one household is not measured. |
+| [`codec.py`](../backend/codec.py) | Tagged-scalar JSON. JSON has no decimal type, and a cent through a float is not the cent the engine decided on. Type-driven, so it **cannot drift from the dataclass**. |
+| [`artifact.py`](../backend/artifact.py) | The committed decision history, and a `validate()` that runs on every decode. |
+| [`assistant.py`](../backend/assistant.py) | The only path that costs money ([3.5]). |
+| [`auth.py`](../backend/auth.py) | The API-key gate. Guards every route but `/health`. |
+| [`db/`](../backend/db) | Postgres — schema, repository, `SnapshotStore`. **Not in the serving path.** |
+
+**The API.** Five routes, all in `main.py`; everything but `/health` requires `X-API-Key`. All
+money is serialized as **strings**, never JSON numbers — the same reason `codec.py` exists.
+
+| | |
+| --- | --- |
+| `GET /health` | liveness |
+| `GET /decisions` | the feed: window, summary, decisions newest-first |
+| `GET /spend` | this cycle, last cycle, and what normal looks like |
+| `GET /decisions/{day}/explain` | one day, plus narration from `engine/explain.py`. An unknown day is `404 no_record` |
+| `POST /assistant/message` | the LLM turn. The only endpoint that costs money |
+
+**What serves a request today is a JSON file.** `main.py` loads
+[`data/decisions.json`](../backend/data) once at startup, validates it, and serves it from memory
+for the process lifetime. There is **no write path**, and the artifact is not generated in
+production — it is built on a developer's machine by `python -m backend.precompute` and committed
+to the repo, because the buildpack deploy packages whatever is in the source tree.
+
+**And `db/` is wired to nothing.** `backend.db` is imported by exactly three kinds of caller:
+Alembic, itself, and its own tests. No route, and no walk, has ever opened a connection to it.
+[`backend/requirements.txt`](../backend/requirements.txt) — what Cloud Run actually installs — is
+`fastapi`, `uvicorn`, `anthropic`; **the deployed image contains no database driver at all.**
+
+**That is deliberate, and it is worth being precise about why**, because it looks exactly like the
+failure this repo keeps finding in itself and is not one.
+[ADR-0004](./decisions/0004-postgres-scoped-by-household.md) decides it explicitly — *"decide now,
+wire when something real needs it."* Tenancy and provenance are the expensive halves to retrofit:
+a column added later is a migration, but a scoping key added later is every query in the system.
+So the schema is built ahead of its caller **on purpose**, and ticket `0024` is the caller.
+
+The distinction that matters: `0019`–`0022`'s defects were mechanisms *believed* to be working.
+This one is **known** to be unwired, and that is the whole of why it is safe. The residual risk is
+still real, because RLS is precisely the kind of mechanism that reports green while doing nothing —
+which is not a hypothetical here. It already happened twice on this schema: the IDOR suite ran as
+the superuser that owns the tables, and Neon's default role bypasses RLS outright.
+
+**The guard that came out of it.** [`db/session.py`](../backend/db/session.py)'s `assert_rls_binds()`
+refuses to start under a role that is `rolsuper` or `rolbypassrls`. Neon's default `neondb_owner`
+has the latter: connected as it and scoped to one household, a `SELECT` returned **both**. Pasting
+the connection string Neon hands you into `DATABASE_URL` would ship [4]'s two authz layers as one,
+with the IDOR suite green throughout. The intended runtime role is `cfo_runtime`, holding
+`cfo_app`. Scoping is bound transaction-locally via `set_config(..., is_local => true)`, never on
+the connection — Neon pools connections, and a connection-scoped variable leaks across requests.
+
+**Deployment.** [`Procfile`](../Procfile) → uvicorn on Cloud Run, `gcloud run deploy --source .`,
+no Dockerfile. **`--workers 1` is a spend control, not a throughput compromise:** the rate cap on
+`/assistant/message` lives in process memory, and it is the only thing bounding Anthropic spend if
+the public API key leaks. A second worker is a second counter and a doubled ceiling.
+
+### [3.7] The frontend — built
+
+[`mobile/`](../mobile) — Expo (SDK 57) / React Native in TypeScript under `strict`, with
+`react-native-web` so one source runs on a phone and in a browser. Two screens and a modal:
+[`Dashboard.tsx`](../mobile/src/screens/Dashboard.tsx) (the decision feed),
+[`Spending.tsx`](../mobile/src/screens/Spending.tsx), and
+[`ExplainModal.tsx`](../mobile/src/screens/ExplainModal.tsx) (the narration and the assistant).
+
+**It carries no navigation, state-management, or data-fetching library.** The tabs are a `useState`
+over two values; both screens stay mounted and are toggled with `display: none`, so switching does
+not refetch or lose scroll. `App.tsx` argues the case: two screens, no nesting, no deep links — when
+a third screen or a shareable link earns the router, the router earns its dependency.
+
+**Every request goes through one function.** `api/client.ts`'s `request<T>()` is the only `fetch`
+in the app. It carries a closed error taxonomy — `timeout · network · unauthorized · no_record ·
+server · malformed` — and each screen renders a discriminated union of loading / ready / failed
+rather than a boolean. **A 404 maps to `no_record`, an answer rather than a failure**, which is the
+client-side shape of [1.1]'s "refusal is the default." Timeouts are 8s, and 60s for the assistant.
+
+**The client cannot invent a financial claim, by construction.** `reason_codes` and `reasons[].text`
+are opaque strings to it; it renders what `engine/explain.py` produced and inspects exactly one code
+by name (`no_debt`, to say "paid off"). Money is formatted by string surgery and never parsed into a
+float — the same rule as `codec.py`, enforced at the other end of the wire.
+
+**Refusals are not errors, and the palette says so.** `theme.ts` contains no red. A refusal is deep
+green and a sweep is blue. Days with no sweep are the product working ([1.1]); a UI that painted
+them as failures would be arguing against the product on the one surface the user actually reads.
+
+**Auth is a shared API key inlined into the web bundle** at build time (`EXPO_PUBLIC_API_KEY`) — a
+documented trade-off, not an oversight. Synthetic households have no owner to authenticate as, and
+Clerk arrives with Plaid.
+
+It is also the reason [7]'s authz pattern is only **half**-real, and that half is the uncomfortable
+one: the IDOR suite is genuine, but the identity feeding it is a key any reader of the bundle can
+extract. **An IDOR suite is reassuring in a way a shared key does not earn.** Ticket `0021` asked
+for that to be stated in [`USERS.md`](../USERS.md) rather than only in a code comment; it is not
+there yet, so it is stated here.
+
+**Not built: the attestation action.** `UNATTESTED` / `CARD_COVERAGE_INCOMPLETE` appear nowhere in
+`mobile/` — attesting is a *write*, and this frontend talks to a service with no write path. The
+refusal reaches the feed as ordinary text, and no one has ever cleared it end to end.
+
+**Deployed by hand.** `npm run deploy:web` → `expo export --platform web` → Firebase Hosting
+(`cfo-ai-1.web.app`). CI typechecks and tests `mobile/` and does **not** deploy it.
 
 ---
 

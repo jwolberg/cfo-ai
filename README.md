@@ -1,9 +1,42 @@
 # cfo-ai
 
-Working repo for a product thesis: **autonomous debt paydown** — every day, move the cash
-a household genuinely doesn't need onto the debt that costs them the most, and be right
-about "doesn't need."
+**An app that pays down high-interest debt with the cash a household wasn't using — and is
+right about "wasn't using."**
 
+Connect checking, savings, and cards once. From then on the system forecasts the near-term cash
+position, decides what is genuinely surplus, and moves it onto the balance that costs the most.
+The household does nothing. They are told what happened and why.
+
+> *"You had $220 sitting idle in checking, so I moved it to your card. That's $31 of interest you
+> won't pay."*
+
+The promise is not "we help you pay off debt faster." It is: **you no longer have to choose between
+paying down debt and being safe** — [`prd.md`](docs/prd.md) §1.
+
+**We watch daily. We move weekly.** Two different things, and the distinction is load-bearing. The
+forecast runs every day and a held day is still graded; the cadence limits what we *do*, never what
+we *know*. Every sweep is an independent draw from a tail we cannot afford, so how many draws we
+take is a risk lever as directly as how large any one of them is — and daily sweeping was a fossil
+of an advice product nobody ever re-argued (`prd.md` §2.4).
+
+**No payment rail is chosen, and nothing in the codebase assumes one.** ACH, a bill-pay partner, a
+deep-link handoff, an FBO account via a banking partner — moving money is a commodity, and the
+choice is foreclosed by a distribution question nobody has answered yet (`prd.md` §6.1, §7.1). The
+engine emits a `Decision`; something else moves the money. That is a decision, not a gap.
+
+**And no money has ever moved.** No Plaid link, no live balances, no rail, no real auth — nothing
+here has touched a real household. `prd.md` §8 puts exactly one thing in the *Now* column:
+**shadow mode** — run the engine, move nothing, and check what we *would* have swept against what
+actually happened. That machinery is built and has run against 60 synthetic households. The shadow
+itself has not. See **Status**, below.
+
+| | |
+|---|---|
+| `engine/` | The decision — and usually the refusal. Pure, deterministic, zero dependencies. |
+| `sim/` | The answer key: synthetic households whose true daily balance we know. |
+| `backend/` | The walk, the grader, the population calibration, the API, Postgres. |
+| `mobile/` | The surface: the decision feed, the spending view, the explanation. |
+| *the rail* | **Deliberately unbuilt** — see above. |
 
 ```bash
 .venv/bin/python -m pytest       # the suite is the spec
@@ -73,7 +106,7 @@ private repo as source, so open it locally: `open docs/decision-flow.html`.
 | `explain.py` | The only file with copy in it. A wording change can't break a financial calculation. |
 | `../tests/` | Adversarial tests. **These are the spec.** |
 
-**Why this and nothing else.** Moving money is a commodity (Plaid, Dwolla, bill-pay all
+**Why the engine is the bet.** Moving money is a commodity (Plaid, Dwolla, bill-pay all
 do it). Forecasting is hard but tractable. The thing that decides whether the company
 lives is *knowing when not to act* — every sweep is a draw from a distribution, and the
 downside of a wrong one ($35 fee, a bounced rent check, a customer gone forever) dwarfs
@@ -129,11 +162,10 @@ Design notes and the deliberately-unbuilt parts: [`docs/decision-engine.md`](doc
 A deterministic household generator. Given a spec and a seed it produces a `History`: every
 transaction a household made, and therefore the exact daily balance they actually had.
 
-**This is the ground truth the engine is not allowed to see.** It exists because
-[`prd.md`](docs/prd.md) §8 puts exactly one thing in the *Now* column — run the engine in
-**shadow mode**, move nothing, and check what we *would* have swept against what actually
-happened — and you cannot grade a forecast against a future you don't know. It is a
-simulation, not a product surface; nothing in `engine/` imports it.
+**This is the ground truth the engine is not allowed to see.** Shadow mode is the whole of the
+*Now* column, and you cannot grade a forecast against a future you don't know — so until a real
+household is connected, the only future available is one we generate. It is a simulation, not a
+product surface; nothing in `engine/` imports it.
 
 Two properties do the work. `(spec, seed)` yields a byte-identical history **forever** — a
 backtest whose ground truth moves is not a backtest. And `History.as_of(day)` **slices**
