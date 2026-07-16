@@ -5,17 +5,24 @@ a household genuinely doesn't need onto the debt that costs them the most, and b
 about "doesn't need."
 
 
+```bash
+.venv/bin/python -m pytest       # the suite is the spec
 ```
-python3 -m pytest tests/ -q      # the suite is the spec; it runs in well under a second
-```
+
+The database suites need a real Postgres and skip loudly without one — RLS and declarative
+partitioning are the subject, so a SQLite stand-in would test a different artifact and report
+green. Setup, and the two traps in it, are in
+[`docs/runbooks/local-development.md`](docs/runbooks/local-development.md).
 
 ---
 
 ## `engine/` — the decision
 
-The only code here, and deliberately so. Given a frozen snapshot of a household's cash
-position, decide whether it is safe to move money to a card — **and usually decide that
-it is not.**
+Given a frozen snapshot of a household's cash position, decide whether it is safe to move money
+to a card — **and usually decide that it is not.**
+
+Pure. No clock, no network, no LLM, no randomness, and `dependencies = []`. Everything else in
+this repo is a consumer of it.
 
 Read the diagram by its **shape**. The spine is short. Almost everything branches *off* it,
 into a reason to do nothing.
@@ -100,11 +107,16 @@ the engine does.
 **We never claim a number we can't stand behind.** "That's $31 of interest you won't pay"
 is measured against what the household *was already paying* — not against the card minimum,
 which would credit our sweep with interest they were never going to pay anyway and inflate
-the one metric the company reports on itself. And when there's no honest figure — the issuer
-doesn't report the APR, or we haven't yet seen what they pay, or their payments don't even
-cover their interest — the engine emits **no claim at all**. The absence is structural: the
-claim is a `Reason` like any other, so there is no code path that can render an invented
-number.
+the one metric the company reports on itself. And when there's no honest figure — we haven't
+yet seen what they pay, or their payments don't even cover their interest — the engine emits
+**no claim at all**. The absence is structural: the claim is a `Reason` like any other, so there
+is no code path that can render an invented number.
+
+The sharpest case is a missing APR. Plaid doesn't report one for many issuers, so the engine
+**estimates it at 23% and ranks on the estimate** — a wrong target optimizes worse but overdraws
+nobody, and acting beats refusing. It then **refuses to price it**: a card whose rate we guessed
+gets swept normally and reports *nothing* about what it saved. The rate carries where it came
+from (`AprSource`), and `interest.py` reads that. **Act on the estimate; never bill for it.**
 
 Most of the code is reasons to do nothing. That's the feature.
 
@@ -141,9 +153,61 @@ three years** — over-reserving $400–$970 against a p99 month, versus a $750 
 many days that single error is the whole difference between sweeping and refusing.
 
 It fails *safe* — nobody is overdrawn — which is exactly why it would have survived
-indefinitely. It is **deliberately not fixed**: the fix loosens the forecast and buys bigger
-sweeps, and that must not happen before there's a grader to measure the breach rate. Write-up:
+indefinitely. Write-up:
 [`docs/learnings/2026-07-13-the-spend-model-over-reserves.md`](docs/learnings/2026-07-13-the-spend-model-over-reserves.md).
+
+**The fix was built, measured, and refused — and that is the better half of the story.** The
+grader now exists and runs against a population, so the loosening finally had something to answer
+to. The replacement reserves against the household's *own* enumerated worst 30-day window: no
+distributional assumption, their real skew, obviously right. It **breaches 19.8% of days against
+today's 2.3%**, because it reads "their worst month" off 2–5 independent months of history and the
+worst of 3 months badly understates the worst of 36.
+
+So the model everyone agrees is wrong is **still shipped**, the fix sits behind a dial set to
+`None`, and a test fails if anyone moves it without a measurement. A harness that only ever
+ratifies the change you already wanted is not a harness.
+[`docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`](docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md).
+
+**Known and unfixed:** `generate()` is **not prefix-stable**. It draws payroll and bills before
+discretionary spend from one RNG stream, and both loops run to `start + days - 1` — so `days` is
+part of the household's *identity*, not a window onto it. `(spec, seed, days=150)` and
+`(spec, seed, days=181)` are different households, and `build()` walks 150 while `replay()` walks
+181. **The harness has never graded the household the artifact ships.** The population statistics
+survive (20 arbitrary seeds per shape are still 20 valid households); per-household claims do not.
+Pinned in `tests/test_precompute.py::TestGenerateIsNotPrefixStable` — fixing it regenerates the
+artifact and moves every measured number in three documents, so it needs its own diff.
+
+---
+
+## `backend/` — the walk, the API, and the data
+
+| File | What it does |
+| --- | --- |
+| `precompute.py` | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One walk, three consumers — the artifact builder, the replay driver, and (next) the seeder. There were 2.5 copies of it and they had already drifted; see Status. |
+| `replay.py` | Drives the walk and grades every day it can honestly grade. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast and pull the whole error distribution toward the origin. |
+| `calibrate.py` | Grades a **population** at every setting of the spend dial. `prd.md` §5.2's lesson, learned the hard way: *a guardrail measured on one household is not measured.* |
+| `db/` | Postgres, scoped by `household_id`. Schema, a repository, and the `SnapshotStore` seam. |
+| `codec.py` | Tagged-scalar JSON. JSON has no decimal type, and a cent that round-trips through a float is no longer the cent the engine decided on. Generic and type-driven, so it **cannot drift from the dataclass**. |
+| `artifact.py` | The demo's committed decision history. Being superseded by `db/` — see [ADR-0004](docs/decisions/0004-postgres-scoped-by-household.md). |
+| `assistant.py` | The only path that costs money. The LLM looks up decisions the engine already made and puts them in English; it never makes one. |
+
+**The data layer is scoped by household, twice, on purpose.** Every query goes through a
+repository that scopes it, *and* Postgres row-level security scopes it again — and
+[`tests/test_idor.py`](tests/test_idor.py) proves each layer **with the other removed**. Defense in
+depth that is only ever tested end-to-end is one layer wearing a disguise: delete the repository's
+`WHERE` clause and the end-to-end test still passes, because RLS silently catches it.
+
+`architecture.md` [4] is blunt about why: *"An IDOR here exposes someone's complete financial life;
+one forgotten `WHERE` clause is not an acceptable single point of failure."*
+
+---
+
+## `mobile/` — the surface
+
+Expo / React Native in TypeScript, with `react-native-web` so the same source runs in a browser and
+on a phone. Two screens and a modal: the decision feed, the spending view, and the explanation.
+
+Deployed at [cfo-ai-1.web.app](https://cfo-ai-1.web.app).
 
 ---
 
@@ -190,14 +254,48 @@ reversed.
 
 ## Status
 
-- Only `engine/` and `sim/` exist. `architecture.md` is intent, not description.
-- The engine can now be **graded** (`engine/outcome.py`), but not yet **replayed** — the
-  shadow-mode driver is the last missing piece.
-- Engine thresholds (`INCOME_CONFIDENCE_FLOOR`, `MAX_INCOME_VARIATION`,
-  `MAX_BALANCE_AGE_DAYS`) are **judgment, not evidence**. The honest way to set them is
-  shadow mode: run against real households, move nothing, measure how often the realized
-  low balance fell below the projection, and set the thresholds from the observed tail.
-  `sim/` is the first half of that; the grader and the replay driver are the rest, and
-  until they exist **the engine has never once been told whether it was right.**
-- Distribution and monetization are **named as unanswered**, not solved. They're what
-  killed Tally, and pretending otherwise would be the one thing that discredits the rest.
+**Built and running.** `engine/`, `sim/`, `backend/` (the walk, the grader, the population
+calibration, the API, Postgres), and `mobile/`. 448 Python tests, 51 mobile tests.
+
+**Not built.** Plaid — no link, no live balances, nothing has touched a real household. No payment
+rail, and deliberately so: `prd.md` §6.1 says no rail is chosen and *"nothing in the codebase
+assumes one — keep it that way,"* because §7.1's distribution question forecloses it. No real auth.
+
+### The loop is closed, and the first thing it did was say no
+
+The grader has a caller and a population: **60 synthetic households, 4,320 graded days.** A
+**2.3%** breach rate, **0** sweep-caused overdrafts in 590 sweeps, ~**$544K** of measured
+conservatism. It has earned its keep twice — it caught a payday double-count that breached the
+guardrail 43 times (and that a single-household demo reported as **zero**), and it **refused** a
+forecast change everyone, including the plan, expected to ship.
+
+Every number above is **synthetic**. The population's spending was generated by the same
+assumptions the engine forecasts with, so it measures the *code* and cannot yet measure the
+*world*. Engine thresholds (`INCOME_CONFIDENCE_FLOOR`, `MAX_INCOME_VARIATION`,
+`MAX_BALANCE_AGE_DAYS`) are still **judgment, not evidence**, and only real households can change
+that.
+
+### What the multi-tenant build found, and it is all one shape
+
+Every defect below is **a mechanism that was built, tested, and never actually exercised.** None
+had a symptom. All had a green test. That pattern is the most useful thing this repo has produced
+about itself.
+
+- **`calibrate.py` swept a dial `build()` could not read.** The harness would have graded a
+  forecast the artifact was structurally incapable of shipping — the day anyone acted on it.
+- **Neon's default role has `rolbypassrls = true`.** Scoped to one household it returned **both**.
+  Pasting the connection string Neon hands you into `DATABASE_URL` would have shipped the two
+  authz layers as one, with the IDOR suite green throughout. The service now refuses to start
+  under such a role.
+- **The IDOR suite was vacuous** — it ran as the superuser that owns the tables, which bypasses RLS
+  even when FORCEd.
+- **The walk gave a whole portfolio one ledger.** A $3,000 card reported the $14,000 card's
+  balance. `_select_target`'s ranking and the obligation reserve had never once seen two real
+  cards.
+- **A `render()` that everyone awaits except one suite** — a race that blocked three PRs, one of
+  them documentation-only.
+
+### Still open, and named rather than solved
+
+- **Neon → Cloud SQL has a trigger but not an argument.** `architecture.md` [4.1]. `prd.md` §2.4 is
+  a whole section about a decision that survived because no document ever argued for it.

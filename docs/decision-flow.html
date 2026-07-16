@@ -507,10 +507,18 @@
 <h3 class="subhead">What I built</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  <strong>Status: a 1-day prototype of what two screens on the customer app might look like, built and
-  deployed at <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real
-  funds is in place</strong> &mdash; no Plaid link, no payment rail. Everything below the API is real
-  and runs; everything that would touch an actual bank account is not built.
+  <strong>Status: two screens of the customer app, built and deployed at
+  <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real funds is in
+  place</strong> &mdash; no Plaid link, no payment rail. Everything below the API is real and runs;
+  everything that would touch an actual bank account is not built.
+</p>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  The rail is unbuilt <em>deliberately</em>, not merely unfinished. Card networks are not a
+  repayment rail and each issuer decides what it accepts &mdash; but the reason to wait is that
+  <b>distribution forecloses the choice</b>. If this ships embedded in a bank or an issuer, the
+  partner owns the rail and the whole rent-vs-own question is moot. So nothing in the codebase
+  assumes one: the engine emits a decision, and something else moves the money.
 </p>
 
 
@@ -530,8 +538,10 @@
     </tr>
     <tr>
       <td><b>API</b><br><code>backend/</code></td>
-      <td><b>FastAPI + Uvicorn.</b> Loads the artifact once at startup and serves it from memory.
-          <b>No database and no write path.</b> </td>
+      <td><b>FastAPI + Uvicorn.</b> Serves the decision history and the spend view. Refuses to
+          start without its secrets, or under a database role that could bypass row-level
+          security &mdash; a service holding bad data should not serve wrong numbers one request
+          at a time.</td>
     </tr>
     
     <tr>
@@ -542,8 +552,20 @@
           Android unchanged.</td>
     </tr>
     <tr>
+      <td><b>Persistence</b><br><code>backend/db/</code></td>
+      <td><b>Postgres</b> (Neon), scoped by <code>household_id</code>. Money is <code>NUMERIC</code>,
+          never a float. The decision log is partitioned by month and stores each decision&rsquo;s
+          <b>entire frozen input</b>, so &ldquo;why did you move $220 that Tuesday&rdquo; stays
+          answerable after Plaid rewrites the underlying history. Every table is scoped
+          <b>twice</b> &mdash; at the repository <em>and</em> by row-level security &mdash; and the
+          test suite proves each layer <b>with the other removed</b>. Defence in depth that is only
+          tested end-to-end is one layer wearing a disguise.</td>
+    </tr>
+    <tr>
       <td><b>Decision engine</b><br><code>engine/</code></td>
-      <td> Python 3.10.</td>
+      <td>Python 3.10, and <b>zero dependencies</b>. No clock, no network, no LLM, no randomness
+          anywhere near a dollar amount. The same snapshot yields the same decision forever, which
+          is what makes a sweep explainable, auditable, and replayable in a backtest.</td>
     </tr>
     <tr>
       <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
