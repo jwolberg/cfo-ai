@@ -2,11 +2,17 @@
 id: 0002
 title: A generated JSON artifact, not a database, for the demo's decision history
 anchor: ADR-0002
-status: accepted
+status: superseded
 date: 2026-07-13
 supersedes:
-superseded-by:
+superseded-by: 0004
 ---
+
+> **Superseded 2026-07-16 by [ADR-0004](./0004-postgres-scoped-by-household.md)** — on the exact
+> condition [3] named ("a second household"), by the mechanism it named ("superseded rather than
+> extended"). This document was right for three days of product decisions and is kept for the
+> reasoning, not the outcome. Its three enforced properties did not survive by inheritance; see
+> ADR-0004 [3] for which got stronger and which had to be rebuilt.
 
 ## [1] Context
 

@@ -11,8 +11,14 @@ it planned Temporal, an event-driven pipeline, an append-only ledger, and a
 provider-abstraction layer for a product that showed the user a number and moved no
 money).
 
-**Status:** proposed. Only [`engine/`](../engine) exists. Everything else here is intent,
-and should be read as *what we would build and in what order*, not as description.
+**Status:** partly built, and the line moved on 2026-07-16. [`engine/`](../engine),
+[`sim/`](../sim), [`backend/`](../backend), and [`mobile/`](../mobile) exist. **Ingest,
+normalization, the decision log, money movement, and auth do not** — [3.1], [3.2], [3.3], [5],
+and Clerk in [2] are still intent, and should be read as *what we would build and in what
+order*, not as description. Two things below describe a system that is not the one running:
+[2] names Next.js where the frontend is an Expo web export, and until 2026-07-16 [4] scoped
+every table by `user_id` (see [4]). Corrections belong in this file, not in a footnote —
+it is evergreen and edited in place.
 
 ---
 
@@ -71,6 +77,9 @@ Thinnest stack that ships this: **Next.js** (web) · **FastAPI on Cloud Run** (A
 jobs) · **Postgres/Cloud SQL** (system of record) · **Cloud Scheduler** (the daily run) ·
 **Clerk** (auth) · **Secret Manager** · **Sentry**. Add anything else only when a measured
 problem demands it.
+
+Where this says **Postgres/Cloud SQL**, read [4.1] — the store is Neon through the demo and
+the move to Cloud SQL has a trigger but not yet an argument.
 
 ---
 
@@ -151,10 +160,122 @@ link, and an `internal_transfer_pair` link — **append-only, corrections are ne
 `recurring_events` · `debts` · `decisions` (the frozen snapshot + output + engine version)
 · `payments` (the state machine, [5]) · `policies` (buffer, caps, blackouts).
 
-Every table is scoped by `user_id`, enforced at the repository layer **and** by Postgres
+Every table is scoped by `household_id`, enforced at the repository layer **and** by Postgres
 row-level security. An IDOR here exposes someone's complete financial life; one forgotten
 `WHERE` clause is not an acceptable single point of failure. Plaid access tokens are
 envelope-encrypted with a KMS key, never a plaintext column beside everything else.
+
+**The tenant is the household, not the user** — corrected from `user_id`, which this sketch
+carried until 2026-07-16. Everything the product reasons about is a household: `sim/`,
+`engine/`, [`prd.md`](./prd.md) §3, and [`USERS.md`](../USERS.md) all say so. A `user` is a
+login, and one household may eventually have two of them — for this product that is not a
+footnote, because a spouse's spending is precisely what breaks a forecast. `users` stays in
+the sketch above as the login table, arriving with auth; it is not the scoping key.
+
+### [4.1] Where the data lives, and when that changes
+
+Three phases. Each transition is triggered by an **event, not a date or a user count** —
+and one of the three triggers does not exist yet, which is said here rather than hidden.
+
+| Phase | Store | Trigger to leave it |
+|---|---|---|
+| **1 — demo** | Postgres on **Neon**. Real RLS, real declarative partitioning, scale-to-zero. No Cloud SQL connector in the deploy path. | The first real household's data. |
+| **2 — pilot** | Postgres on **Cloud SQL**. | **Not yet argued.** See below. |
+| **3** | Not a database. See below. | — |
+
+**Phase 1 is Neon because the demo's constraint is cold-start, not throughput.**
+[`USERS.md`](../USERS.md) §2's reader wants to see this work in under a minute; Neon wakes in
+~300–500ms and costs nothing at rest. It runs stock Postgres compute, so RLS and declarative
+partitioning are ordinary features rather than emulations — which matters, because a demo
+built on an RLS *substitute* would prove nothing about [7.1].
+
+**Phase 1 → 2 is triggered by the first real household, not by a user count.** That is when
+GLBA applies, when Plaid tokens exist, when the per-household DEK has something to protect,
+and when "scales to zero" stops being a feature and becomes "can be cold when someone's rent
+is due."
+
+**But the trigger is the arrival of real data, not a limit of Neon's — and the difference
+matters.** Neon is SOC 2 Type II with encryption at rest and in transit; nothing about real
+household data exceeds it. The honest case for Cloud SQL is locality, not capability: the rest
+of the stack is GCP ([2]), and KMS, Secret Manager, and Cloud Run sharing a trust boundary
+with the database is worth something. **That is a real argument and it is not yet a made one.**
+
+Read [`prd.md`](./prd.md) §2.4 before spending on this migration. Its whole subject is a
+decision that survived because *no document ever argued for it* — a daily cadence inherited
+from a product that no longer existed. "Postgres/Cloud SQL" has been in this document since v1
+and has never been argued either. It may well be right. It should be **argued before it is
+paid for**, and if the argument does not close, phase 2 is Neon and this table gets shorter.
+
+**There is no phase 3 for the database, and the arithmetic is why.** The serving workload is
+one decision per household per day — that is what §2.4's "daily data, weekly money" buys:
+
+| At | Decisions/day | Avg write rate |
+|---|---|---|
+| 100K households | 100K | ~1.2/sec |
+| 1M households | 1M | ~11.6/sec |
+| 5M households | 5M | ~57.9/sec |
+
+Fifty-eight writes per second is not a scaling problem, and 5M is already past the ceiling
+[`prd.md`](./prd.md) §2.2's variance gate admits. Postgres is not the constraint at any user
+count this product's own segment sizing allows. AlloyDB, read replicas, and a bigger instance
+are **dials inside phase 2**, not a phase — and all three are wire-compatible.
+
+**Storage does not run out either, and this was measured rather than assumed.** An earlier draft
+of this section put ~10KB/snapshot and 18 TB/yr here on a **guess**, and then reasoned about a
+phase 3 from it. [`prd.md`](./prd.md) §2.4 exists partly to warn about exactly that move — it
+documents two plugged-in numbers that "pointed the right way for the wrong reason." This is the
+correction.
+
+Measured over 90 consecutive `Snapshot`s of the demo household, serialized with
+[`artifact.py`](../backend/artifact.py)'s tagged-scalar scheme:
+
+| | mean/snapshot | vs raw |
+|---|---|---|
+| raw JSON | **2,699 B** | — |
+| gzip'd individually | 770 B | 3.5× |
+| gzip'd as a batch | 38 B | **70.7×** |
+| lzma'd as a batch | 25 B | 108× |
+
+**The ratio is the finding, not the size.** Consecutive days for one household are nearly
+identical — `today` moves, a few balances move, the rest is unchanged — so a store sorted by
+`(household_id, day)` compresses ~70× while a store that compresses each value independently
+gets ~3.5×. **Postgres TOAST is the second kind.** That is the `SnapshotStore` seam's real
+justification, and it is a smaller one than "18 TB": it is roughly the difference between a
+few hundred dollars a month and a few tens, at 5M households.
+
+Scale it honestly and it does not threaten anything. The demo household is small — 2 accounts,
+5 events, 1 card. A real one is bigger: [`USERS.md`](../USERS.md) says two or three cards, a
+real recurring-event detector ([3.2]) emits far more than 5 events, and real accounts carry
+pending transactions. Call it 3–5× raw, and call the compression 20–30× rather than 70× because
+real balances jitter where synthetic ones do not. **That still lands under a TB/yr at 5M
+households** — tens of dollars of object storage.
+
+So the thing that looked like phase 3 **is not a different system of record, and on these
+numbers it is not anything.** The seam still earns its keep for the reason above. The *trigger*
+does not fire:
+
+- **Trigger:** the backtest scan, not the serving path, becomes the constraint. **Measured, and
+  it does not** — at sub-TB/yr this is a once-per-engine-version batch read, not an
+  architecture.
+- **Explicitly not:** a different OLTP store ([1.2]'s row on `FinancialProvider`), and not an
+  analytics engine over the snapshots — see below.
+
+**The backtest is not an analytics query.** It runs `engine.decide()` and `outcome.grade()` —
+Python — over each snapshot. BigQuery, ClickHouse, and DuckDB cannot do that, so none of them
+is a candidate for the scan; it is a parallel map (Cloud Run Jobs or Dataflow), and the
+arithmetic is undramatic: 5M households × ~163ms measured per household-90-days is ~2 hours
+across 100 workers.
+
+**Where an analytics engine does earn a place is the graded output**, not the input.
+[`strategy.md`](./strategy.md) §3's asset is "the empirical distribution of our own errors, by
+user archetype, by pay cadence, by season" — that is an aggregation over `Outcome` rows, which
+are ~10 numeric fields each and tens of GB/yr at 5M. That is a real and small BigQuery table.
+**Not built, and not needed until shadow mode has real households to grade** ([`prd.md`](./prd.md)
+§8.1).
+
+**This still reverses [1.2]'s "Cloud Storage — nothing stores blobs"**, and the reversal is
+recorded rather than quietly performed — just for a duller reason than the one first written
+here.
 
 ---
 
