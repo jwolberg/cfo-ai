@@ -149,6 +149,7 @@ defects instead — see below.
 | [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
+| [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
 
 ## Three things to know before picking one of these up
 
@@ -180,6 +181,13 @@ Measured across 80 households: B is unserved **63%** of days, C **41%**, and on 
 served B breaches **19.7%** — the same magnitude this harness **refused** to ship as the empirical
 spend model. **0 sweep-caused overdrafts across all four**, so §5.2 holds and no gate was touched:
 the cost is service and honesty, not safety.
+
+Filed as [`0029`](0029-the-income-bucket-is-biweekly-shaped.md), and **read it before starting
+anything about §9.3** — they are the same defect wearing two hats, waiting on the same unbuilt
+detector. The uncomfortable part is in that ticket: the broken gate is currently the only thing
+standing between a semimonthly household and a forecast that breaches 19.7% of the time. Fixing it
+is a **loosening** that hands those days back to that forecast, so it is sequenced behind the
+forecast rather than ahead of it.
 
 **`0021` tests a mechanism whose identity is fake.** The IDOR suite is real and must be; the auth
 feeding it is a shared API key that may select any household (`0024`). That gap is deliberate —
