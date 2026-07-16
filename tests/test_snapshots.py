@@ -34,7 +34,7 @@ def _snapshot(day_offset: int = 90, quantile: float | None = None) -> Snapshot:
         today=WINDOW_START + timedelta(days=day_offset),
         spec=DEMO_SPEC,
         policy=DEMO_POLICY,
-        ledger_balance=Decimal("14000.00"),
+        ledger_balances={DEMO_SPEC.card.card_id: Decimal("14000.00")},
         checking=Decimal("3200.00"),
         spend_quantile=quantile,
     )
@@ -90,7 +90,7 @@ class TestTheCodecRoundTripsWithoutADatabase:
             today=WINDOW_START + timedelta(days=90),
             spec=DEMO_SPEC,
             policy=policy,
-            ledger_balance=Decimal("14000.00"),
+            ledger_balances={DEMO_SPEC.card.card_id: Decimal("14000.00")},
             checking=Decimal("3200.00"),
         )
         got = decode_tree(Snapshot, json.loads(json.dumps(encode_tree(s))))

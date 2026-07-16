@@ -8,6 +8,7 @@ are pinned here directly, not just observed through a finished artifact.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -965,7 +966,7 @@ class TestTheSpendDial:
             today=WINDOW_START + timedelta(days=90),
             spec=DEMO_SPEC,
             policy=DEMO_POLICY,
-            ledger_balance=money("9000.00"),
+            ledger_balances={DEMO_SPEC.card.card_id: money("9000.00")},
             checking=money("3000.00"),
         )
         assert snapshot.spend_30d_high is None
@@ -992,3 +993,131 @@ class TestTheSpendDial:
 
         assert worst is not None and scaled is not None
         assert scaled == money(worst * Decimal("1.5"))
+
+
+class TestTheWalkCarriesAPortfolio:
+    """Ticket `0027`. **The walk could not simulate a multi-card household.**
+
+    It built one `DebtLedger` from `spec.card` and handed that single balance to `derive_card` for
+    every card, so a $3,000 card reported the $14,000 card's balance. `_select_target` would rank
+    them equal and pick on APR alone; the obligation reserve would count the same $14,009 twice.
+
+    It survived because the engine's multi-card types, reserve and ranking (`0010`–`0017`) are
+    built and tested, and **every household the walk has ever driven has one card** — so nothing
+    exercised them. `HouseholdSpec.card`'s own docstring warns against exactly the read the walk
+    was doing.
+    """
+
+    @staticmethod
+    def _two_cards() -> HouseholdSpec:
+        """$14,000 at 23.99% and $3,000 at 18.99%. Different balances, so a shared ledger shows."""
+        big, small = DEMO_SPEC.cards[0], DEMO_SPEC.cards[0]
+        return replace(
+            DEMO_SPEC,
+            cards=(
+                replace(big, card_id="card_big", balance=money("14000.00"), apr=Decimal("0.2399")),
+                replace(
+                    small,
+                    card_id="card_small",
+                    balance=money("3000.00"),
+                    apr=Decimal("0.1899"),
+                    minimum_payment=money("60.00"),
+                    payment=money("90.00"),
+                ),
+            ),
+        )
+
+    def test_each_card_reports_its_own_balance(self) -> None:
+        """The defect, stated directly. Fails on pre-0027 code with 14009.20 == 14009.20."""
+        spec = self._two_cards()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        day = next(iter(walk(history, spec, WINDOW_START, 150)))
+
+        owed = {
+            c.card_id: c.statement_balance + c.unbilled_balance
+            for c in day.snapshot.portfolio.cards
+        }
+
+        assert owed["card_big"] != owed["card_small"], (
+            "both cards report the same balance — the walk is sharing one ledger across the "
+            "portfolio, so the engine is reasoning about a household that does not exist"
+        )
+        assert owed["card_big"] > money("13000.00")
+        assert owed["card_small"] < money("4000.00")
+
+    def test_a_sweep_settles_against_the_card_it_targeted(self) -> None:
+        """`Decision.target_debt_id` names one card. The money must land on that one and no other.
+
+        Paying the wrong card is not a rounding error: `interest.py` computes what the sweep saved
+        from the *targeted* card's APR, so a sweep credited to the wrong ledger makes the claim in
+        `prd.md` §1 — "that's $31 of interest you won't pay" — a number about a different debt.
+        """
+        spec = self._two_cards()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+
+        prev: dict[str, Decimal] | None = None
+        for w in walk(history, spec, WINDOW_START, 150):
+            if prev is not None and w.swept_yesterday is not None:
+                amount, target = w.swept_yesterday
+                others = [cid for cid in prev if cid != target]
+                # The targeted card fell by at least the sweep, net of the day's accrual.
+                assert w.debt_balances[target] < prev[target], (
+                    f"{w.day}: swept {amount} at {target}, but its balance did not fall"
+                )
+                for cid in others:
+                    # An untargeted card only ever moves by its own accrual or its own payment —
+                    # never by our sweep. It must not fall by the swept amount.
+                    assert w.debt_balances[cid] >= prev[cid] - amount + money("0.01") or (
+                        w.debt_balances[cid] > prev[cid] - amount
+                    ), f"{w.day}: swept {amount} at {target} but {cid} moved like it was paid"
+            prev = dict(w.debt_balances)
+
+    def test_two_cards_paid_on_the_same_day_both_land(self) -> None:
+        """`card_payments` was `{t.day: -t.amount}` — keyed on the day alone, so a second card paid
+        on the same day silently overwrote the first. Both cards here pay on the 20th."""
+        spec = self._two_cards()
+        assert spec.cards[0].payment_day_of_month == spec.cards[1].payment_day_of_month, (
+            "this test is meaningless unless both cards pay on the same day"
+        )
+
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        paid = {c: ZERO for c in ("card_big", "card_small")}
+        for t in history.txns:
+            if t.kind is TxnKind.CARD_PAYMENT and t.card_id in paid:
+                paid[t.card_id] += -t.amount
+
+        assert paid["card_big"] > ZERO and paid["card_small"] > ZERO, "the sim paid only one card"
+
+        # Both cards' payments must reach their own ledgers: each balance ends below its opening.
+        days = list(walk(history, spec, WINDOW_START, 150))
+        assert days[-1].debt_balances["card_small"] < money("3000.00"), (
+            "card_small never received its payments — they were keyed by day and overwritten"
+        )
+
+    def test_each_card_posts_interest_on_its_own_close_day(self) -> None:
+        """`DebtLedger.accrue` posted when `day.day == STATEMENT_DAY`, the module constant — so
+        every card posted on the 20th regardless of its own cycle."""
+        a = DebtLedger(principal=money("1000.00"), apr=Decimal("0.24"), close_day=5)
+        b = DebtLedger(principal=money("1000.00"), apr=Decimal("0.24"), close_day=20)
+
+        for offset in range(40):
+            day = date(2026, 1, 1) + timedelta(days=offset)
+            a.accrue(day)
+            b.accrue(day)
+            if day == date(2026, 1, 5):
+                assert a.accrued == ZERO, "card A did not post on its own close day"
+                assert b.accrued > ZERO, "card B posted on A's close day"
+
+
+class TestBuildStaysSingleCard:
+    """`DayRecord` carries one `debt_balance`, one `debt_apr`, one `debt_id` — the artifact schema
+    has exactly one debt because the demo household has exactly one card.
+
+    Shipping 0027's fix while leaving `build()` to silently report `cards[0]` would re-open the very
+    bug next door.
+    """
+
+    def test_a_multi_card_spec_is_refused_rather_than_half_reported(self) -> None:
+        spec = TestTheWalkCarriesAPortfolio._two_cards()
+        with pytest.raises(ValueError, match="one card"):
+            build(spec=spec)
