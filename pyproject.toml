@@ -15,6 +15,13 @@ api = [
     "fastapi>=0.115,<1.0",
     "uvicorn[standard]>=0.30,<1.0",
     "anthropic>=0.40,<1.0",  # the explain assistant only — never the decision path
+    # Persistence (ticket 0020, ADR-0004). SQLAlchemy **Core**, not the ORM: ADR-0002 was proud
+    # of "no ORM" and this keeps the SQL visible. Alembic because a schema without migrations
+    # drifts.
+    #
+    "sqlalchemy>=2.0,<2.1",
+    "alembic>=1.13,<2.0",
+    "psycopg[binary]>=3.1,<4.0",
 ]
 dev = [
     "pytest>=8",

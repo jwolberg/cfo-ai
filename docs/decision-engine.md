@@ -336,6 +336,33 @@ the **safe** direction, and it is the only model here measured to overdraft nobo
 
 What is no longer available is shipping the swap because the reasoning is elegant. It was.
 
+**Postscript (2026-07-16): the dial was not connected to the artifact at all.**
+
+Everything above measures `spend_quantile` through `backend/replay.py`. `backend/precompute.py`'s
+`build()` — the thing that produces what actually ships — **took no `spend_quantile` argument**. It
+assembled its own `Snapshot` inline and never set `spend_30d_high`, so the field was `None` on every
+artifact day regardless of the dial. `assemble_snapshot()`'s docstring said it existed so the two
+would not drift; `build()` did not call it.
+
+Nothing above is wrong, because the dial is `None` and both paths agreed on `None` by accident. But
+the sentence "a test fails if anyone moves it without a measurement" guarded the **setting** and
+nothing guarded the **wiring** — so the first person to act on a licensed setting would have
+measured one forecast and shipped another. There is now one walk (`precompute.walk()`), driven by
+`build()` and `replay()` alike, and a test asserts the dial reaches the artifact. Ticket `0019`.
+
+**The dial has not moved. It is `None`, and §6.6 is why.** What changed is that it is now connected
+to the thing it claims to control.
+
+**A deeper version of the same problem is open and is not fixed.** `sim.household.generate()` is not
+prefix-stable: it draws payroll and bills before discretionary spend from one RNG stream, and both
+run to `start + days - 1`, so `days` shifts every spend draw. `(spec, seed, days=150)` and
+`(spec, seed, days=181)` are **different households**. `build()` walks 150 and `replay()` walks 181
+— so *the harness has never graded the household the artifact ships.* The population statistics in
+[6.1] survive (20 arbitrary seeds per shape are still 20 valid households); **per-household claims
+tying a replay number to the demo do not.** `tests/test_precompute.py::TestGenerateIsNotPrefixStable`
+documents it. Fixing it regenerates the artifact and moves every number in this file, so it needs
+its own ticket and its own measurement.
+
 ### [6.7] A safety bar that only measures safety will license a regression
 
 `calibrate.py:licensed()` originally asked two questions: does this setting overdraft anyone, and

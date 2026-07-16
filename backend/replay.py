@@ -55,10 +55,8 @@ from backend.precompute import (
     SPEND_QUANTILE,
     WARMUP_DAYS,
     WINDOW_START,
-    DebtLedger,
-    assemble_snapshot,
+    walk,
 )
-from engine.decide import decide
 from engine.forecast import HORIZON_DAYS
 from engine.models import ZERO, Action, ReasonCode, UserPolicy, money
 from engine.outcome import Outcome, Realized, grade
@@ -160,15 +158,17 @@ def replay(
 ) -> Iterator[Graded]:
     """Walk a household day by day, decide, and grade — for every day we can honestly grade.
 
-    The walk carries the same state `precompute.build()` does — the debt ledger, the rolling week
-    of sweeps, the days since the last one — and assembles each `Snapshot` through
-    `precompute.assemble_snapshot()` rather than rebuilding one. Two copies of that assembly would
-    drift, and the calibration would start describing an engine that never shipped.
+    Drives `precompute.walk()` — **the** walk, the same one `build()` assembles the shipped
+    artifact from. That is not tidiness: it is the only thing making a calibration number a claim
+    about the engine that ships rather than about a second reconstruction of it. This file used to
+    carry its own copy of the stepping (identical, character for character) and reach `Snapshot`
+    assembly through `assemble_snapshot()` while `build()` used an inline one that ignored
+    `spend_quantile` entirely. See ticket `0019`.
 
     **The engine's own sweeps are applied to the walk.** A replay that assumed we never acted would
     never trip `CADENCE_HOLD`, never observe a deferral, and would find surplus on days when — had
     we actually been running — we had already moved the money. It would be measuring a different
-    engine, flatteringly.
+    engine, flatteringly. `walk()` carries that state; this driver does not have to remember to.
 
     What our sweeps are **not** in is `Realized`. That is the household's own movement, and
     `grade()` applies the decision's sweep to it itself, so the caller cannot forget.
@@ -183,67 +183,29 @@ def replay(
     # so they are not gradeable. Starting cold would throw away most of the window and, worse,
     # would grade a household whose card behaviour we had not yet observed for three cycles.
     total = warmup + days
+
+    # `HORIZON_DAYS + 1` more than `build()` generates, because grading needs the future the
+    # forecast was about. It cannot leak into the decision: every derivation reads
+    # `history.as_of(today)`, and `tests/test_precompute.py` asserts the walk is blind past it.
     history = generate(spec, start, total + HORIZON_DAYS + 1, seed)
 
-    ledger = DebtLedger(principal=spec.card.balance, apr=spec.card.apr)
-    card_payments = {t.day: -t.amount for t in history.txns if t.kind is TxnKind.CARD_PAYMENT}
-
-    sweeps: dict[date, Decimal] = {}
-    swept_cumulative = ZERO
-
-    for offset in range(total):
-        today = start + timedelta(days=offset)
-        yesterday = today - timedelta(days=1)
-
-        # Yesterday's sweep settles: off the card, and out of the checking balance that `sim/` —
-        # which knows nothing of our sweeps — still shows in full.
-        if settled := sweeps.get(yesterday, ZERO):
-            ledger.pay(settled)
-            swept_cumulative += settled
-
-        if payment := card_payments.get(today, ZERO):
-            ledger.pay(payment)
-
-        ledger.accrue(today)
-
-        last_sweep = max(sweeps, default=None)
-        snapshot = assemble_snapshot(
-            history=history,
-            today=today,
-            spec=spec,
-            policy=policy,
-            ledger_balance=ledger.outstanding,
-            checking=history.balance_on(today) - swept_cumulative,
-            swept_this_week=sum(
-                (a for d, a in sweeps.items() if today - timedelta(days=6) <= d <= yesterday),
-                ZERO,
-            ),
-            days_since_last_sweep=(today - last_sweep).days if last_sweep else None,
-            last_sweep_amount=sweeps[last_sweep] if last_sweep else None,
-            spend_quantile=spend_quantile,
-        )
-
-        decision = decide(snapshot)
-
-        if decision.action is Action.SWEEP:
-            sweeps[today] = decision.amount
-
+    for w in walk(history, spec, start, total, policy, spend_quantile):
         # The warm-up is walked so the ledger and the cadence are real by the time we start
         # grading — but it is not itself graded. Those days are the engine refusing for want of
         # history, which is true and is not a forecast error.
-        if offset < warmup:
+        if w.offset < warmup:
             continue
 
-        if decision.projected_low_balance is None:
+        if w.decision.projected_low_balance is None:
             # A blocking refusal. It never forecast anything, so there is nothing to grade.
             continue
 
-        outcome = grade(snapshot, decision, realized_from(history, today))
-        deferred = decision.action is Action.REFUSE and any(
-            r.code in DEFERRING_REASONS for r in decision.reasons
+        outcome = grade(w.snapshot, w.decision, realized_from(history, w.day))
+        deferred = w.decision.action is Action.REFUSE and any(
+            r.code in DEFERRING_REASONS for r in w.decision.reasons
         )
 
-        yield Graded(day=today, outcome=outcome, deferred=deferred)
+        yield Graded(day=w.day, outcome=outcome, deferred=deferred)
 
 
 def calibrate(graded: list[Graded]) -> Calibration:

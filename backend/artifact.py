@@ -40,6 +40,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from backend.codec import CodecError, decode_scalar, encode_scalar
 from engine.models import (
     CENTS,
     ZERO,
@@ -64,7 +65,7 @@ _ENUMS: dict[str, type[Enum]] = {
 }
 
 
-class ArtifactError(ValueError):
+class ArtifactError(CodecError):
     """The artifact is missing, malformed, or internally inconsistent.
 
     Raised at startup, never per-request: a service holding bad data should refuse to
@@ -75,36 +76,24 @@ class ArtifactError(ValueError):
 # --- scalar encoding ----------------------------------------------------------------
 
 
+# The implementation lives in `backend/codec.py` — `backend/db/snapshots.py` needs exactly this
+# scheme for the frozen snapshot payload, and a second copy of "how a Decimal survives JSON" is
+# the drift ticket 0019 spent a day removing. One copy, two callers.
+#
+# `error=ArtifactError` preserves this module's contract exactly: `backend/main.py` catches
+# `ArtifactError` at startup, and a codec that raised something else would turn ADR-0002 [2.1]'s
+# "fail fast at startup, never per-request" into a 500 per request.
+
+
 def _encode(value: object) -> Any:
-    # bool before int (a bool *is* an int), Enum before str (our enums are str enums).
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, Decimal):
-        return {"$dec": str(value)}
-    if isinstance(value, date):
-        return {"$date": value.isoformat()}
-    if isinstance(value, Enum):
-        return {"$enum": [type(value).__name__, value.value]}
-    if isinstance(value, int | float | str):
-        return value
-    raise ArtifactError(f"cannot encode {value!r} of type {type(value).__name__}")
+    return encode_scalar(value, error=ArtifactError)
 
 
 def _decode(value: Any) -> object:
-    if not isinstance(value, dict):
-        return value
-
-    if "$dec" in value:
-        return Decimal(str(value["$dec"]))  # exact text, never re-quantized — see module docs
-    if "$date" in value:
-        return date.fromisoformat(str(value["$date"]))
-    if "$enum" in value:
-        name, raw = value["$enum"]
-        if name not in _ENUMS:
-            raise ArtifactError(f"unknown enum type {name!r}")
-        return _ENUMS[name](raw)
-
-    raise ArtifactError(f"unrecognised tagged value {value!r}")
+    # The enum **name registry** is needed here and only here: `Reason.params` is an open mapping,
+    # so the caller cannot know what type to expect. `codec.decode_tree` is type-driven and needs
+    # no registry — see that module's docstring.
+    return decode_scalar(value, _ENUMS, error=ArtifactError)
 
 
 def _decimal(raw: Any, field: str) -> Decimal:

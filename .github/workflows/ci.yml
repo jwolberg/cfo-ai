@@ -29,6 +29,28 @@ on:
 jobs:
   quality:
     runs-on: ubuntu-latest
+
+    # A real Postgres, not a stand-in. `tests/test_schema.py` and `tests/test_idor.py` are about
+    # row-level security and declarative partitioning — a SQLite substitute would test a
+    # different artifact and report green. Ticket 0020.
+    #
+    # This is a service container rather than Neon on purpose: CI must not depend on an external
+    # instance for its secrets, its bill, or its uptime. Neon is stock Postgres, so the drift is
+    # nil, and the deployed instance is ticket 0026's business.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cfo_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -56,6 +78,10 @@ jobs:
           # every test that exercises the assistant.
           RESFI_API_KEY: ci-not-a-real-key
           ANTHROPIC_API_KEY: sk-ant-ci-not-a-real-key
+          # Without this the database suites **skip**, and a skipped security test reports green
+          # while proving nothing. `tests/test_ci_runs_the_db_suite.py` fails the build if this
+          # is ever unset here, so the skip cannot go quiet.
+          TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cfo_ai_test
 
   mobile:
     runs-on: ubuntu-latest
@@ -73,6 +99,22 @@ jobs:
 
       - name: Install
         run: npm ci
+
+      # The actual fix for the timeout flake that blocked three PRs — none of which touched
+      # `mobile/`, one of which was documentation-only (run 29364274507).
+      #
+      # jest-expo babel-transforms the whole React Native + Expo module graph on first render:
+      # measured at 13.86s cold against 2.38s warm for the same 9 tests. On a cold runner that
+      # cost lands on whichever test renders first, which is why a *different* test failed each
+      # run. Restoring the transform cache means CI stops paying it on every run; `testTimeout`
+      # in mobile/jest.config.js is the safety net for the run that misses this cache.
+      #
+      # Keyed on the lockfile: a dependency change is exactly when the transforms are stale.
+      - name: Cache jest transforms
+        uses: actions/cache@v4
+        with:
+          path: mobile/.jest-cache
+          key: jest-${{ runner.os }}-node22-${{ hashFiles('mobile/package-lock.json') }}
 
       - name: Typecheck
         run: npm run typecheck
