@@ -41,14 +41,14 @@ Plaid, money movement, real auth, or a live daily decision job.
 
 | Unit | Ticket | Status | Landed in |
 |------|--------|--------|-----------|
-| U1 The walk, unified — and the dial nothing reads | — | not started | — |
-| U2 Schema, RLS, and the first migration | — | not started | — |
-| U3 Repository scoping and the IDOR suite | — | not started | — |
-| U4 The `SnapshotStore` seam | — | not started | — |
-| U5 The archetypes, and the seeder | — | not started | — |
-| U6 The read path | — | not started | — |
-| U7 Mobile: the household switcher | — | not started | — |
-| U8 Neon, and the deploy path | — | not started | — |
+| U1 The walk, unified — and the dial nothing reads | `0019` | not started | — |
+| U2 Schema, RLS, and the first migration | `0020` | not started | — |
+| U3 Repository scoping and the IDOR suite | `0021` | not started | — |
+| U4 The `SnapshotStore` seam | `0022` | not started | — |
+| U5 The archetypes, and the seeder | `0023` | not started | — |
+| U6 The read path | `0024` | not started | — |
+| U7 Mobile: the household switcher | `0025` | not started | — |
+| U8 Neon, and the deploy path | `0026` | not started | — |
 
 ---
 

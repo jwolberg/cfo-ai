@@ -108,3 +108,79 @@ the forecast's spend model. Nothing in `0010`–`0016` waits on it, and until it
 `daily_discretionary_high` stays exactly as it is. The reserve work **tightens** (always safe); the
 spend-model swap would **loosen** (needs the measurement). That distinction is the rule, not a
 compromise.
+
+---
+
+# Multi-tenant persistence, and the households this engine has never seen
+
+Ticket set for `docs/plans/2026-07-16-001-feat-multi-tenant-persistence-plan.md`, one per
+Implementation Unit (U1–U8 → `0019`–`0026`). Decision:
+[ADR-0004](../decisions/0004-postgres-scoped-by-household.md), superseding `0002`.
+
+The ask was "a database, seeded with a couple of customers, so I can understand the dashboards."
+The hard part is neither: `sim/` is already a correct multi-household primitive, `build()` already
+takes `spec`/`seed`/`policy`, and single-tenancy lives in four places. Scoping it turned up two
+defects instead — see below.
+
+## Dependency order
+
+```
+0019 (unify the walk) — detached on purpose; ships first, needs no database
+        │
+0020 (schema, RLS, migration)
+  ├─ 0021 (repository + IDOR suite) ──┐
+  ├─ 0022 (SnapshotStore seam) ───────┤
+  └─ 0026 (Neon + deploy path)        │
+                                      ├──► 0023 (archetypes + seeder) ◄── 0019
+                                      │        └─ 0024 (read path)
+                                      │             └─ 0025 (mobile switcher)
+                                      └────────────►┘
+```
+
+| Ticket | Title | Owner | Depends on |
+|---|---|---|---|
+| [0019](0019-unify-the-walk.md) | The walk, unified — and the dial nothing reads | backend-python-agent | — |
+| [0020](0020-schema-rls-first-migration.md) | Schema, RLS, and the first migration | backend-python-agent | — |
+| [0021](0021-repository-scoping-and-idor-suite.md) | Repository scoping and the IDOR suite | backend-python-agent | 0020 |
+| [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 |
+| [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022 |
+| [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 |
+| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 |
+| [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 |
+
+## Three things to know before picking one of these up
+
+**`0019` is a defect, not a refactor, and it ships alone.** `assemble_snapshot()`'s docstring says it
+exists so `build()` and `replay()` do not drift. They have drifted: `build()` does not call it,
+constructs a `Snapshot` inline at `precompute.py:943-973` that never sets `spend_30d_high`, and has
+no `spend_quantile` parameter at all — while `calibrate.py` sweeps nine settings of that dial through
+`replay()`. Invisible today only because `SPEND_QUANTILE = None`. **The day the dial moves,
+`calibrate.py` licenses a forecast the artifact cannot ship** — the harness grading an engine that is
+not the one serving. `decision-engine.md` §8.4's bug class, and §6.6's test guards the *measurement*,
+not the *wiring*.
+
+Its verification **is** the ticket: `tests/test_precompute.py:489-494` stays green **without being
+regenerated**, plus a new test that fails on today's code. Regenerating the committed artifact to
+match new output deletes the only evidence the refactor preserved behavior.
+
+**`0023` is what the plan exists for.** Every household this engine has ever run against is
+biweekly, one card, 23.99% — including all 60 in the calibration population, because
+`calibrate._spec_for()` varies only the spend shape. So `decision-engine.md` §9.3's admission that
+the 7-day spacing rule is "a poor approximation for everyone else" has never been tested: there is no
+everyone else. If archetypes B/C/D refuse constantly, **that is the finding**, not a bug — and not a
+reason to loosen a gate.
+
+**`0021` tests a mechanism whose identity is fake.** The IDOR suite is real and must be; the auth
+feeding it is a shared API key that may select any household (`0024`). That gap is deliberate —
+synthetic households have no owner to authenticate as, and Clerk lands with Plaid — but it must be
+flagged in `USERS.md`, not only in a code comment. An IDOR suite is reassuring in a way a shared key
+does not earn.
+
+## The number that was wrong
+
+`architecture.md` [4.1] first justified `0022`'s seam with a **guessed** ~10KB snapshot and 18 TB/yr,
+and reasoned a whole "phase 3" out of it. Measured: **2,699 B**, compressing **70×** when sorted by
+`(household_id, day)` — under a TB/yr at 5M households. The seam survives on a *compression gap*
+(Postgres TOAST does ~3.5×), not a volume wall, and phase 3's trigger cannot fire. `prd.md` §2.4
+documents two prior plugged-in numbers that "pointed the right way for the wrong reason"; this was
+nearly the third, and `0022` is scoped to the smaller claim.
