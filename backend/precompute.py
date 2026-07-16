@@ -58,6 +58,7 @@ from engine.models import (
     Account,
     AccountKind,
     Action,
+    AprSource,
     Card,
     CardPortfolio,
     CashEvent,
@@ -121,6 +122,21 @@ SEED = 7
 # without evidence. It is set from a measured breach rate over a population — see
 # `backend/calibrate.py`. Do not move it from an argument.
 SPEND_QUANTILE: float | None = None
+
+# --- the APR estimate -----------------------------------------------------------------
+#
+# What we assume a card charges when the issuer will not tell us (`decision-engine.md` §6.3).
+# Ticket 0028 settles `architecture.md` §7.5 on "estimated, with visibly reduced confidence".
+#
+# **23% is near the BOTTOM of the persona's 20-30% band** (`prd.md` §3), and that is the
+# conservative direction for a guess: an estimated card loses the ranking to most cards we can
+# actually price, so we under-prioritize the one we cannot see rather than diverting money away
+# from one we can. Guessing high would do the opposite and inflate every interest claim with it.
+#
+# It is only ever used for **ranking**. `interest.py` refuses to compute a saving from an
+# ESTIMATED rate, so this number never reaches `prd.md` §5.1's KPI or the sentence in §1. See
+# `engine/models.py`'s `AprSource`.
+ESTIMATED_APR = Decimal("0.23")
 
 # Trailing windows for the rolling statistics the engine reads.
 SPEND_LOOKBACK_DAYS = 90
@@ -674,7 +690,13 @@ def derive_card(history: History, card: CardSpec, today: date, ledger_balance: D
 
     return Card(
         card_id=card.card_id,
-        apr=card.apr,
+        # The blindness lives here, not in `sim/`. The card *has* a rate — the household pays it
+        # daily and `DebtLedger` accrues at it — but `decision-engine.md` §6.3 says many issuers
+        # do not report one through Plaid. When they do not, the engine is handed the estimate and
+        # told it is an estimate, so it can rank on the guess and `interest.py` can refuse to
+        # price it. Ticket 0028.
+        apr=card.apr if card.apr_reported else ESTIMATED_APR,
+        apr_source=AprSource.REPORTED if card.apr_reported else AprSource.ESTIMATED,
         cycle=cycle,
         statement_balance=statement_balance,
         statement_due_date=max(due, today),

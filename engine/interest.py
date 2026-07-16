@@ -56,7 +56,7 @@ from collections.abc import Mapping
 from datetime import date, timedelta
 from decimal import Decimal
 
-from engine.models import ZERO, Card, PaymentBehavior, money, statement_day
+from engine.models import ZERO, AprSource, Card, PaymentBehavior, money, statement_day
 
 DAYS_PER_YEAR = Decimal("365")
 
@@ -107,12 +107,27 @@ def total_interest(
     to have saved. Wrong in the safe direction, deliberately: the alternative is a model that
     flatters us on the one figure we are paid on.
 
-    Returns `None` when the APR is unknown, and **`ZERO` for a TRANSACTOR** — they hold the
-    grace period, so they pay no interest at all and there is nothing for a sweep to save.
-    Raises `ValueError` when the payments never cover the interest *and* the new charges: the
-    balance grows without bound, there is no payoff, and no honest total exists.
+    Returns `None` when the APR is unknown **or merely estimated**, and **`ZERO` for a
+    TRANSACTOR** — they hold the grace period, so they pay no interest at all and there is
+    nothing for a sweep to save. Raises `ValueError` when the payments never cover the interest
+    *and* the new charges: the balance grows without bound, there is no payoff, and no honest
+    total exists.
     """
     if card.apr is None:
+        return None
+
+    if card.apr_source is AprSource.ESTIMATED:
+        # We defaulted this rate because the issuer would not report it (`AprSource`, ticket
+        # 0028). The engine is allowed to **rank** on that guess — a wrong target optimizes worse
+        # and overdraws nobody — but it may not **price** it.
+        #
+        # This function computes the number `prd.md` §5.1 grades the company on and the sentence
+        # §1 shows the user: "that's $31 of interest you won't pay." Both would be arithmetic on
+        # a rate we invented. §5.1 already banned the *projected* KPI for flattering us; billing
+        # against a guessed APR is the same disease with a different symptom.
+        #
+        # So the sweep still happens and the feed simply says nothing about what it saved. That
+        # is the honest output, and it is what archetype D exists to show.
         return None
 
     if card.behavior is PaymentBehavior.TRANSACTOR:

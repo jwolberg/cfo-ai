@@ -257,6 +257,29 @@ class SpendCategory(str, Enum):
     OTHER = "other"
 
 
+class AprSource(str, Enum):
+    """Where a card's APR came from. Ticket `0028`; settles `architecture.md` §7.5.
+
+    Plaid's Liabilities product does not return APR for many issuers (`decision-engine.md` §6.3),
+    so the engine used to refuse to rank rather than guess. It now **estimates** — but an estimate
+    that cannot be told apart from a reported rate is just a guess with better manners, and the
+    difference is load-bearing in exactly one place:
+
+    - **Ranking may use an estimate.** `_select_target` sorts on `apr`, and a wrong target
+      optimizes worse without overdrawing anyone. No safety gate reads this field.
+    - **A saving may never be claimed from one.** `interest.py` returns `None` for `ESTIMATED`, so
+      no `INTEREST_AVOIDED` reason is emitted. `prd.md` §5.1 makes realized interest avoided the
+      number the company is graded on and §1 makes it the sentence the user reads; computing either
+      from a rate we invented would make both partly fiction.
+
+    **Act on the estimate. Never bill for it.**
+    """
+
+    REPORTED = "reported"  # the issuer told us, via Plaid
+    USER_ENTERED = "user_entered"  # the household told us. No entry path yet — see 0028.
+    ESTIMATED = "estimated"  # we defaulted it. See `ESTIMATED_APR`.
+
+
 class PaymentBehavior(str, Enum):
     """How the household settles this card. Learned from >= 3 observed cycles.
 
@@ -390,6 +413,9 @@ class Card:
     # future charges. That is the *old* behaviour and it is the flattering one, so it is only
     # reachable while `PaymentBehavior.UNKNOWN` is already blocking the sweep outright.
     observed_monthly_charges: Decimal | None = None
+    # Defaults to REPORTED so every existing card, test, and the committed artifact are unmoved.
+    # Read by `interest.py` and by nothing that gates safety — see `AprSource`.
+    apr_source: AprSource = AprSource.REPORTED
 
     def __post_init__(self) -> None:
         """Corrupt card data is rejected, not smoothed over.

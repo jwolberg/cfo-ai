@@ -333,5 +333,10 @@ Each of these changes the schema, so none can be deferred:
    tension in the schema, not after it.
 4. **Plaid production-access review** — a real launch gate that asks for exactly the above.
    Track it as a dependency, not a formality.
-5. **APR fallback** — Plaid frequently omits APR. User-entered, estimated-with-lower-
-   confidence, or refuse to rank (which is what the engine does today).
+5. ~~**APR fallback**~~ — **settled 2026-07-16 by ticket `0028`: estimated, at 23%, with the
+   confidence carried in `cards.apr_source` rather than implied.** The engine ranks on the
+   estimate and [`decision-engine.md`](./decision-engine.md) §6.3 explains why that is safe
+   (`APR_UNKNOWN` gates value, not safety); `engine/interest.py` refuses to compute a saving from
+   one, so [`prd.md`](./prd.md) §5.1's KPI is never arithmetic on a guess. `USER_ENTERED` is in
+   the enum and the schema but has no entry path — §6.3's "a real product needs a user-entered
+   fallback" is still unbuilt.

@@ -19,6 +19,7 @@ from backend.precompute import (
     CHECKING_ID,
     DEMO_POLICY,
     DEMO_SPEC,
+    ESTIMATED_APR,
     SAVINGS_BALANCE,
     SEED,
     SERVED_DAYS,
@@ -42,9 +43,11 @@ from backend.precompute import (
     walk,
 )
 from engine.forecast import HORIZON_DAYS
+from engine.interest import total_interest
 from engine.models import (
     ZERO,
     Action,
+    AprSource,
     CoverageState,
     EventKind,
     PaymentBehavior,
@@ -1121,3 +1124,110 @@ class TestBuildStaysSingleCard:
         spec = TestTheWalkCarriesAPortfolio._two_cards()
         with pytest.raises(ValueError, match="one card"):
             build(spec=spec)
+
+
+class TestTheAprEstimate:
+    """Ticket `0028`. **Act on the estimate. Never bill for it.**
+
+    `decision-engine.md` §6.3: Plaid does not report APR for many issuers, and the engine used to
+    refuse to rank rather than guess. It now estimates at 23% — and the whole point of the
+    provenance is that the two halves come apart:
+
+    - `decide.py` **ranks** on the guess. A wrong target optimizes worse and overdraws nobody; no
+      safety gate reads `apr_source`.
+    - `interest.py` **refuses to price** it. `prd.md` §5.1's KPI and §1's "that's $31 of interest
+      you won't pay" would otherwise be arithmetic on a number we invented.
+    """
+
+    @staticmethod
+    def _unreported(**over) -> HouseholdSpec:
+        """The demo household, whose issuer will not report the rate."""
+        return replace(DEMO_SPEC, cards=(replace(DEMO_SPEC.cards[0], apr_reported=False, **over),))
+
+    def test_an_unreported_card_is_estimated_and_says_so(self) -> None:
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        card = next(iter(walk(history, spec, WINDOW_START, 150))).snapshot.portfolio.cards[0]
+
+        assert card.apr == ESTIMATED_APR == Decimal("0.23")
+        assert card.apr_source is AprSource.ESTIMATED
+
+    def test_a_reported_card_keeps_its_real_rate(self) -> None:
+        """The demo card reports 23.99%. Nothing about 0028 may touch it — which is also why the
+        committed artifact is byte-identical."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        card = next(iter(walk(history, DEMO_SPEC, WINDOW_START, 150))).snapshot.portfolio.cards[0]
+
+        assert card.apr == Decimal("0.2399")
+        assert card.apr_source is AprSource.REPORTED
+
+    def test_the_engine_still_sweeps_on_an_estimate(self) -> None:
+        """The point of estimating: the engine **acts** where APR_UNKNOWN used to refuse."""
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        days = list(walk(history, spec, WINDOW_START, 150))
+
+        assert any(d.decision.action is Action.SWEEP for d in days), (
+            "the engine refused all 150 days on an estimated card — it is meant to act"
+        )
+        assert not any(d.decision.has(ReasonCode.APR_UNKNOWN) for d in days), (
+            "APR_UNKNOWN fired on a card we estimated"
+        )
+
+    def test_it_never_claims_a_saving_from_an_estimate(self) -> None:
+        """**The half that must not be skipped.** The sweep happens and the feed says nothing about
+        what it saved, because the rate is a guess.
+
+        If this fails, `prd.md` §5.1's realized-interest-avoided — the number the company is graded
+        on — has started reporting arithmetic on an invented APR.
+        """
+        spec = self._unreported()
+        history = generate(spec, WINDOW_START, 150, seed=SEED)
+        days = list(walk(history, spec, WINDOW_START, 150))
+        swept = [d for d in days if d.decision.action is Action.SWEEP]
+
+        assert swept, "no sweep to check"
+        for d in swept:
+            assert not d.decision.has(ReasonCode.INTEREST_AVOIDED), (
+                f"{d.day}: claimed a saving computed from an estimated APR"
+            )
+
+    def test_a_reported_card_does_still_claim(self) -> None:
+        """The control. Without this, the test above passes on an engine that never claims at
+        all — which would be a different bug wearing the same green tick."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        swept = [
+            d
+            for d in walk(history, DEMO_SPEC, WINDOW_START, 150)
+            if d.decision.action is Action.SWEEP
+        ]
+        assert swept, "no sweep to check"
+        assert any(d.decision.has(ReasonCode.INTEREST_AVOIDED) for d in swept), (
+            "a reported card stopped claiming its saving — 0028 broke the normal path"
+        )
+
+    def test_total_interest_refuses_an_estimate_directly(self) -> None:
+        """At the unit, not through the walk: same card, same balance, only the provenance moves."""
+        history = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        card = derive_card(
+            history,
+            DEMO_SPEC.cards[0],
+            WINDOW_START + timedelta(days=90),
+            ledger_balance=money("9000.00"),
+        )
+
+        reported = replace(card, apr=Decimal("0.23"), apr_source=AprSource.REPORTED)
+        estimated = replace(card, apr=Decimal("0.23"), apr_source=AprSource.ESTIMATED)
+
+        assert total_interest(reported, WINDOW_START, money("450.00")) is not None
+        assert total_interest(estimated, WINDOW_START, money("450.00")) is None
+
+    def test_the_estimate_is_conservative_for_ranking(self) -> None:
+        """23% sits near the bottom of the persona's 20-30% band (`prd.md` §3), so an estimated
+        card loses to most cards we can actually price. That is the safe direction: we
+        under-prioritize the card we cannot see rather than diverting money from one we can."""
+        assert Decimal("0.25") > ESTIMATED_APR, (
+            "the estimate has drifted above the middle of the persona's band — it now out-ranks "
+            "cards we can price, which is the anti-conservative direction for a guess"
+        )
+        assert Decimal("0.20") <= ESTIMATED_APR, "below the persona's band entirely"
