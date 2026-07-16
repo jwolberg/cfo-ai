@@ -30,11 +30,5 @@
     "build:web": "expo export --platform web && npm run copy:docs",
     "deploy:web": "npm run build:web && firebase deploy --only hosting"
   },
-  "private": true,
-  "jest": {
-    "preset": "jest-expo",
-    "transformIgnorePatterns": [
-      "node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg))"
-    ]
-  }
+  "private": true
 }

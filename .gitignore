@@ -30,3 +30,6 @@ __pycache__/
 # the system Python may hold different versions for unrelated projects; the venv keeps them apart
 # and matches what CI installs fresh via `pip install -e ".[dev]"`.
 .venv/
+
+# jest transform cache — restored in CI (see .github/workflows/ci.yml), never committed.
+mobile/.jest-cache/

@@ -100,6 +100,22 @@ jobs:
       - name: Install
         run: npm ci
 
+      # The actual fix for the timeout flake that blocked three PRs — none of which touched
+      # `mobile/`, one of which was documentation-only (run 29364274507).
+      #
+      # jest-expo babel-transforms the whole React Native + Expo module graph on first render:
+      # measured at 13.86s cold against 2.38s warm for the same 9 tests. On a cold runner that
+      # cost lands on whichever test renders first, which is why a *different* test failed each
+      # run. Restoring the transform cache means CI stops paying it on every run; `testTimeout`
+      # in mobile/jest.config.js is the safety net for the run that misses this cache.
+      #
+      # Keyed on the lockfile: a dependency change is exactly when the transforms are stale.
+      - name: Cache jest transforms
+        uses: actions/cache@v4
+        with:
+          path: mobile/.jest-cache
+          key: jest-${{ runner.os }}-node22-${{ hashFiles('mobile/package-lock.json') }}
+
       - name: Typecheck
         run: npm run typecheck
 

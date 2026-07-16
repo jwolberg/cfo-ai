@@ -46,9 +46,24 @@ beforeEach(() => {
   getSpend.mockReset();
 });
 
+// ⚠️ `await render(...)`, never a bare `render(...)`.
+//
+// This file was the only suite here calling `render()` bare — 7 of them, against 0 in
+// Dashboard/Dashboard.scroll/ExplainModal — and it was the only suite that failed on a cold jest
+// cache. `render` is not a promise, so the `await` looks like noise; it is not. Awaiting yields to
+// the microtask queue and lets React flush its effects, and `screen` is only populated after that
+// flush. Without it the first `waitFor` can hit `screen` before the render result is registered and
+// die with "`render` function has not been called" — pointing at line 53 while line 51 is the
+// render.
+//
+// It only bites when the machine is slow enough to lose the race (a cold babel transform, a loaded
+// CI runner), which is why it survived: warm and local it passes every time. Verified by
+// reproduction — cold cache, this file alone, first test fails; add the `await`, and two
+// consecutive cold full-suite runs pass.
+
 test('the two obligations are shown separately, because they are due a month apart', async () => {
   getSpend.mockResolvedValue(spend());
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('this-cycle')).toBeTruthy());
 
@@ -67,7 +82,7 @@ test('the two obligations are shown separately, because they are due a month apa
 
 test('the reserve is named, so it does not look arbitrary', async () => {
   getSpend.mockResolvedValue(spend());
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('held-back')).toBeTruthy());
   expect(screen.getByText(/holding back \$2,240\.00 of your cash/)).toBeTruthy();
@@ -75,7 +90,7 @@ test('the reserve is named, so it does not look arbitrary', async () => {
 
 test('a household whose card shrank is not shown the warning panel', async () => {
   getSpend.mockResolvedValue(spend());
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('this-cycle')).toBeTruthy());
   expect(screen.queryByTestId('card-grew')).toBeNull();
@@ -85,7 +100,7 @@ test('a card that grew says so, and says a sweep will not fix it', async () => {
   getSpend.mockResolvedValue(
     spend({ last_cycle: { charged: '1760.00', paid: '1450.00', grew_by: '310.00' } }),
   );
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('card-grew')).toBeTruthy());
 
@@ -95,7 +110,7 @@ test('a card that grew says so, and says a sweep will not fix it', async () => {
 
 test('the worst 30-day stretch is the headline of the strip chart', async () => {
   getSpend.mockResolvedValue(spend());
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('worst-month')).toBeTruthy());
 
@@ -105,7 +120,7 @@ test('the worst 30-day stretch is the headline of the strip chart', async () => 
 
 test('an unreachable backend is our failure, not the household having spent nothing', async () => {
   getSpend.mockRejectedValue(new ApiError('network', 'nope'));
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('spending-failed')).toBeTruthy());
 
@@ -125,7 +140,7 @@ test('an empty series does not crash the chart', async () => {
       },
     }),
   );
-  render(<Spending />);
+  await render(<Spending />);
 
   await waitFor(() => expect(screen.getByTestId('worst-month')).toBeTruthy());
   expect(screen.queryByTestId('strip-chart')).toBeNull();
