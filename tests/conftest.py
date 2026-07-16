@@ -77,6 +77,61 @@ def db(db_engine: Engine) -> Iterator[Connection]:
         yield conn
 
 
+@pytest.fixture(scope="session")
+def app_engine(db_engine: Engine) -> Iterator[Engine]:
+    """An engine connected as a **non-superuser** — the only kind RLS applies to.
+
+    This fixture exists because the obvious setup is silently useless. `db_engine` connects as the
+    superuser that owns the tables, and a superuser bypasses row-level security outright — even
+    when it is FORCEd. Every "scoped" query through it returns every household's rows, so an
+    isolation test written on `db_engine` passes while proving nothing. That is not hypothetical:
+    it is what the first draft of `tests/test_idor.py` did, and the suite caught it.
+
+    `cfo_test` is a LOGIN role holding `cfo_app`'s privileges by membership. That mirrors
+    production rather than working around it: `cfo_app` is NOLOGIN because it is an application
+    role, not a person, and the deployed service connects as a Neon role that has been granted it
+    (ticket 0026). The RLS policies carry no `TO` clause, so they bind every non-superuser role —
+    which is the property that makes this substitution honest.
+    """
+    from sqlalchemy import make_url
+
+    url = make_url(_url())
+    with db_engine.connect() as conn, conn.begin():
+        _drop_test_role(conn)
+        conn.execute(text("CREATE ROLE cfo_test LOGIN PASSWORD 'cfo_test' IN ROLE cfo_app"))
+        # The role must be able to reach the tables, but must NOT own them and must not be
+        # superuser or BYPASSRLS — any of the three would make this fixture a superuser in
+        # disguise. `tests/test_idor.py` asserts all three.
+        conn.execute(text("GRANT USAGE ON SCHEMA public TO cfo_test"))
+
+    engine = create_engine(url.set(username="cfo_test", password="cfo_test"), future=True)
+    yield engine
+    engine.dispose()
+
+    with db_engine.connect() as conn, conn.begin():
+        _drop_test_role(conn)
+
+
+def _drop_test_role(conn: Connection) -> None:
+    """Drop `cfo_test`, grants and all.
+
+    `DROP OWNED BY` is not optional and not defensive noise: Postgres refuses to drop a role that
+    still holds a single privilege, and `GRANT USAGE ON SCHEMA public` is one. Without this the
+    teardown dies with "role cfo_test cannot be dropped because some objects depend on it:
+    privileges for schema public" and the next run inherits a half-configured role.
+
+    The same rule sank the first draft of `alembic/versions/0001`'s `downgrade()`, which is why
+    that migration no longer drops `cfo_app` at all — a role is cluster-wide and a migration is
+    database-scoped. Here the role is created and dropped in the same session against the same
+    database, so dropping it is honest.
+    """
+    exists = conn.execute(text("SELECT 1 FROM pg_roles WHERE rolname = 'cfo_test'")).scalar()
+    if exists:
+        conn.execute(text("DROP OWNED BY cfo_test"))
+        conn.execute(text("REVOKE ALL ON SCHEMA public FROM cfo_test"))
+        conn.execute(text("DROP ROLE cfo_test"))
+
+
 @pytest.fixture
 def as_app(db_engine: Engine):
     """Run a callable as `cfo_app`, scoped to one household. **This is where RLS binds.**
