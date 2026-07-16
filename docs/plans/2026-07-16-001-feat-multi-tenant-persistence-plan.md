@@ -37,18 +37,70 @@ Plaid, money movement, real auth, or a live daily decision job.
 
 ## Build Progress
 
-*Last updated 2026-07-16. Nothing is built. This section is the ledger as units land.*
+*Last updated 2026-07-16. **U1–U4 are on `main`** (PR #44). U5 is blocked on two defects the
+build surfaced — see below. 436 Python tests, 51 mobile tests, ruff clean, and
+`backend/data/decisions.json` byte-identical throughout.*
 
 | Unit | Ticket | Status | Landed in |
 |------|--------|--------|-----------|
-| U1 The walk, unified — and the dial nothing reads | `0019` | not started | — |
-| U2 Schema, RLS, and the first migration | `0020` | not started | — |
-| U3 Repository scoping and the IDOR suite | `0021` | not started | — |
-| U4 The `SnapshotStore` seam | `0022` | not started | — |
-| U5 The archetypes, and the seeder | `0023` | not started | — |
+| U1 The walk, unified — and the dial nothing reads | `0019` | done | #44 |
+| U2 Schema, RLS, and the first migration | `0020` | done | #44 |
+| U3 Repository scoping and the IDOR suite | `0021` | done | #44 |
+| U4 The `SnapshotStore` seam | `0022` | done | #44 |
+| U5 The archetypes, and the seeder | `0023` | **blocked** — see below | — |
 | U6 The read path | `0024` | not started | — |
 | U7 Mobile: the household switcher | `0025` | not started | — |
-| U8 Neon, and the deploy path | `0026` | not started | — |
+| U8 Neon, and the deploy path | `0026` | in progress | #44 (partial) |
+
+### What the build found, and what it cost to find
+
+Every one of these is the same shape, and it is this plan's own thesis: **a mechanism that was
+built, tested, and never actually exercised.** None was in the ticket that found it.
+
+**Shipped in #44:**
+
+- **`calibrate.py` swept a dial `build()` could not read** (U1). The defect the plan was written
+  around. Fixed; the artifact is byte-identical and `calibrate.measure(None)` is unchanged at
+  4,320 days / 2.338% / 0 overdrafts / $544,640.58.
+- **Neon's `neondb_owner` has `rolbypassrls = true`** (U8). Scoped to one household it returned
+  **both**. Pasting the connection string Neon hands you into `DATABASE_URL` — the obvious
+  deployment — would have shipped U2 and U3's two layers as one, with the IDOR suite green the
+  whole time. `assert_rls_binds()` now refuses to start under such a role.
+- **The IDOR suite was vacuous** (U3). It ran as the superuser that owns the tables, which bypasses
+  RLS even when FORCEd. Caught by its own `test_the_app_engine_is_not_secretly_a_superuser`.
+- **`SET LOCAL` cannot take a bind parameter** (U2), so the obvious spelling forces a
+  request-supplied value into the SQL string. `set_config(:var, :hid, true)` is the safe *and*
+  correct one.
+- **A role is cluster-wide; a migration is database-scoped** (U2). `downgrade()` failed naming a
+  database the migration had never heard of. Two Neon branches would deadlock each other.
+- **The mobile CI flake was two bugs, one hiding behind the other.** A cold babel transform
+  (13.86s vs 2.38s warm) against jest's 5s default, *and* `Spending.test.tsx` calling `render()`
+  bare where every other suite awaits it. The second fails identically at 5s and 120s — raising the
+  timeout would have buried it. It had blocked three PRs, one of them documentation-only.
+
+**Blocking U5, and not fixed:**
+
+- **The walk cannot simulate a multi-card household.** `walk()` builds one `DebtLedger` from
+  `spec.card`, and `assemble_snapshot` hands that single balance to *every* card: a two-card
+  household with a $14,000 and a $3,000 card reports **$14,009.20 for both**. `_select_target`
+  would rank them equal and pick on APR alone; the reserve would count $14,009 twice.
+  `HouseholdSpec.card`'s own docstring says reading it "on a two-card household is exactly the bug
+  this feature exists to fix" — and the walk reads it. **Archetypes B and C are impossible until
+  this is a ledger per card.** A single-card household must stay byte-identical, which is the
+  regression test.
+- **`CardSpec.apr` is `Decimal`, not `Decimal | None`**, so archetype D is inexpressible. The fix
+  is probably *not* a nullable APR: [`decision-engine.md`](../decision-engine.md) §6.3 says Plaid
+  does not *report* APR for many issuers — the card **has** a rate, we cannot **see** it. `sim/`
+  models the world; the derivation models what we observe. A card with no rate is false about the
+  world and would break `DebtLedger`, which needs one to accrue. Likely a visibility flag.
+
+**Open from U1, deliberately deferred:**
+
+- **`sim.household.generate()` is not prefix-stable.** `(spec, seed, days=150)` and
+  `(spec, seed, days=181)` are different households, so `build()` (150) and `replay()` (181) have
+  never walked the same one — U1's thesis one level deeper. `calibrate.py`'s **population**
+  statistics survive; **per-household** claims do not. Fixing it regenerates the artifact and moves
+  every measured number in three documents, so it needs its own ticket and its own measurement.
 
 ---
 

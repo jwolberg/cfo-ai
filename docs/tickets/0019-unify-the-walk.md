@@ -2,7 +2,7 @@
 id: "0019"
 title: The walk, unified — and the dial nothing reads
 type: bug
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent

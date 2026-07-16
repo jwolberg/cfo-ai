@@ -2,7 +2,7 @@
 id: "0020"
 title: Schema, RLS, and the first migration
 type: feature
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
