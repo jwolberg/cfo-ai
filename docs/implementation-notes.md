@@ -1297,3 +1297,73 @@ engine that is not the one serving. U1 of the plan.
 `architecture.md` §7.5's **APR fallback** (user-entered / estimated / refuse to rank). Archetype D
 makes the consequence visible on a dashboard, which is a good way to decide it — but seeding it does
 not decide it, and the schema needs to know whether an APR can have a user-entered provenance.
+
+---
+
+## 2026-07-16 (later) — the multi-tenant build: what it found, and three decisions
+
+`0019`–`0022` on `main` (#44). `0027`/`0028` in #46 (open). `0023` unblocked, not started.
+
+### Every defect was the same shape
+
+**A mechanism that was built, tested, and never actually exercised.** None of them was in the
+ticket that found it. None had a symptom. All had a green test.
+
+- The dial `calibrate.py` swept but `build()` could not read (`0019`).
+- Neon's `neondb_owner` has `rolbypassrls = true` — scoped to one household it returned **both**.
+  The obvious deployment would have shipped `0020`/`0021`'s two layers as one, with the IDOR suite
+  green throughout.
+- The IDOR suite ran as the superuser that owns the tables, which bypasses RLS even when FORCEd.
+- The walk built one `DebtLedger` for a whole portfolio — a $3,000 card reported $14,009.20
+  (`0027`). `_select_target`'s ranking and the obligation reserve had **never** seen two cards
+  outside a unit test.
+- `Spending.test.tsx` called `render()` bare where every other suite awaits it — a race that had
+  blocked three PRs, one of them documentation-only.
+
+### Decisions taken
+
+- **`apr` estimated at 23%, with provenance** (`0028`). Settles `architecture.md` §7.5. The
+  instruction was "default to 23% when null"; what shipped is 23% **for ranking only** —
+  `interest.py` refuses to price an `ESTIMATED` rate, because `prd.md` §5.1's KPI and §1's user-facing
+  sentence would otherwise be arithmetic on an invention. *Act on the estimate; never bill for it.*
+  Defensible because **`APR_UNKNOWN` is not a safety gate**: a wrong target optimizes worse and
+  overdraws nobody, so §5.2's guardrail cannot move — and `calibrate` confirms it did not.
+- **`CardSpec.apr_reported: bool`, not a nullable `CardSpec.apr`.** The card *has* a rate; Plaid
+  merely does not report it. `sim/` models the world, the derivation models what we can see.
+- **A `.venv`**, gitignored. The system Python holds SQLAlchemy 2.0.30 for `Flask-SQLAlchemy` and
+  `langchain`; upgrading it would have reached outside this repo. See
+  `docs/runbooks/local-development.md`.
+- **`build()` now raises on a multi-card spec.** `DayRecord` has one debt because the artifact
+  schema has one debt. Shipping `0027` while leaving `build()` to report `cards[0]` silently would
+  have re-opened the same bug one function over.
+
+### Corrected, having been wrong in public
+
+- **The 18 TB/yr that never existed.** `architecture.md` [4.1] was first written with a *guessed*
+  ~10KB snapshot, and a whole "phase 3" was reasoned out of it. Measured: **2,699 B**, compressing
+  **70×** when sorted by `(household_id, day)` — **under a TB/yr at 5M**. The `SnapshotStore` seam
+  survives on a compression gap (TOAST does 3.5×), not a volume wall, and phase 3's trigger cannot
+  fire. `prd.md` §2.4 already documents two plugged-in numbers that "pointed the right way for the
+  wrong reason"; this was nearly the third.
+- **My own verification lied three times** — `cmd && echo ok` swallows exit codes, `set -e` does not
+  fire on a non-final command in a `&&` list, and an unexpanded `$PSQL` made a mutation test a
+  silent no-op. Each time the fix was checking exit codes explicitly. Worth remembering: the tooling
+  that checks the work needs checking too.
+
+### Open, and deliberately not closed
+
+- **`sim.household.generate()` is not prefix-stable.** `(spec, seed, days=150)` and
+  `(spec, seed, days=181)` are **different households**, so `build()` (150) and `replay()` (181)
+  have never walked the same one — `0019`'s thesis one level deeper. `calibrate`'s **population**
+  statistics survive; **per-household** claims do not (the 2026-07-14 plan's "6.9% breach on the
+  demo household" describes a household `decisions.json` has never contained). Fixing it regenerates
+  the artifact and moves every measured number in three documents. **Needs its own ticket, its own
+  measurement, its own diff.** Pinned in `tests/test_precompute.py::TestGenerateIsNotPrefixStable`
+  and `decision-engine.md` §6.6's postscript.
+- **Phase 1 → 2 (Neon → Cloud SQL) has a trigger but not an argument.** Neon is SOC 2 Type II; the
+  honest case for Cloud SQL is trust-boundary locality, not capability, and nobody has made it.
+  `prd.md` §2.4 is a whole section about a decision that survived because no document ever argued
+  for it. Flagged in `architecture.md` [4.1].
+- **`USER_ENTERED` has no entry path.** §6.3's "a real product needs a user-entered fallback" is
+  still true and still unbuilt; the enum and column exist because provenance is the expensive half
+  to retrofit.

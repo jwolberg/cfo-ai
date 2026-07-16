@@ -2,14 +2,14 @@
 id: "0023"
 title: The archetypes, and the seeder
 type: feature
-status: blocked
+status: open
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
 agentKind: classic
 agentScope: repo
 source: docs/plans/2026-07-16-001-feat-multi-tenant-persistence-plan.md
-depends_on: ["0019", "0021", "0022"]
+depends_on: ["0019", "0021", "0022", "0027", "0028"]
 created: 2026-07-16
 ---
 
@@ -22,9 +22,9 @@ Implements **U5** of the plan. Single owner: `backend-python-agent`.
 **Depends on:** `0019` (the unified walk — the seeder is its third consumer, **not a fourth copy**),
 `0021` (the repository), `0022` (the snapshot store). **All three are done (#44).**
 
-## ⛔ BLOCKED — two defects found by trying to build this, neither of them in this ticket
+## ✅ UNBLOCKED — two defects found by trying to build this, neither of them in this ticket, both now fixed (#46)
 
-**1. The walk cannot simulate a multi-card household. Archetypes B and C are impossible.**
+**1. ~~The walk cannot simulate a multi-card household.~~ Fixed in `0027`.**
 
 `walk()` builds one `DebtLedger` from `spec.card`, and `assemble_snapshot` passes that single
 `ledger_balance` to `derive_card` for **every** card. Demonstrated: a household with a $14,000
@@ -41,13 +41,24 @@ per card, `assemble_snapshot` taking per-card balances, and a decision about `Da
 singular `debt_apr`/`debt_id`. **A single-card household must stay byte-identical — that is the
 regression test.** Its own ticket, before this one.
 
-**2. `CardSpec.apr` is `Decimal`, not `Decimal | None`. Archetype D is inexpressible.**
+**2. ~~`CardSpec.apr` is `Decimal`. Archetype D is inexpressible.~~ Settled in `0028`.**
 
 And the fix is probably *not* a nullable APR. `decision-engine.md` §6.3 says Plaid does not
 **report** APR for many issuers — the card **has** a rate; we cannot **see** it. `sim/` models the
 world and the derivation models what we observe, so a card with no interest rate is false about
 the world *and* would break `DebtLedger`, which needs an APR to accrue. Likely a visibility flag
 (`apr_reported: bool = True`) that `derive_card` honours by passing `apr=None`. **Needs a call.**
+
+**Both are resolved. What changed for this ticket:**
+
+- **Archetypes B and C are buildable.** `walk()` carries a portfolio; each card has its own
+  ledger, its own APR, and its own close day.
+- **Archetype D changed shape, and improved.** It is no longer an `APR_UNKNOWN` refusal — with
+  `0028` the engine estimates at 23%, **sweeps normally, and reports no interest saved**, because
+  `interest.py` will not price a guessed rate. Assert the *absence* of `INTEREST_AVOIDED` on a
+  sweep, not the presence of `APR_UNKNOWN`. Use `CardSpec(apr_reported=False)`.
+- `APR_UNKNOWN` still fires for `apr is None` — a card we decline to even estimate. Seed that
+  too if a refusal is wanted on the dashboard.
 
 **Files:** `backend/archetypes.py`, `backend/seed.py`, `tests/test_seed.py`
 
