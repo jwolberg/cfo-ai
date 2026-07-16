@@ -2,7 +2,7 @@
 id: "0023"
 title: The archetypes, and the seeder
 type: feature
-status: open
+status: blocked
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -20,7 +20,34 @@ Implements **U5** of the plan. Single owner: `backend-python-agent`.
 **This is the ticket the whole plan exists for.** Read the plan's "The absence the seed data fills."
 
 **Depends on:** `0019` (the unified walk — the seeder is its third consumer, **not a fourth copy**),
-`0021` (the repository), `0022` (the snapshot store).
+`0021` (the repository), `0022` (the snapshot store). **All three are done (#44).**
+
+## ⛔ BLOCKED — two defects found by trying to build this, neither of them in this ticket
+
+**1. The walk cannot simulate a multi-card household. Archetypes B and C are impossible.**
+
+`walk()` builds one `DebtLedger` from `spec.card`, and `assemble_snapshot` passes that single
+`ledger_balance` to `derive_card` for **every** card. Demonstrated: a household with a $14,000
+card and a $3,000 card reports `statement_balance=14009.20` for **both**. `_select_target` would
+rank them equal and pick on APR alone; the portfolio reserve would count $14,009 twice.
+
+> `HouseholdSpec.card`'s own docstring: *"anything that reserves, ranks or forecasts must iterate
+> `cards`, because reading `.card` on a two-card household is exactly the bug this feature exists
+> to fix."* The walk reads `.card`.
+
+The engine's multi-card types, reserve and ranking (`0010`–`0017`) are built and tested — but the
+**walk** has only ever driven single-card households, so nothing exercised them. Needs a ledger
+per card, `assemble_snapshot` taking per-card balances, and a decision about `DayRecord`'s
+singular `debt_apr`/`debt_id`. **A single-card household must stay byte-identical — that is the
+regression test.** Its own ticket, before this one.
+
+**2. `CardSpec.apr` is `Decimal`, not `Decimal | None`. Archetype D is inexpressible.**
+
+And the fix is probably *not* a nullable APR. `decision-engine.md` §6.3 says Plaid does not
+**report** APR for many issuers — the card **has** a rate; we cannot **see** it. `sim/` models the
+world and the derivation models what we observe, so a card with no interest rate is false about
+the world *and* would break `DebtLedger`, which needs an APR to accrue. Likely a visibility flag
+(`apr_reported: bool = True`) that `derive_card` honours by passing `apr=None`. **Needs a call.**
 
 **Files:** `backend/archetypes.py`, `backend/seed.py`, `tests/test_seed.py`
 

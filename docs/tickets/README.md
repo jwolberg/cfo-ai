@@ -137,16 +137,16 @@ defects instead — see below.
                                       └────────────►┘
 ```
 
-| Ticket | Title | Owner | Depends on |
-|---|---|---|---|
-| [0019](0019-unify-the-walk.md) | The walk, unified — and the dial nothing reads | backend-python-agent | — |
-| [0020](0020-schema-rls-first-migration.md) | Schema, RLS, and the first migration | backend-python-agent | — |
-| [0021](0021-repository-scoping-and-idor-suite.md) | Repository scoping and the IDOR suite | backend-python-agent | 0020 |
-| [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 |
-| [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022 |
-| [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 |
-| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 |
-| [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 |
+| Ticket | Title | Owner | Depends on | Status |
+|---|---|---|---|---|
+| [0019](0019-unify-the-walk.md) | The walk, unified — and the dial nothing reads | backend-python-agent | — | **done** (#44) |
+| [0020](0020-schema-rls-first-migration.md) | Schema, RLS, and the first migration | backend-python-agent | — | **done** (#44) |
+| [0021](0021-repository-scoping-and-idor-suite.md) | Repository scoping and the IDOR suite | backend-python-agent | 0020 | **done** (#44) |
+| [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 | **done** (#44) |
+| [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022 | **blocked** |
+| [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | open |
+| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | open |
+| [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 
 ## Three things to know before picking one of these up
 
@@ -184,3 +184,35 @@ and reasoned a whole "phase 3" out of it. Measured: **2,699 B**, compressing **7
 (Postgres TOAST does ~3.5×), not a volume wall, and phase 3's trigger cannot fire. `prd.md` §2.4
 documents two prior plugged-in numbers that "pointed the right way for the wrong reason"; this was
 nearly the third, and `0022` is scoped to the smaller claim.
+
+## Status: `0019`–`0022` landed in #44. `0023` is blocked.
+
+436 Python tests, 51 mobile tests, ruff clean, `backend/data/decisions.json` byte-identical
+throughout — which is how we know the walk refactor preserved behaviour.
+
+**`0023` cannot start.** Both blockers were found by trying to build it, and neither is in its
+ticket:
+
+- **The walk cannot simulate a multi-card household.** `walk()` builds one `DebtLedger` from
+  `spec.card`, and `assemble_snapshot` hands that single balance to *every* card — a two-card
+  household with a $14,000 and a $3,000 card reports **$14,009.20 for both**. `HouseholdSpec.card`'s
+  own docstring says reading it "on a two-card household is exactly the bug this feature exists to
+  fix", and the walk reads it. **Archetypes B and C are impossible until this is a ledger per
+  card**, which needs its own ticket. A single-card household must come out byte-identical — that
+  is the regression test.
+- **`CardSpec.apr` is `Decimal`, not `Decimal | None`**, so archetype D is inexpressible. The fix
+  is probably *not* a nullable APR — the card **has** a rate, Plaid does not **report** it
+  (`decision-engine.md` §6.3). `sim/` models the world; the derivation models what we can see.
+
+**`0026` is half done.** Neon is provisioned and migrated (37 partitions, RLS forced on all five
+scoped tables, `cfo_runtime` created), and `docs/runbooks/neon-provisioning.md` carries the
+procedure. Cloud Run wiring and Secret Manager are not done.
+
+## The thing worth reading before picking any of these up
+
+Every defect these four tickets found is the same shape: **a mechanism that was built, tested, and
+never actually exercised.** The dial `calibrate.py` swept but `build()` could not read. The RLS
+policies that Neon's default role ignores. The IDOR suite that ran as a superuser. The multi-card
+reserve that has never seen two cards. The `await` that every suite has except one.
+
+None of them had a symptom. All of them had a green test.

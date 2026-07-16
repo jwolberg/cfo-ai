@@ -2,7 +2,7 @@
 id: "0022"
 title: The SnapshotStore seam
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent

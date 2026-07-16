@@ -2,7 +2,7 @@
 id: "0026"
 title: Neon, and the deploy path
 type: chore
-status: open
+status: in-progress
 priority: medium
 repo: cfo-ai
 agentId: infra-devops-agent

@@ -2,7 +2,7 @@
 id: "0021"
 title: Repository scoping and the IDOR suite
 type: feature
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
