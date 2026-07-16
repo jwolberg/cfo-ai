@@ -19,7 +19,10 @@ from backend.precompute import (
     DEMO_POLICY,
     DEMO_SPEC,
     SAVINGS_BALANCE,
+    SEED,
+    SERVED_DAYS,
     STATEMENT_DAY,
+    WARMUP_DAYS,
     WINDOW_START,
     DebtLedger,
     assemble_snapshot,
@@ -35,7 +38,9 @@ from backend.precompute import (
     infer_close_day,
     observed_monthly_payment,
     spend_30d_high,
+    walk,
 )
+from engine.forecast import HORIZON_DAYS
 from engine.models import (
     ZERO,
     Action,
@@ -264,6 +269,34 @@ class TestTheWalk:
         a = build()
         actions = {r.decision.action for r in a.days}
         assert actions == {Action.SWEEP, Action.REFUSE}
+
+    def test_the_walk_is_blind_to_history_beyond_today(self) -> None:
+        """`build()` and `replay()` drive the same `walk()` over histories of different lengths.
+
+        `replay()` holds `HORIZON_DAYS + 1` extra days because grading needs the future the
+        forecast was about. `build()` does not. One walk over both is only safe if those extra
+        days are invisible to the decision — every derivation reads `history.as_of(today)`, which
+        `History.as_of` calls "the seam that keeps lookahead out of the backtest." If one ever
+        stopped, the artifact would ship one engine while the calibration graded another: ticket
+        `0019`'s failure, wearing a different hat.
+
+        Truncation, **not** a second `generate()`, is what makes this an honest test. `generate()`
+        is not prefix-stable — same seed, different `days`, different household — so regenerating
+        a shorter history would compare two unrelated households and prove nothing. The first
+        draft of this test did exactly that and failed for that reason. See
+        `TestGenerateIsNotPrefixStable`.
+        """
+        total = WARMUP_DAYS + SERVED_DAYS
+        full = generate(DEMO_SPEC, WINDOW_START, total + HORIZON_DAYS + 1, seed=SEED)
+        truncated = full.as_of(WINDOW_START + timedelta(days=total - 1))
+
+        for a, b in zip(
+            walk(truncated, DEMO_SPEC, WINDOW_START, total),
+            walk(full, DEMO_SPEC, WINDOW_START, total),
+            strict=True,
+        ):
+            assert a.snapshot == b.snapshot, f"{a.day}: the walk read past today"
+            assert a.decision == b.decision, f"{a.day}: the decision moved on future data"
 
     def test_the_warm_up_days_are_not_served(self) -> None:
         """The feed opens on real decisions, not a wall of INSUFFICIENT_HISTORY refusals.
@@ -822,6 +855,69 @@ class TestTodayIsNotForecastTwice:
         assert all(e.expected_date > rent_day for e in rent)
 
 
+class TestGenerateIsNotPrefixStable:
+    """**Documents a known defect.** Found while unifying the walk (ticket `0019`); not fixed there.
+
+    `(spec, seed, days=150)` and `(spec, seed, days=181)` are **different households**, not two
+    windows onto one. `sim.household.generate()` draws from a single RNG stream in order — payroll,
+    then bills, then discretionary — and the payroll and bill loops both run to
+    `through = start + days - 1`. So the number of draws taken *before* the spend loop depends on
+    `days`, and every discretionary draw shifts with it.
+
+    `generate()`'s own docstring — *"Deterministic in `(spec, start, days, seed)`"* — is true, and
+    is the trap. `days` is part of the household's **identity**, not a window onto it.
+
+    **The consequence: `build()` walks `WARMUP + SERVED` = 150 days and `replay()` walks
+    `+ HORIZON_DAYS + 1` = 181, so they have never walked the same household.** That is ticket
+    `0019`'s own thesis — the harness must grade the engine that ships — one level deeper than the
+    dial it was written about.
+
+    What survives and what does not:
+
+    - **`calibrate.py`'s population statistics survive.** 20 arbitrary seeds per shape are still 20
+      valid households drawn from the same generator, so 2.3% / 0-in-590 / ~$544K remain honest
+      statements about a synthetic population.
+    - **Per-household claims tying a replay number to the shipped artifact do not.**
+      `docs/plans/2026-07-14-001`'s "6.9% breach **on the demo household**" describes a household
+      `backend/data/decisions.json` has never contained.
+
+    Not fixed in `0019` because the fix regenerates the artifact and moves every measured number in
+    the repo — which is exactly the change `0019`'s byte-identical test exists to refuse. It needs
+    its own ticket, its own measurement, and its own diff.
+    """
+
+    def test_the_same_seed_and_a_longer_window_are_different_households(self) -> None:
+        """If this fails, someone has made `generate()` prefix-stable — which is **the fix**.
+
+        Do not delete this test to make it pass. Delete this *class*, and re-measure everything its
+        docstring warns about: the committed artifact, `calibrate.py`'s numbers, and every figure
+        those are cited in across `prd.md`, `strategy.md`, and `decision-engine.md`.
+        """
+        cutoff = WINDOW_START + timedelta(days=149)
+        short = generate(DEMO_SPEC, WINDOW_START, 150, seed=SEED)
+        long = generate(DEMO_SPEC, WINDOW_START, 181, seed=SEED)
+
+        def prefix(h: History) -> list[tuple[date, TxnKind, Decimal]]:
+            return [(t.day, t.kind, t.amount) for t in h.txns if t.day <= cutoff]
+
+        assert prefix(short) != prefix(long), (
+            "generate() is now prefix-stable. This is the fix, not a regression -- see this "
+            "class's docstring, delete it, and re-measure the artifact and the calibration."
+        )
+
+    def test_build_and_replay_therefore_walk_different_households(self) -> None:
+        """The consequence, in the two callers that matter, stated concretely."""
+        total = WARMUP_DAYS + SERVED_DAYS
+        as_build_sees_it = generate(DEMO_SPEC, WINDOW_START, total, seed=SEED)
+        as_replay_sees_it = generate(DEMO_SPEC, WINDOW_START, total + HORIZON_DAYS + 1, seed=SEED)
+
+        same_day = WINDOW_START + timedelta(days=100)
+        assert as_build_sees_it.balance_on(same_day) != as_replay_sees_it.balance_on(same_day), (
+            "build() and replay() now agree on the household -- if generate() was fixed, see "
+            "TestGenerateIsNotPrefixStable's docstring and re-measure."
+        )
+
+
 class TestTheSpendDial:
     """`spend_30d_high` — the empirical spend model, shipped **inert**.
 
@@ -837,6 +933,30 @@ class TestTheSpendDial:
         from backend.precompute import SPEND_QUANTILE
 
         assert SPEND_QUANTILE is None
+
+    def test_the_dial_reaches_the_artifact_that_ships(self) -> None:
+        """The **wiring**, not the setting — and the reason ticket 0019 exists.
+
+        `calibrate.py` sweeps this dial through `replay()` → `assemble_snapshot()`. `build()`
+        must read the same one, or the harness grades an engine that never shipped.
+
+        Before 0019 it could not: `build()` had no `spend_quantile` parameter at all. It
+        constructed its `Snapshot` inline and never set `spend_30d_high`, so the field defaulted
+        to `None` on every artifact day regardless of the dial. Harmless only because
+        `SPEND_QUANTILE` is `None` and both paths agreed by accident. The day the dial moved —
+        which is the only reason `calibrate.py` exists — it would have licensed a forecast the
+        artifact was structurally incapable of producing.
+
+        `decision-engine.md` §6.6's test guards the dial's *setting*. This one guards its *wiring*.
+        """
+        off = art.to_json(build(spend_quantile=None))
+        on = art.to_json(build(spend_quantile=0.99))
+
+        assert off == art.to_json(build()), "`None` is, and stays, the shipped default"
+        assert off != on, (
+            "the dial does not reach the artifact — `build()` is ignoring `spend_quantile`, "
+            "so `calibrate.py` is measuring a forecast that never ships"
+        )
 
     def test_with_the_dial_off_no_snapshot_carries_an_empirical_reserve(self) -> None:
         history = generate(DEMO_SPEC, WINDOW_START, 120, seed=7)

@@ -37,7 +37,7 @@ not today's, is the one that lands on the ledger.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date, timedelta
 from decimal import Decimal
@@ -860,26 +860,59 @@ def _next_due(on: date, day_of_month: int) -> date:
     raise AssertionError("a monthly date always falls within 40 days")  # pragma: no cover
 
 
-def build(
-    spec: HouseholdSpec = DEMO_SPEC,
-    start: date = WINDOW_START,
-    warmup_days: int = WARMUP_DAYS,
-    served_days: int = SERVED_DAYS,
-    seed: int = SEED,
-    policy: UserPolicy = DEMO_POLICY,
-) -> Artifact:
-    """Walk the household day by day and return the served window as an artifact."""
-    total_days = warmup_days + served_days
-    history = generate(spec, start=start, days=total_days, seed=seed)
+@dataclass(frozen=True)
+class WalkDay:
+    """One day of the walk: what the engine saw, what it decided, and the ledger beneath it.
 
+    `snapshot` carries everything the engine read — including the portfolio and `history_days`,
+    which are facts *about* the snapshot and are not repeated here. Only what the walk itself
+    carries across days, and cannot be re-derived from a `Snapshot` alone, gets a field:
+    `checking` (the balance net of our own settled sweeps, which `sim/` knows nothing about) and
+    `debt_balance` (the ledger after the day's payments and accrual).
+    """
+
+    offset: int
+    day: date
+    snapshot: Snapshot
+    decision: Decision
+    checking: Decimal
+    debt_balance: Decimal
+
+
+def walk(
+    history: History,
+    spec: HouseholdSpec,
+    start: date,
+    days: int,
+    policy: UserPolicy = DEMO_POLICY,
+    spend_quantile: float | None = SPEND_QUANTILE,
+) -> Iterator[WalkDay]:
+    """Step a household through `days`, deciding each one. **The** walk — there is only this one.
+
+    Three callers drive it and each does something different with the days: `build()` assembles
+    the served window into an artifact, `backend/replay.py` grades them, and a seeder writes them.
+    None of them re-implements the stepping, and that is the point of this function existing.
+
+    **It did not, and the drift it was supposed to prevent had already happened.**
+    `assemble_snapshot()` was exported "so the two do not drift" while `build()` quietly kept its
+    own inline `Snapshot` that never set `spend_30d_high` and took no `spend_quantile` at all —
+    so `calibrate.py` swept a dial the shipped artifact was structurally incapable of reading.
+    Nothing was visibly wrong, because the dial is off and both paths agreed on `None` by
+    accident. See ticket `0019`.
+
+    The history is **passed in, not generated here**, because the callers need different amounts
+    of it: `replay()` generates `HORIZON_DAYS + 1` extra days to grade against, `build()` does
+    not. That is safe, and not by luck — every derivation reads `history.as_of(today)`, so days
+    beyond `today` are invisible to the snapshot. `tests/test_precompute.py` asserts it rather
+    than trusting it.
+    """
     ledger = DebtLedger(principal=spec.card.balance, apr=spec.card.apr)
     card_payments = {t.day: -t.amount for t in history.txns if t.kind is TxnKind.CARD_PAYMENT}
 
     sweeps: dict[date, Decimal] = {}  # the day a sweep was *decided*
     swept_cumulative = ZERO  # settled sweeps, already out of checking
-    served: list[DayRecord] = []
 
-    for offset in range(total_days):
+    for offset in range(days):
         today = start + timedelta(days=offset)
         yesterday = today - timedelta(days=1)
 
@@ -913,63 +946,21 @@ def build(
         # what makes a brand-new household eligible on day one rather than serving it a week of
         # holds it did nothing to earn.
         last_sweep = max(sweeps, default=None)
-        days_since_last_sweep = (today - last_sweep).days if last_sweep else None
-        # What that sweep was worth, for CADENCE_HOLD's copy. Read from the walk's own record
-        # rather than from `swept_this_week`, which is a rolling total and only coincides with
-        # the last sweep while the cadence stays at 7 days.
-        last_sweep_amount = sweeps[last_sweep] if last_sweep else None
 
-        # The card as the engine sees it: the statement already closed, and the charges since
-        # that will become next month's. `derive_card` reads both, because a reserve keyed only
-        # on the closed statement falls to $0 for a third of every cycle.
-        #
-        # The demo household attests to its card list — it has exactly one card and we generated
-        # it. Coverage is COMPLETE, not because attestation is a formality, but because there is
-        # genuinely nothing here we cannot see.
-        # Every card, always — including one that has been paid to zero. A paid-off card is
-        # still a card we can *see*, and dropping it from the portfolio was a real bug: the
-        # coverage detector then read the household's own historical payments to it as evidence
-        # of a card we could not see, and refused with CARD_COVERAGE_INCOMPLETE on the very days
-        # the feed should have been celebrating a cleared balance.
-        #
-        # `_select_target` already filters on `total_owed > 0` and answers NO_DEBT when nothing
-        # is open. Emptiness is its job to decide, not this loop's.
-        cards = tuple(
-            derive_card(history, card_spec, today, ledger_balance=ledger.outstanding)
-            for card_spec in spec.cards
-        )
-        portfolio = derive_portfolio(history, cards, today, attested=True)
-
-        snapshot = Snapshot(
+        snapshot = assemble_snapshot(
+            history=history,
             today=today,
-            accounts=(
-                Account(
-                    account_id=CHECKING_ID,
-                    balance=money(checking),
-                    connection=ConnectionState.HEALTHY,
-                    balance_age_days=0,
-                    kind=AccountKind.CHECKING,
-                ),
-                Account(
-                    account_id=SAVINGS_ID,
-                    balance=SAVINGS_BALANCE,
-                    connection=ConnectionState.HEALTHY,
-                    balance_age_days=0,
-                    kind=AccountKind.SAVINGS,
-                ),
-            ),
-            funding_account_id=CHECKING_ID,
-            events=derive_cash_events(spec, today),
-            pending=(),
-            portfolio=portfolio,
+            spec=spec,
             policy=policy,
-            daily_discretionary_high=daily_discretionary_high(history, today),
-            income_variation=income_variation(history, today),
-            history_days=(today - history.start).days + 1,
-            sweeps_in_flight=ZERO,
+            ledger_balance=ledger.outstanding,
+            checking=checking,
             swept_this_week=swept_this_week,
-            days_since_last_sweep=days_since_last_sweep,
-            last_sweep_amount=last_sweep_amount,
+            days_since_last_sweep=(today - last_sweep).days if last_sweep else None,
+            # What that sweep was worth, for CADENCE_HOLD's copy. Read from the walk's own
+            # record rather than from `swept_this_week`, which is a rolling total and only
+            # coincides with the last sweep while the cadence stays at 7 days.
+            last_sweep_amount=sweeps[last_sweep] if last_sweep else None,
+            spend_quantile=spend_quantile,
         )
 
         decision: Decision = decide(snapshot)
@@ -977,25 +968,62 @@ def build(
         if decision.action is Action.SWEEP:
             sweeps[today] = decision.amount
 
-        if offset >= warmup_days:
-            served.append(
-                DayRecord(
-                    day=today,
-                    decision=decision,
-                    checking_balance=money(checking),
-                    savings_balance=SAVINGS_BALANCE,
-                    buffer_floor=policy.buffer_floor,
-                    debt_balance=ledger.outstanding,
-                    debt_apr=spec.card.apr,
-                    debt_id=CARD_ID,
-                    history_days=snapshot.history_days,
-                )
+        yield WalkDay(
+            offset=offset,
+            day=today,
+            snapshot=snapshot,
+            decision=decision,
+            checking=checking,
+            debt_balance=ledger.outstanding,
+        )
+
+
+def build(
+    spec: HouseholdSpec = DEMO_SPEC,
+    start: date = WINDOW_START,
+    warmup_days: int = WARMUP_DAYS,
+    served_days: int = SERVED_DAYS,
+    seed: int = SEED,
+    policy: UserPolicy = DEMO_POLICY,
+    spend_quantile: float | None = SPEND_QUANTILE,
+) -> Artifact:
+    """Walk the household day by day and return the served window as an artifact.
+
+    A thin wrapper over `walk()`. Everything below the `for` is artifact assembly — the shape
+    the dashboard reads — and nothing in it decides anything.
+    """
+    total_days = warmup_days + served_days
+    history = generate(spec, start=start, days=total_days, seed=seed)
+
+    served: list[DayRecord] = []
+    final: tuple[date, CardPortfolio, Decimal] | None = None
+
+    for w in walk(history, spec, start, total_days, policy, spend_quantile):
+        # The warm-up is walked so the ledger and the cadence are real by the time the window
+        # opens, but it is not served: those days are the engine refusing for want of history,
+        # which is true and is not the part of the story worth showing.
+        if w.offset < warmup_days:
+            continue
+
+        served.append(
+            DayRecord(
+                day=w.day,
+                decision=w.decision,
+                checking_balance=money(w.checking),
+                savings_balance=SAVINGS_BALANCE,
+                buffer_floor=policy.buffer_floor,
+                debt_balance=w.debt_balance,
+                debt_apr=spec.card.apr,
+                debt_id=CARD_ID,
+                history_days=w.snapshot.history_days,
             )
-            # The last served day's view of the card is the one the Spending screen renders.
-            final = (today, portfolio, untouchable(snapshot)[1])
+        )
+        # The last served day's view of the card is the one the Spending screen renders.
+        final = (w.day, w.snapshot.portfolio, untouchable(w.snapshot)[1])
 
     days = tuple(served)
     _assert_demo_is_worth_showing(days)
+    assert final is not None  # `_assert_demo_is_worth_showing` has already refused an empty window
 
     return Artifact(
         version=SCHEMA_VERSION,
