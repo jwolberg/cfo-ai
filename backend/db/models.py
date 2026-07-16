@@ -81,8 +81,19 @@ households = Table(
 accounts = Table(
     "accounts",
     metadata,
+    # Keyed `(household_id, id)`, not `id` — an account id is unique *within* a household. It was
+    # global until migration `0003`, which was only ever survivable because one household existed:
+    # every household the walk derives carries the same `chk_demo`/`sav_demo`, so the second one
+    # collided. Every read is household-scoped twice over (repository + RLS), so nothing resolves an
+    # id without a household to resolve it in.
     Column("id", Text, primary_key=True),
-    Column("household_id", Text, ForeignKey("households.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
     Column("kind", Text, nullable=False),  # engine.models.AccountKind
     Column("balance", MONEY, nullable=False),
     Column("connection", Text, nullable=False),  # engine.models.ConnectionState
@@ -93,8 +104,17 @@ accounts = Table(
 cards = Table(
     "cards",
     metadata,
+    # `(household_id, id)` — see `accounts` above, and migration `0003`. The 60-household population
+    # `prd.md` §5.2 rests on is 60 `DEMO_SPEC` clones, every one of them holding `card_demo`: under
+    # a global key that population is not merely unseeded, it is unseedable.
     Column("id", Text, primary_key=True),
-    Column("household_id", Text, ForeignKey("households.id", ondelete="CASCADE"), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
     # Nullable, and load-bearing. Plaid's Liabilities product does not return APR for many
     # issuers (`decision-engine.md` §6.3). `_select_target` refuses with APR_UNKNOWN rather than
     # guess a target card — "a wrong target card looks exactly like working while quietly
