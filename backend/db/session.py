@@ -27,6 +27,47 @@ class DatabaseNotConfigured(RuntimeError):
     """Raised at startup when `DATABASE_URL` is absent. Never raised per-request."""
 
 
+class RlsWouldNotBind(RuntimeError):
+    """Raised at startup when the connection role can bypass row-level security."""
+
+
+def assert_rls_binds(conn: Connection) -> None:
+    """Refuse to start if this connection's role bypasses RLS. Call once, at startup.
+
+    **This is not defensive programming. Neon's default role fails it.**
+
+    A `SUPERUSER` or `BYPASSRLS` role ignores every policy on every table, silently and with no
+    error — `household_scope()` still sets the variable, the policies still exist, `pg_policies`
+    still lists them, and every query returns every household's rows anyway. There is no symptom
+    until someone reads someone else's financial life.
+
+    Measured against the real thing on 2026-07-16: Neon provisions `neondb_owner` with
+    `rolbypassrls = true`. Connected as that role and scoped to one household, a `SELECT` returned
+    **both** households. So the obvious deployment — paste the connection string Neon hands you into
+    `DATABASE_URL` — turns `architecture.md` [4]'s defense-in-depth into one layer, and turns
+    `tests/test_idor.py` into a suite that proves a property production does not have.
+
+    Hence a runtime role that is neither (`cfo_runtime`, granted `cfo_app`; see `DEPLOY.local.md`),
+    and hence this check: the schema's guarantees are only worth what the *connecting role* makes
+    them worth, and that is a deploy-time fact no test in CI can see.
+    """
+    row = conn.execute(
+        text("SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user")
+    ).one()
+    if row.rolsuper or row.rolbypassrls:
+        who = conn.execute(text("SELECT current_user")).scalar()
+        raise RlsWouldNotBind(
+            f"the database role {who!r} has "
+            f"{'SUPERUSER' if row.rolsuper else ''}"
+            f"{' and ' if row.rolsuper and row.rolbypassrls else ''}"
+            f"{'BYPASSRLS' if row.rolbypassrls else ''}"
+            " and therefore ignores every row-level security policy. Every household would be "
+            "readable by every request. Connect as a role that is neither — see DEPLOY.local.md's "
+            "Neon provisioning. Neon's own neondb_owner has BYPASSRLS and must not be the runtime "
+            "role."
+        )
+
+
 def database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:

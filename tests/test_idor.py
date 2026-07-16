@@ -34,7 +34,12 @@ from sqlalchemy import text
 
 from backend.db.models import HOUSEHOLD_SCOPED, RLS_VAR
 from backend.db.repository import Repository, repository
-from backend.db.session import current_household, household_scope
+from backend.db.session import (
+    RlsWouldNotBind,
+    assert_rls_binds,
+    current_household,
+    household_scope,
+)
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -282,3 +287,41 @@ def test_rls_var_is_the_only_name_anything_uses() -> None:
     unset variable is NULL, and NULL never matches, so the failure is *empty reads*, not an error.
     """
     assert RLS_VAR == "app.household_id"
+
+
+class TestTheConnectingRoleMustNotBypassRls:
+    """The check that turns a schema guarantee into a deployment one.
+
+    Every policy in this suite is worth exactly what the *connecting role* makes it worth, and that
+    is a deploy-time fact CI cannot see. `architecture.md` [4]'s two layers collapse to one — with
+    no error, no symptom, and a green test suite — the moment the app connects as a role holding
+    SUPERUSER or BYPASSRLS.
+
+    **This is not hypothetical. Neon's default role fails it.** Measured 2026-07-16: `neondb_owner`
+    is provisioned with `rolbypassrls = true`; connected as that role and scoped to one household,
+    a `SELECT` returned both. Pasting the connection string Neon hands you into `DATABASE_URL` —
+    the obvious deployment — would have shipped exactly that.
+    """
+
+    def test_a_bypassrls_role_is_refused_at_startup(self, db_engine) -> None:
+        """The superuser fixture is a stand-in for Neon's neondb_owner: same property, same
+        consequence, and the only one available in CI."""
+        with (
+            db_engine.connect() as conn,
+            pytest.raises(RlsWouldNotBind, match="BYPASSRLS|SUPERUSER"),
+        ):
+            assert_rls_binds(conn)
+
+    def test_the_app_role_is_accepted(self, app_engine) -> None:
+        with app_engine.connect() as conn:
+            assert_rls_binds(conn)  # does not raise
+
+    def test_the_error_names_the_role_and_the_consequence(self, db_engine) -> None:
+        """A startup failure that says "permission problem" gets worked around with a superuser.
+        This one has to say what breaks, or the fix will be to grant more."""
+        with db_engine.connect() as conn, pytest.raises(RlsWouldNotBind) as e:
+            assert_rls_binds(conn)
+        msg = str(e.value)
+        assert "row-level security" in msg
+        assert "every request" in msg or "readable by every" in msg
+        assert "neondb_owner" in msg, "the message must name the role that actually does this"
