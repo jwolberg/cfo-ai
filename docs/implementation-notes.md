@@ -2074,6 +2074,8 @@ documented. `last-verified: 2026-07-17` on that file is a real run, not a stamp.
   `docs/`), raised by the 2026-07-12 review at [2.4]. Both are the opposite of cruft: work the
   backlog has forgotten rather than work it should drop.
 
+---
+
 ## 2026-07-17 — U1 (`0034`): plaid_items, RLS, and the access_token start guard
 
 First unit of the Plaid transport rung (`docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md`).
@@ -2261,3 +2263,40 @@ itself, not a mock.
 
 The rung is done: U1-U4 proven against a real Postgres and a fake client, U5 proven against Plaid
 Sandbox. It ends at rows in a table, one seam short of `assemble_snapshot()`, exactly as scoped.
+
+---
+
+## 2026-07-17 — sweep-execution rung, brainstorm re-base + plan (docs/sweep-execution-rung)
+
+Not a code ticket — a scope correction to `docs/brainstorms/2026-07-17-the-sweep-execution-rung.md`
+and the plan built on it (`docs/plans/2026-07-17-002-feat-sweep-execution-rung-plan.md`). Decisions
+the original (ce-doc-reviewed) scope did not settle:
+
+- **[5.0] resolved → card-targeted.** The feature is: pay a customer's credit card from their bank.
+  Reserve-account ACH dropped (engine emits no reserve decision type; idle cash is the one thing
+  `decision-engine.md` [4] won't sweep).
+- **Rail re-based → ACH debit leg + Method payoff leg.** Fact-checked Method's live API (2026-07-17):
+  lifecycle maps ~1:1 onto `architecture.md` [5], has idempotency keys, required webhooks, and a
+  Simulations API that forces reversals in sandbox (U6's hard gate). ACH is only the *debit* leg — the
+  *payoff* leg has no universal "pay this card" API, and Method is the verified channel. The prior ACH
+  assumption is not wasted; it funds the payoff.
+- **[5.2] resolved → commit to FBO custody.** Method's payment source must be a platform funding
+  account (an end-user's checking cannot be a source), so user funds transit an account we hold. This
+  commits the rung's *posture* to FBO/custodial (Reg E / GLBA / MTL / reconciliation), which every core
+  doc says to avoid — accepted per explicit product decision. Shadow-mode-first still holds.
+
+Plan-time decisions (resolved by the user, 2026-07-17):
+- **Saga substrate: Cloud Tasks + row-lock now, Temporal later.** This rung moves no money (shadow);
+  Temporal enters at the same trigger that turns `submit()` on. The Plaid rung's Cloud Tasks pattern
+  is the shadow substrate.
+- **Debit provider: Increase, funded via Plaid Auth account/routing numbers — not a processor token.**
+  Research found Increase is not a Plaid processor partner, so the brainstorm's processor-token handoff
+  is dropped (holds only for Dwolla).
+- Port refined per vendor reality: `authorize` is client-side; Increase has no `settled` status (a
+  derived join) vs Method's single field; returns differ per vendor; idempotency semantics differ.
+
+TreasuryDirect on `status.html` was checked and is correctly labeled (the "invest what's freed up"
+half, not the card-paydown rail) — no change needed there.
+
+Predecessors named in the plan: merge `main` (this branch predated the transport-rung merge);
+fixture-attest pilot households (`0016` has no backend write-path); Increase+Method sandbox creds.

@@ -492,32 +492,55 @@ here.
 
 ---
 
-## [5] Money movement (not yet built)
+## [5] Money movement (not yet built — scoped 2026-07-17)
 
 There is **no universal "pay this card" API.** Card networks are not a repayment rail;
 each issuer decides what it accepts. Options, in increasing order of pain: deep-link
 handoff → bill-pay partner → FBO/custodial account with a bank partner (heaviest
 compliance; avoid as long as possible).
 
+**The rail is now scoped** — see the sweep-execution rung
+([`brainstorms/2026-07-17-the-sweep-execution-rung.md`](./brainstorms/2026-07-17-the-sweep-execution-rung.md)).
+Paying a card is **two legs, not one**: a **debit leg** (ACH pull from the user's checking into a
+platform funding account — an ordinary ACH provider, Increase working assumption) and a **payoff leg**
+(land it on the issuer's card — no plain ACH can route this). The payoff leg is what the ladder above
+was hedging: the 2026 channel that reaches any issuer is a **biller-payoff API, Method** working
+assumption (fact-checked against `docs.methodfi.com`, 2026-07-17). Method's source *must* be a platform
+funding account, so the money transits an account we hold — the rung **commits to the FBO/custodial
+posture** knowingly, which turns on the Reg E / GLBA / money-transmitter and reconciliation obligations
+from the first live transfer. Named processors stay illustrations, not commitments
+([`prd.md`](./prd.md) §6); the design lives behind a `TransferProvider` port so either leg swaps.
+
 Never call `make_payment()` from a scheduled job against a live balance. The state machine
-is the product:
+is the product — and Method's verified lifecycle (`pending → processing → sent → posted`, and
+`reversed` / `failed` / `canceled`) maps onto it near 1:1:
 
 ```
 proposed → authorized → submitted → pending → settled
                               ↘ returned / failed / cancelled
 ```
 
-- **Idempotency key** derived from `(user, date, decision_id)`. A retry after a timeout
-  must never double-debit — the highest-stakes idempotency in the system, because a
-  duplicate sweep *is* an overdraft.
+- **Idempotency key on `(household_id, decision_date)` — not `(user, date, decision_id)`.** A retry
+  after a timeout must never double-debit — the highest-stakes idempotency in the system, because a
+  duplicate sweep *is* an overdraft. The key was corrected 2026-07-17: a same-day *re-decision* mints a
+  new `decision_id`, so a `decision_id`-keyed guard would let a second debit slip the exact constraint
+  meant to stop it. A re-decision instead produces a **superseding** transfer against the same
+  `(household, day)` slot, with **at most one transfer per slot reaching `submitted`**, and that key is
+  what maps to the provider's idempotency-key header.
 - **Pre-flight re-check immediately before submission.** The decision may be hours old:
   re-run the freshness gates. A decision is a proposal; authorization is a separate,
   fresher act.
-- **Returns are normal** (R01 insufficient funds, R02 closed, R03 no account). A payment
-  can unwind days after we told the user it happened. The explanation surface and the
-  ledger must both be able to say *"this reversed."*
+- **Returns are normal** (R01 insufficient funds, R02 closed, R03 no account; Method surfaces the
+  analogous `reversed` state by webhook). A payment can unwind days after we told the user it happened.
+  The explanation surface and the ledger must both be able to say *"this reversed."*
+- **Status arrives by webhook, so it is a trust boundary.** Method and the ACH provider both report
+  settlement and returns by inbound webhook; verify each signature and reject replays before the
+  callback touches the saga, with a reconciliation poll as the backstop for a missed webhook.
 - **This is where Temporal earns its place** — durable execution, retries, compensation.
   Not before.
+
+**Shadow mode first ([6]) is unchanged by the scoping:** the saga is wired and both legs' `submit()`
+are logged no-ops until a measured tail-risk number *and* the FBO/compliance posture are both real.
 
 ---
 
