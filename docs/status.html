@@ -409,8 +409,9 @@
 <p class="lede" style="margin:1.5rem 0">
   The path from the bank connection to the money actually moving. The core in the middle which
   decides, stores, serves, and the customer-facing app is built and deployed. <b>The ends are
-  not,</b> and the reason differs at each: one is the next problem, the other is deliberately
-  unchosen. Below those, the additional surfaces a live money-moving service will need &mdash; onboarding and
+  not,</b> and the reason differs at each: one is the next problem, the other &mdash; moving money
+  &mdash; was deliberately unchosen and is now <b>scoped</b> (the two-leg rail below) but unbuilt.
+  Below those, the additional surfaces a live money-moving service will need &mdash; onboarding and
   controls, an operator console, and observability &mdash; are scoped here but not yet built.
 </p>
 
@@ -577,11 +578,18 @@
     <div class="lane-label">Act</div>
     <div class="lane-boxes">
       <div class="box todo">
-        <span class="tag">Not built</span>
-        <h3>Payment rail</h3>
-        <p><b>Scoped, not built.</b> Two legs: an <b>ACH debit</b> pulls from checking into a funding
-           account, then a <b>biller-payoff API</b> lands it on the card at any issuer. That commits us
-           to <b>holding the funds in transit</b> (an FBO) &mdash; a bet distribution could still delete.</p>
+        <span class="tag">ACH</span>
+        <h3>Debit leg &mdash; scoped</h3>
+        <p>Pull the surplus from checking into a funding account <em>we</em> hold. The debit is
+           ordinary ACH, the solved half &mdash; but holding the money in transit is an <b>FBO
+           commitment</b>: Reg E, reconciliation, likely a money-transmitter license.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Method</span>
+        <h3>Payoff leg &mdash; scoped</h3>
+        <p>Land that money on the card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot
+           route. There is no universal &ldquo;pay a card&rdquo; API; a <b>biller-payoff API</b>
+           (Method, the working assumption) is the channel that reaches any issuer.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not scoped</span>
