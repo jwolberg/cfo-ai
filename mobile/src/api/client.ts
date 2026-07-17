@@ -118,15 +118,32 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
   }
 }
 
+/**
+ * Which household the app is looking at.
+ *
+ * A constant, for now, and deliberately not a hidden default inside `request()`: the routes are
+ * household-scoped as of ticket 0024, and this is the app admitting it reads exactly one of them
+ * rather than pretending the dimension does not exist. Ticket 0025 replaces this with a picker —
+ * `GET /households` already lists all four with labels.
+ *
+ * The demo's own household, by the id `backend/seed.py` derives from the archetype name.
+ */
+export const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
+
 /** The served window: the feed (newest first) and the summary stats above it. */
-export function getDecisions(): Promise<DecisionsResponse> {
-  return request<DecisionsResponse>('/decisions');
+export function getDecisions(householdId: string = DEMO_HOUSEHOLD): Promise<DecisionsResponse> {
+  return request<DecisionsResponse>(`/households/${householdId}/decisions`);
 }
 
 /**
  * What the household spends, and what their card is about to take.
  *
- * Comprehension, not a decision — nothing served here feeds the engine. See `GET /spend`.
+ * Comprehension, not a decision — nothing served here feeds the engine.
+ *
+ * **The one route with no household in it**, because it is the one route the backend has not
+ * moved to Postgres: its figures come from the whole transaction history, and there is no
+ * transactions table yet. Ticket 0031. It serves the demo household and nothing else, so a
+ * switcher (0025) has to either hide this tab or say so for the other three.
  */
 export function getSpend(): Promise<SpendResponse> {
   return request<SpendResponse>('/spend');
@@ -136,11 +153,14 @@ export function getSpend(): Promise<SpendResponse> {
  * Why the engine did what it did on `date`, in plain language.
  *
  * No LLM is involved — this renders `engine/explain.py` server-side. Tapping a decision
- * costs one in-memory lookup, which is why the most-viewed text in the product is also the
+ * costs one scoped query, which is why the most-viewed text in the product is also the
  * one thing that cannot hallucinate.
  */
-export function getExplanation(date: IsoDate): Promise<ExplainResponse> {
-  return request<ExplainResponse>(`/decisions/${date}/explain`);
+export function getExplanation(
+  date: IsoDate,
+  householdId: string = DEMO_HOUSEHOLD,
+): Promise<ExplainResponse> {
+  return request<ExplainResponse>(`/households/${householdId}/decisions/${date}/explain`);
 }
 
 /**
@@ -150,11 +170,19 @@ export function getExplanation(date: IsoDate): Promise<ExplainResponse> {
  * The conversation is held in the client and resent whole each turn — there is no
  * server-side session. The backend re-fetches every decision it cites regardless of what the
  * history says it already knows, because the history is our word, not the engine's.
+ *
+ * The household travels with the question because the backend loads *that household's* window and
+ * hands the model nothing else — so it cannot cite another household's figure, rather than being
+ * asked not to.
  */
-export function askAssistant(message: string, history: Turn[]): Promise<AssistantResponse> {
+export function askAssistant(
+  message: string,
+  history: Turn[],
+  householdId: string = DEMO_HOUSEHOLD,
+): Promise<AssistantResponse> {
   return request<AssistantResponse>(
     '/assistant/message',
-    { method: 'POST', body: JSON.stringify({ message, history }) },
+    { method: 'POST', body: JSON.stringify({ household_id: householdId, message, history }) },
     ASSISTANT_TIMEOUT_MS,
   );
 }

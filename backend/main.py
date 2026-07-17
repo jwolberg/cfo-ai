@@ -1,8 +1,19 @@
 """The decision-history service.
 
-One demo household, one precomputed artifact, no database and no write path. The service
-loads `backend/data/decisions.json` once at startup, validates it, and serves it from
-memory — see `docs/decisions/0002-generated-json-artifact-over-database.md`.
+**Households come from Postgres, scoped by `household_id` twice over** — once by `0021`'s
+repository and again by row-level security (`architecture.md` [4]). The decision feed and the
+explanations are rebuilt from the `decisions` and `snapshots` rows the seeder wrote; see
+`backend/readpath.py`. ADR-0004 supersedes ADR-0002, and ticket `0024` is where the service
+stopped being a file reader.
+
+## `/spend` is the exception, and it is deliberate rather than forgotten
+
+It still serves the demo household's committed artifact, because its figures — every overlapping
+30-day total by channel, what the card took last cycle — are derived from the full transaction
+`History`, and there is no `transactions` table to derive them from until ingest lands
+(`architecture.md` [3.1], not built). It also reads `portfolio.cards[0]`, so on the portfolio
+households `0023` seeded it would report an arbitrary card. Both are ticket `0031`. Until then this
+one route is single-household and says so, rather than being quietly wrong for three of the four.
 
 ## Money crosses the wire as a string
 
@@ -14,10 +25,16 @@ receives text and formats it, and no float ever touches a dollar amount in eithe
 
 ## Failure lands at startup, not per-request
 
-A missing or malformed artifact — or a missing API key — raises before the first request is
-served, and the process exits. A service that comes up holding bad data and answers with
-wrong numbers is worse than one that never comes up: Cloud Run reports the second, and
-nobody notices the first.
+A missing API key, an unreachable or unmigrated database, a role that would bypass RLS, a missing
+or malformed artifact — every one of them raises before the first request is served, and the
+process exits. A service that comes up holding bad data and answers with wrong numbers is worse
+than one that never comes up: Cloud Run reports the second, and nobody notices the first
+(ADR-0004 [3.2]).
+
+The database check is not a ping. It runs `assert_rls_binds()`, which refuses to start under a role
+that is `rolsuper` or has `rolbypassrls` — because Neon's default role has the latter, and under it
+a household-scoped query returns **every** household while the IDOR suite stays green. A service
+that can reach the database is not the same as a service whose scoping works.
 """
 
 from __future__ import annotations
@@ -29,14 +46,20 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Request, status
+from fastapi import Depends, FastAPI, Path, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.engine import Connection
+from sqlalchemy.exc import SQLAlchemyError
 
 from backend import artifact as art
-from backend import assistant
+from backend import assistant, readpath
 from backend.auth import expected_key, require_api_key
+from backend.db.repository import repository
+from backend.db.session import assert_rls_binds, make_engine
+from backend.db.snapshots import PostgresSnapshotStore
 from engine.explain import explain, render
 
 # The Expo web target runs in a browser, on a different origin from the API — so without
@@ -59,13 +82,40 @@ def allowed_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load and validate everything the service needs, or refuse to start."""
-    expected_key()  # before the artifact: a public endpoint is the worse failure
+    expected_key()  # before anything else: a public endpoint is the worse failure
+
+    # Reachable, migrated, and — the part a ping would miss — connected as a role that RLS
+    # actually binds for. See the module docstring.
+    app.state.db = make_engine()
+    with app.state.db.connect() as conn:
+        assert_rls_binds(conn)
+        _assert_migrated(conn)
+
+    # Ticket 0031 removes this. `/spend` is the last route reading the file.
     app.state.artifact = art.load()
     # Built once, at startup, so a deploy without the Anthropic secret fails here rather
     # than the first time a user opens the modal and asks a question.
     app.state.assistant = assistant.build_client()
     app.state.rate_cap = assistant.RateCap()
     yield
+    app.state.db.dispose()
+
+
+def _assert_migrated(conn: Connection) -> None:
+    """The schema exists. Checked at startup, because the alternative is finding out per-request.
+
+    Deliberately not an Alembic revision comparison: this asserts the tables the read path actually
+    reads, which is the claim that matters. A service pinned to the right revision against a
+    database that lost a table is still a service that cannot answer.
+    """
+    for table in ("households", "decisions", "snapshots"):
+        try:
+            conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
+        except SQLAlchemyError as exc:
+            raise RuntimeError(
+                f"the database has no readable `{table}` — run `alembic upgrade head`, and see "
+                f"docs/runbooks/local-development.md"
+            ) from exc
 
 
 app = FastAPI(
@@ -90,6 +140,22 @@ def artifact_of(request: Request) -> art.Artifact:
 # signature's defaults: same wiring, but it does not put a function call in an argument
 # default, which is a real footgun everywhere else in Python and which linters rightly flag.
 ArtifactDep = Annotated[art.Artifact, Depends(artifact_of)]
+
+# The household id travels in the path and is bound to both scoping layers in one place
+# (`repository()`), which is what stops them disagreeing. Every route below that touches a
+# household's data goes through it — there is no other way to reach a row.
+HouseholdId = Annotated[str, Path(description="Which household. `GET /households` lists them.")]
+
+
+def _window(request: Request, household_id: str) -> readpath.ServedWindow:
+    """One household's served window, scoped, in one transaction.
+
+    Read fresh per request rather than cached at startup: a cache would be a second copy of a
+    number the database already holds, and `architecture.md` [1.2] cut Redis because no
+    cache-shaped access pattern exists. One decision per household per day is not one.
+    """
+    with repository(request.app.state.db, household_id) as repo:
+        return readpath.load_window(repo, PostgresSnapshotStore(repo.conn))
 
 
 def usd(amount: Decimal | None) -> str | None:
@@ -196,6 +262,26 @@ def no_record(day: str) -> JSONResponse:
     )
 
 
+def no_household(household_id: str) -> JSONResponse:
+    """A household we have nothing on record for.
+
+    A 404, and specifically **not** an empty 200: a `decisions: []` would say this household exists
+    and the engine decided nothing for it, which is a different claim and a false one. It is also
+    not a 500 — nothing is wrong with the service, and nothing is wrong with the question.
+
+    It does not distinguish "never existed" from "exists with no decisions", for the same reason
+    `no_record` does not distinguish its three cases: which one it was is our business.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "error": "no_household",
+            "household_id": household_id,
+            "message": "We don't have anything on record for that household.",
+        },
+    )
+
+
 @app.get("/health", include_in_schema=False)
 async def health() -> dict[str, str]:
     """Cloud Run's probe. Deliberately unauthenticated, and deliberately says nothing.
@@ -211,26 +297,61 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/decisions", dependencies=[Depends(require_api_key)])
-async def decisions(artifact: ArtifactDep) -> dict[str, Any]:
+@app.get("/households", dependencies=[Depends(require_api_key)])
+async def households(request: Request) -> dict[str, Any]:
+    """Every household the demo can be switched to.
+
+    **The one query that is not household-scoped**, because it is the query you ask before you have
+    a household to scope to. It returns ids and labels and nothing else: no balances, no decisions,
+    nothing an id alone should buy. Everything past this point goes through the repository and RLS.
+
+    Any API key may list, and select, any household. That is a demo posture and `USERS.md` §1 says
+    so plainly — these households are synthetic and have no owner to authenticate as. Clerk arrives
+    with Plaid, and the IDOR suite is real in the meantime, which is worth exactly as much as the
+    identity feeding it.
+    """
+    with request.app.state.db.connect() as conn:
+        found = readpath.list_households(conn)
+
+    return {"households": [{"id": h.id, "archetype": h.archetype, "label": h.label} for h in found]}
+
+
+@app.get("/households/{household_id}/decisions", dependencies=[Depends(require_api_key)])
+async def decisions(request: Request, household_id: HouseholdId) -> Any:
     """The served window, newest first — the order the feed reads in."""
+    try:
+        window = _window(request, household_id)
+    except readpath.NoSuchHousehold:
+        return no_household(household_id)
+
     return {
         "window": {
-            "start": artifact.window_start.isoformat(),
-            "end": artifact.window_end.isoformat(),
+            "start": window.window_start.isoformat(),
+            "end": window.window_end.isoformat(),
             # The last served day is the demo's "today". It is a fixed calendar date, not the
             # wall clock, and the client and the assistant both resolve relative dates
             # ("last Tuesday") against it.
-            "today": artifact.window_end.isoformat(),
+            "today": window.window_end.isoformat(),
         },
-        "summary": summary_json(artifact.summary),
-        "decisions": [decision_json(record) for record in reversed(artifact.days)],
+        "summary": summary_json(window.summary),
+        "decisions": [decision_json(record) for record in reversed(window.days)],
     }
 
 
 @app.get("/spend", dependencies=[Depends(require_api_key)])
 async def spend(artifact: ArtifactDep) -> dict[str, Any]:
     """What the household spends, and what their card is about to take.
+
+    **The one route still reading the file, and the one route still serving a single household.**
+    Not an oversight — ticket `0031`. Its figures come from the whole transaction `History`
+    (every overlapping 30-day total by channel; what the card took last cycle against what came
+    off it), and there is no `transactions` table to rebuild them from until ingest lands
+    (`architecture.md` [3.1]). It also reads `portfolio.cards[0]`, so on the three portfolio
+    households `0023` seeded it would report an arbitrary card as "your card" — which is the bug
+    `0030` just finished removing from the artifact, and it is not being reintroduced in a new
+    place to make a route look finished.
+
+    So it stays honest about its scope instead: this is the demo household's spend surface.
 
     **Comprehension, not a decision.** Nothing served here feeds the engine. The rolling 30-day
     series is the exact structure that will eventually replace `daily_discretionary_high` in the
@@ -282,16 +403,23 @@ async def spend(artifact: ArtifactDep) -> dict[str, Any]:
     }
 
 
-@app.get("/decisions/{day}/explain", dependencies=[Depends(require_api_key)])
-async def explain_decision(day: str, artifact: ArtifactDep) -> Any:
+@app.get(
+    "/households/{household_id}/decisions/{day}/explain",
+    dependencies=[Depends(require_api_key)],
+)
+async def explain_decision(request: Request, household_id: HouseholdId, day: str) -> Any:
     """Why the engine did what it did on `day`, in plain language. No LLM in this path.
 
     This is the whole of R4. `engine/explain.py` already turns the decision's reason codes
     into sentences, deterministically and with a test asserting every code has copy — so
-    tapping a decision costs one in-memory lookup and zero network calls. The assistant
+    tapping a decision costs one scoped query and zero model calls. The assistant
     (U4) is for the *follow-up* question, not for reading back what the engine decided;
     routing base narration through a model would mean the most-viewed text in the product
     was the one thing that could hallucinate.
+
+    This is also `architecture.md` [3.3]'s first promise arriving: "why did you move $220 that
+    Tuesday" is answered from the frozen snapshot of that Tuesday, so it stays true after Plaid
+    has rewritten the transactions underneath it.
 
     An unparseable date gets the same "no record" answer as a real date we have nothing for.
     A 422 on the malformed one would tell a caller which of the two they sent, and there is
@@ -302,7 +430,9 @@ async def explain_decision(day: str, artifact: ArtifactDep) -> Any:
     except ValueError:
         return no_record(day)
 
-    record = artifact.by_day(when)
+    with repository(request.app.state.db, household_id) as repo:
+        record = readpath.decision_on(repo, PostgresSnapshotStore(repo.conn), when)
+
     if record is None:
         return no_record(day)
 
@@ -321,26 +451,39 @@ class AssistantRequest(BaseModel):
     """The conversation, resent by the client each turn.
 
     There is no server-side session store — the modal holds the conversation and sends it
-    back. That is what keeps "the artifact is the only state this service has" true, and it
-    is also why the assistant must re-fetch a decision every turn rather than trusting what
+    back. That is why the assistant must re-fetch a decision every turn rather than trusting what
     it said earlier: the history is the client's word, not the engine's.
+
+    `household_id` is in the **body** rather than the path because it is an input to the answer,
+    not a sub-resource of it: this route reads a household's decisions and posts nothing to it.
     """
 
+    household_id: str = Field(min_length=1, max_length=64)
     message: str = Field(min_length=1, max_length=2000)
     history: list[Turn] = Field(default_factory=list, max_length=40)
 
 
 @app.post("/assistant/message", dependencies=[Depends(require_api_key)])
-async def assistant_message(body: AssistantRequest, request: Request) -> dict[str, Any]:
+async def assistant_message(body: AssistantRequest, request: Request) -> Any:
     """A follow-up question about a decision. The only path in the service that costs money.
 
     The reply is whatever survives the verification guard (`backend/assistant.py`) — a
     narrated answer, an honest "no record", or an availability apology. The `outcome` field
     says which, so the client can render a caught hallucination and a timeout differently
     even when their copy reads alike.
+
+    The window is loaded **scoped**, and handed to the model as the only decisions that exist.
+    That is the same guarantee the guard already gives one level down — the model may not assert a
+    figure it did not fetch — arriving one level up: it cannot fetch another household's figure to
+    assert in the first place.
     """
+    try:
+        window = _window(request, body.household_id)
+    except readpath.NoSuchHousehold:
+        return no_household(body.household_id)
+
     reply = assistant.answer(
-        artifact=artifact_of(request),
+        artifact=window,
         history=[turn.model_dump() for turn in body.history],
         message=body.message,
         client=request.app.state.assistant,

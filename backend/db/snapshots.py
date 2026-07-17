@@ -36,6 +36,7 @@ an abstraction over vendors we have never called.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import date
 from typing import Protocol
 
@@ -50,16 +51,30 @@ class SnapshotStoreError(CodecError):
 
 
 class SnapshotStore(Protocol):
-    """Two methods. That is the entire seam.
+    """Three methods. That is the entire seam.
 
     `ref` is **opaque**: `"pg:<id>"` today, `"gs://bucket/key"` if the measurement ever changes.
     Nothing outside this module may parse, split, or pattern-match it — that is what makes moving
     the payload a one-file change rather than a migration.
+
+    `get_many` is here because the read path renders a **window**, not a row (ticket `0024`): the
+    feed is 90 days, and the display fields it needs — checking, savings, the buffer, the portfolio
+    — live in the snapshot rather than on the `decisions` row. Ninety `get()` calls is not a
+    correctness problem, it is a latency one, and the arithmetic is not close: the store is Neon,
+    which is a network away, so ~90 x ~10ms of round trip is most of a second to draw one screen
+    against ~10ms for a single query.
+
+    **It is a batch, not a cache.** The alternative was denormalizing the display subset onto
+    `decisions`, which duplicates what the snapshot already holds and invites the two to disagree —
+    and `architecture.md` [4.1] is a whole section about not restructuring storage on an unmeasured
+    guess.
     """
 
     def put(self, household_id: str, day: date, snapshot: Snapshot) -> str: ...
 
     def get(self, ref: str) -> Snapshot: ...
+
+    def get_many(self, refs: Sequence[str]) -> dict[str, Snapshot]: ...
 
 
 class PostgresSnapshotStore:
@@ -91,16 +106,50 @@ class PostgresSnapshotStore:
         return f"pg:{snapshot_id}"
 
     def get(self, ref: str) -> Snapshot:
+        payload = self._conn.execute(
+            text("SELECT payload FROM snapshots WHERE id = :i"),
+            {"i": self._id_of(ref)},
+        ).scalar()
+        if payload is None:
+            raise SnapshotStoreError(f"no snapshot at {ref!r}")
+        return decode_tree(Snapshot, payload, error=SnapshotStoreError)
+
+    def get_many(self, refs: Sequence[str]) -> dict[str, Snapshot]:
+        """Every snapshot in one query, keyed by the ref the caller asked with.
+
+        Keyed by `ref` rather than by id so the caller never has to reverse the mapping — which
+        would mean parsing the ref, which is the one thing refs exist to prevent.
+
+        A missing ref is **not** silently dropped. The caller is rendering a decision that points
+        here, and a feed that quietly skipped the day it could not explain would be
+        `architecture.md` [3.3]'s "audit trail or a story" landing on the wrong side.
+        """
+        if not refs:
+            return {}
+
+        ids = {self._id_of(r): r for r in refs}
+        rows = self._conn.execute(
+            text("SELECT id, payload FROM snapshots WHERE id = ANY(:ids)"),
+            {"ids": list(ids)},
+        ).all()
+
+        found = {
+            ids[row.id]: decode_tree(Snapshot, row.payload, error=SnapshotStoreError)
+            for row in rows
+        }
+
+        missing = set(refs) - set(found)
+        if missing:
+            raise SnapshotStoreError(f"no snapshot at {sorted(missing)}")
+
+        return found
+
+    @staticmethod
+    def _id_of(ref: str) -> str:
         if not ref.startswith("pg:"):
             raise SnapshotStoreError(
                 f"{ref!r} is not a Postgres snapshot ref. Refs are opaque to callers, but this "
                 "store only understands its own — a 'gs://' ref means the payload moved and this "
                 "store is the wrong one to ask."
             )
-        payload = self._conn.execute(
-            text("SELECT payload FROM snapshots WHERE id = :i"),
-            {"i": ref.removeprefix("pg:")},
-        ).scalar()
-        if payload is None:
-            raise SnapshotStoreError(f"no snapshot at {ref!r}")
-        return decode_tree(Snapshot, payload, error=SnapshotStoreError)
+        return ref.removeprefix("pg:")
