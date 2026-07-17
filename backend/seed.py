@@ -40,6 +40,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
+from backend.codec import encode_tree
 from backend.db.repository import Repository, repository
 from backend.db.snapshots import PostgresSnapshotStore
 from backend.precompute import (
@@ -47,10 +48,11 @@ from backend.precompute import (
     SERVED_DAYS,
     WARMUP_DAYS,
     WINDOW_START,
+    derive_spend_projection,
     walk,
 )
 from engine.models import Action
-from sim.household import HouseholdSpec, generate
+from sim.household import History, HouseholdSpec, generate
 
 # What produced these decisions. The column is NOT NULL and `architecture.md` [3.3] rests real
 # weight on it — "replay any new engine version across every historical snapshot and ask: would
@@ -150,6 +152,13 @@ def seed(
         # these rows are what it saw *last*.
         _write_current_state(repo, final)
 
+        # The spend surface's History-derived half. **This is the only thing the seeder knows that
+        # the database cannot be asked** — the rolling 30-day series and each card's last cycle come
+        # from every transaction, and there is no `transactions` table until ingest lands. So it is
+        # derived here, from the history this run walked, and written in the same transaction as the
+        # decisions it describes. Ticket 0031; `backend/spend.py` carries the reasoning.
+        _write_spend_projection(repo, history, final)
+
     return Seeded(
         household_id=household_id,
         archetype=archetype,
@@ -211,6 +220,29 @@ def _encode_reasons(reasons: Any) -> str:
             }
             for r in reasons
         ]
+    )
+
+
+def _write_spend_projection(repo: Repository, history: History, w: Any) -> None:
+    """Derive and store the projection for the last day served. Ticket 0031.
+
+    **`w.day` and nothing else.** The projection describes one day, and it must be the same day the
+    obligations are read from — `backend/spend.py:assemble` refuses to serve a projection whose
+    `as_of` disagrees with the snapshot beside it, rather than render this month's statement next to
+    last month's spending with no hint that it had.
+
+    Derived from `history` rather than from the walk's own accumulated state on purpose: this is the
+    same `derive_spend_projection` the artifact pipeline calls, so the seeded surface and the
+    committed fixture cannot drift. That is `0019`'s rule applied one function further out.
+    """
+    projection = derive_spend_projection(history, w.day, w.snapshot.portfolio)
+
+    repo.set_spend_projection(
+        as_of=projection.as_of,
+        # `encode_tree`, not `json.dumps`: the payload carries `Decimal` money and `date`s, and JSON
+        # has neither. A cent that round-trips through a float is not the cent the engine decided
+        # on. Same codec as the snapshot payload, for the same reason.
+        payload=json.dumps(encode_tree(projection)),
     )
 
 

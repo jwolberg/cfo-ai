@@ -146,17 +146,17 @@ export function getDecisions(householdId: string = DEMO_HOUSEHOLD): Promise<Deci
 }
 
 /**
- * What the household spends, and what their card is about to take.
+ * What the household spends, and what their cards are about to take.
  *
  * Comprehension, not a decision — nothing served here feeds the engine.
  *
- * **The one route with no household in it**, because it is the one route the backend has not
- * moved to Postgres: its figures come from the whole transaction history, and there is no
- * transactions table yet. Ticket 0031. It serves the demo household and nothing else, so a
- * switcher (0025) has to either hide this tab or say so for the other three.
+ * **Scoped, and per card, since ticket 0031.** This was `GET /spend`: no household in the path,
+ * because it was the last route the backend had not moved to Postgres, and it reported one
+ * arbitrary card as "your card". Both are fixed, which is what closes 0025's Spending tab for
+ * all four households instead of one.
  */
-export function getSpend(): Promise<SpendResponse> {
-  return request<SpendResponse>('/spend');
+export function getSpend(householdId: string = DEMO_HOUSEHOLD): Promise<SpendResponse> {
+  return request<SpendResponse>(`/households/${householdId}/spend`);
 }
 
 /**

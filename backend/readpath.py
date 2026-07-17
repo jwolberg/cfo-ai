@@ -36,9 +36,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
 from backend.artifact import DayRecord, DebtRecord, Summary, summarize
-from backend.codec import decode_scalar
+from backend.codec import decode_scalar, decode_tree
 from backend.db.repository import Repository
 from backend.db.snapshots import SnapshotStore
+from backend.spend import SpendProjection, SpendSurface, assemble
 from engine.models import (
     AccountKind,
     Action,
@@ -57,6 +58,16 @@ _ENUMS = {
 
 class NoSuchHousehold(LookupError):
     """The household does not exist. A 404, not a 500 — nothing is wrong with the service."""
+
+
+class NoSpendProjection(LookupError):
+    """The household has decisions but no spend projection. Ticket `0031`.
+
+    Distinct from `NoSuchHousehold` because it is a **different fault**: the household is real and
+    its feed renders, and what is missing is the seeded half of the spend surface. Collapsing the
+    two would report a seeding bug as "no such household" and send whoever debugs it looking for a
+    row that is right there.
+    """
 
 
 class Household:
@@ -106,8 +117,12 @@ class ServedWindow:
     **Not an `Artifact`.** `DayRecord` and `Summary` survive the move to Postgres unchanged — they
     are the response, and the client should not be able to tell where they came from. `Artifact`
     does not: it carries a `version`, because a file has a schema that can drift out from under a
-    reader, and a `spend` surface, which `0031` has yet to give this path a source for. Nothing
-    versions a query, and a type with two fields that can only be lies is worse than a second type.
+    reader, and nothing versions a query.
+
+    It also carried a `spend` surface this path had no source for, which is what `0031` fixed —
+    from the other end. The surface is now `spend.SpendSurface`, served per card from rows, and
+    `Artifact` does not have one at all (schema 5). The two types stayed separate and the field
+    went away, rather than this one growing a second field that could only be a lie.
     """
 
     window_start: date
@@ -205,3 +220,37 @@ def decision_on(repo: Repository, store: SnapshotStore, day: date) -> DayRecord 
         return None
 
     return _day_record(row, store.get(ref))
+
+
+def load_spend_surface(repo: Repository, store: SnapshotStore) -> SpendSurface:
+    """One household's spend surface, per card. Ticket `0031`.
+
+    **Two rows, not ninety.** The surface renders a single day — the last one on record — so this
+    reads that one decision, that one snapshot, and the projection. `load_window` pulls the whole
+    feed because the feed *is* the window; this would be pulling 90 days to use one.
+
+    The obligations come off the snapshot **live**, through `backend/spend.py`, which is the half of
+    `0031`'s first problem that needed no ingest and no projection: the statement, the unbilled
+    balance and each card's share of the reserve are all facts about the `Snapshot` the engine
+    already saw, and Postgres has been holding it since `0022`.
+
+    Raises `NoSuchHousehold` when there are no decisions, and `NoSpendProjection` when there are
+    decisions but nothing derived from the `History` — a household seeded before `0031`, or by
+    something that skipped it. Both are refusals rather than an empty surface: a Spending screen
+    showing zeros is a household that spends nothing, which is a different story and a false one.
+    """
+    row = repo.last_decision()
+    if row is None:
+        raise NoSuchHousehold(repo.household_id)
+
+    ref = row["snapshot_ref"]
+    if not ref:
+        raise NoSuchHousehold(repo.household_id)
+
+    stored = repo.spend_projection()
+    if stored is None:
+        raise NoSpendProjection(repo.household_id)
+
+    projection = decode_tree(SpendProjection, stored["payload"])
+
+    return assemble(store.get(ref), projection)

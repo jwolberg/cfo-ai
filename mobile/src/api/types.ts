@@ -189,9 +189,37 @@ export interface Normal {
   worst_30d_card: Money;
 }
 
+/**
+ * One card's spending picture. Ticket 0031.
+ *
+ * `last_cycle` is nullable, and the difference matters: `null` means we have no transactions
+ * for this card, which is not the same claim as "you charged nothing". Only one of those is
+ * safe to render as "your card grew by $0.00".
+ */
+export interface CardSpend {
+  card_id: string;
+  this_cycle: ThisCycle;
+  last_cycle: LastCycle | null;
+}
+
+/**
+ * The totals across the portfolio — sums of **money only**.
+ *
+ * There is deliberately no `due` here. A household's cards do not close together, so a single
+ * due date would be a fiction, and the whole reason the two obligations are reported separately
+ * is that they fall due a month apart. That argument gets stronger with three cards, not weaker.
+ */
+export interface SpendTotals {
+  statement: Money;
+  unbilled: Money;
+  /** The portfolio reserve. The sum of every card's `held_back`, which is what the engine took. */
+  held_back: Money;
+}
+
 export interface SpendResponse {
   as_of: IsoDate;
-  this_cycle: ThisCycle;
-  last_cycle: LastCycle;
+  /** Every card, never just the first one — tickets 0027, 0030, and 0031 in its last home. */
+  cards: CardSpend[];
+  totals: SpendTotals;
   normal: Normal;
 }

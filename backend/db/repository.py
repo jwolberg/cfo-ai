@@ -66,6 +66,27 @@ class Repository:
         rows = self._all("SELECT * FROM decisions WHERE household_id = :h AND day = :d", d=day)
         return rows[0] if rows else None
 
+    def last_decision(self) -> dict[str, Any] | None:
+        """The most recent day on record — the household's "today".
+
+        `/spend` renders one day, not a window, so it reads one row rather than pulling ninety and
+        discarding eighty-nine. The demo's today is a fixed calendar date (the last day seeded),
+        not the wall clock, which is why this is `MAX(day)` and not `CURRENT_DATE`.
+        """
+        rows = self._all(
+            "SELECT * FROM decisions WHERE household_id = :h ORDER BY day DESC LIMIT 1"
+        )
+        return rows[0] if rows else None
+
+    def spend_projection(self) -> dict[str, Any] | None:
+        """The History-derived half of the spend surface, or `None` if it was never seeded.
+
+        `None` is a real answer and the caller must render it as one: it means this household has
+        decisions but no projection — see `backend/spend.py` and ticket `0031`.
+        """
+        rows = self._all("SELECT * FROM spend_projections WHERE household_id = :h")
+        return rows[0] if rows else None
+
     # --- writes ----------------------------------------------------------------------
     #
     # The seeder (ticket 0023) writes through exactly these, which is the point: it exercises the
@@ -141,6 +162,26 @@ class Repository:
             " VALUES (:decision_id, :h, :day, :action, :amount, :target_card_id,"
             " :projected_low_balance, :reasons, :engine_version, :snapshot_ref)",
             **f,
+        )
+
+    def set_spend_projection(self, *, as_of: date, payload: str) -> None:
+        """Upsert this household's spend projection. One row per household — see ticket `0031`.
+
+        `ON CONFLICT DO UPDATE` rather than INSERT, matching `set_policy`: re-seeding must converge
+        rather than raise, and a household that is walked again gets a projection describing the
+        day it was walked to.
+
+        `payload` arrives as serialized JSON text, matching `add_decision`'s `reasons` and
+        `PostgresSnapshotStore.put` — psycopg will not adapt a Python container to JSONB through a
+        textual bind, and Postgres casts the string on the way in.
+        """
+        self._exec(
+            "INSERT INTO spend_projections (household_id, as_of, payload)"
+            " VALUES (:h, :as_of, :payload)"
+            " ON CONFLICT (household_id) DO UPDATE SET"
+            " as_of = EXCLUDED.as_of, payload = EXCLUDED.payload",
+            as_of=as_of,
+            payload=payload,
         )
 
     # --- the only two places `household_id` is bound ---------------------------------

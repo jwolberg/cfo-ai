@@ -15,6 +15,8 @@ from decimal import Decimal
 import pytest
 
 from backend import artifact as art
+from backend.archetypes import ARCHETYPES
+from backend.codec import decode_tree, encode_tree
 from backend.precompute import (
     CHECKING_ID,
     DEMO_POLICY,
@@ -27,6 +29,7 @@ from backend.precompute import (
     WARMUP_DAYS,
     WINDOW_START,
     DebtLedger,
+    _cycle_bounds,
     assemble_snapshot,
     build,
     classify_behavior,
@@ -35,6 +38,7 @@ from backend.precompute import (
     derive_cash_events,
     derive_portfolio,
     derive_spend_profile,
+    derive_spend_projection,
     detect_unmatched_payments,
     income_variation,
     infer_close_day,
@@ -42,12 +46,14 @@ from backend.precompute import (
     spend_30d_high,
     walk,
 )
+from backend.spend import SpendProjection
 from engine.forecast import HORIZON_DAYS
 from engine.interest import total_interest
 from engine.models import (
     ZERO,
     Action,
     AprSource,
+    CardPortfolio,
     CoverageState,
     EventKind,
     PaymentBehavior,
@@ -776,30 +782,114 @@ class TestDerivation:
         assert art.DEFAULT_PATH.read_text() == art.to_json(build())
 
 
-class TestTheSpendSnapshot:
-    """Serialization of the spend surface. `SCHEMA_VERSION` bumped to 2."""
+def _walk_to_the_last_served_day(spec: HouseholdSpec) -> tuple[History, object]:
+    """The history, and the last `WalkDay` of it — the day a surface describes.
 
-    def test_the_spend_snapshot_round_trips_without_losing_a_cent(self) -> None:
-        """Money crosses the wire as strings, never JSON numbers. A float here is a rounding
-        bug with a very long fuse — it surfaces as a cent of disagreement between the dashboard
-        and the KPI, months later, with no obvious cause."""
-        original = build()
-        restored = art.from_json(art.to_json(original))
+    Through `walk()` rather than `derive_portfolio()` directly, because that is the path the seeder
+    takes to build the same figures (`backend/seed.py`), and a test that assembles a portfolio by
+    hand is a test of a portfolio nobody serves.
+    """
+    days = WARMUP_DAYS + SERVED_DAYS
+    history = generate(spec, start=WINDOW_START, days=days, seed=SEED)
 
-        assert restored.spend == original.spend
-        assert restored.spend.statement_balance == original.spend.statement_balance
-        assert restored.spend.rolling_30d_cash == original.spend.rolling_30d_cash
+    final = None
+    for w in walk(history, spec, WINDOW_START, days):
+        final = w
 
-    def test_the_committed_artifact_carries_the_spend_surface(self) -> None:
+    assert final is not None
+    return history, final
+
+
+def _projection_for(spec: HouseholdSpec) -> SpendProjection:
+    history, w = _walk_to_the_last_served_day(spec)
+    return derive_spend_projection(history, w.day, w.snapshot.portfolio)
+
+
+class TestTheSpendProjection:
+    """The History-derived half of the spend surface. Ticket `0031`.
+
+    It used to be `Artifact.spend`, a `SpendSnapshot` built from `portfolio.cards[0]` and served
+    off the committed file. `0031` moved `/spend` to Postgres, so the artifact no longer carries a
+    surface at all (schema 5) and what remains here is only what the transaction `History` can
+    answer — see `backend/spend.py` for why the rest is derived from the snapshot instead.
+    """
+
+    def test_the_artifact_no_longer_carries_a_spend_surface(self) -> None:
+        """The inverse of the test this replaces, and the point of the schema bump.
+
+        `Artifact.spend` existed to be served. Nothing serves it now, and a field nothing reads is
+        a `cards[0]` derivation with nothing to catch it drifting — so it is gone rather than
+        maintained. What the file is now is the golden fixture for the *decisions*.
+        """
         loaded = art.load()
-        assert loaded.version == art.SCHEMA_VERSION
-        assert loaded.spend.rolling_30d_cash, "the strip chart has no data"
 
-    def test_the_unbilled_statement_is_due_after_the_closed_one(self) -> None:
-        """They are a month apart, and that gap is the whole reason card spend is an engine
-        input: two charges three weeks apart leave checking a month apart."""
-        spend = build().spend
-        assert spend.unbilled_due > spend.statement_due
+        assert loaded.version == art.SCHEMA_VERSION == 5
+        assert not hasattr(loaded, "spend")
+        assert loaded.days, "the fixture still carries the decisions, which is its whole job"
+
+    def test_the_projection_round_trips_without_losing_a_cent(self) -> None:
+        """Money reaches JSONB as tagged strings, never JSON numbers. A float here is a rounding
+        bug with a very long fuse — it surfaces as a cent of disagreement between the dashboard
+        and the KPI, months later, with no obvious cause.
+
+        Through `encode_tree`/`decode_tree` rather than the artifact codec, because the payload
+        column is where this projection actually lives now.
+        """
+        original = _projection_for(DEMO_SPEC)
+        restored = decode_tree(SpendProjection, encode_tree(original))
+
+        assert restored == original
+        assert restored.rolling_30d_cash == original.rolling_30d_cash
+        assert restored.last_cycle == original.last_cycle
+        assert all(isinstance(v, Decimal) for v in restored.rolling_30d_cash)
+
+    def test_it_describes_every_card_not_the_first_one(self) -> None:
+        """`0027` in the walk, `0030` in the artifact, and this was its last home.
+
+        `derive_spend_snapshot` read `cards[0]` and called it "your card". Archetype B holds three,
+        and every one of them must appear with its own totals.
+        """
+        history, w = _walk_to_the_last_served_day(ARCHETYPES["semimonthly_portfolio"])
+        cards = w.snapshot.portfolio.cards
+
+        projection = derive_spend_projection(history, w.day, w.snapshot.portfolio)
+
+        assert len(cards) == 3, "the archetype that made cards[0] a lie"
+        assert {t.card_id for t in projection.last_cycle} == {c.card_id for c in cards}
+
+    def test_each_card_gets_its_own_cycle_window(self) -> None:
+        """The cards do not close together, and `_cycle_bounds` keys on each card's **own** close
+        day. `cards[0]` hid this twice over: reporting one card, and reporting one cycle. Summing
+        three cards' charges over card A's window would still have been wrong.
+
+        Proved by taking it away: rerunning every card against the first card's close day moves at
+        least one card's totals. If it did not, this test would be asserting nothing.
+        """
+        history, w = _walk_to_the_last_served_day(ARCHETYPES["semimonthly_portfolio"])
+        cards = w.snapshot.portfolio.cards
+        seen = history.as_of(w.day)
+
+        assert len({c.cycle.close_day_of_month for c in cards}) > 1, "cards that close apart"
+
+        honest = derive_spend_projection(history, w.day, w.snapshot.portfolio)
+        first_close = cards[0].cycle.close_day_of_month
+        start, close = _cycle_bounds(w.day, first_close)
+        naive = {c.card_id: seen.card_charged_between(c.card_id, start, close) for c in cards}
+
+        assert any(t.charged_last_cycle != naive[t.card_id] for t in honest.last_cycle), (
+            "every card's cycle happened to agree — this archetype no longer proves the point"
+        )
+
+    def test_a_household_with_no_cards_needs_no_special_case(self) -> None:
+        """The old code branched on `cards[0] is None` and returned a surface of zeros with
+        today's date standing in for two due dates it did not have. No cards, no per-card totals —
+        and the rolling series is a household fact that stands on its own."""
+        history, w = _walk_to_the_last_served_day(DEMO_SPEC)
+
+        projection = derive_spend_projection(history, w.day, CardPortfolio(cards=()))
+
+        assert projection.last_cycle == ()
+        assert projection.rolling_30d_cash, "the household still spends cash without a card"
 
     def test_the_spend_surface_feeds_no_decision(self) -> None:
         """U6 is comprehension. If `forecast.py` ever reads the rolling series, that is the
@@ -1114,17 +1204,22 @@ class TestTheWalkCarriesAPortfolio:
                 assert b.accrued > ZERO, "card B posted on A's close day"
 
 
-class TestTheArtifactStillCannotServeAPortfolio:
-    """Tickets `0030` and `0031`, and the honest state between them.
+class TestTheArtifactServesAPortfolio:
+    """Tickets `0030`, #50, and `0031` — the same defect through three states.
 
     `0027` refused a multi-card spec at `build()` because `DayRecord` held one debt. `0030` fixed
     that half and lifted the guard — and **that lifted the protection off
     `derive_spend_snapshot`'s `cards[0]` too**, which nobody noticed: a portfolio built cleanly, its
-    `debts` listed every card correctly, and its `spend` surface quietly described one arbitrary
-    one of them.
+    `debts` listed every card correctly, and its `spend` surface quietly described one arbitrary one
+    of them. #50 found that, measured it, and put a `raise` on the field that was still single-card.
+    This class was that guard's test, and it is kept rather than deleted because **the finding is
+    the valuable part** and it is still true of the code's history.
 
-    So the refusal moved down to the field that is actually still single-card, and these tests pin
-    both halves: the days are right, and the artifact as a whole still refuses rather than pretends.
+    `0031` removed the field. `Artifact.spend` is gone (schema 5) — nothing served it once `/spend`
+    moved to Postgres per card — so there is no `cards[0]` left to protect and nothing to refuse.
+    The claim these tests make has to change with it: not *"the artifact refuses to describe a
+    portfolio"* but *"the artifact describes a portfolio, and cannot describe `cards[0]` because it
+    has nowhere to put one."* That is strictly stronger, and it is the assertion below.
     """
 
     def test_the_days_carry_every_card(self) -> None:
@@ -1145,25 +1240,31 @@ class TestTheArtifactStillCannotServeAPortfolio:
                 f"{w.day}: cards share a balance: {w.debt_balances}"
             )
 
-    def test_the_spend_surface_refuses_rather_than_reporting_one_arbitrary_card(self) -> None:
-        """The landmine `0030` armed and `0031` disarms.
+    def test_a_portfolio_builds_and_carries_no_spend_surface_to_get_wrong(self) -> None:
+        """The landmine `0030` armed, #50 measured, and `0031` removed the ground from under.
 
-        Reporting `cards[0]` here would have been `0027`'s bug in its last home — and it would have
-        looked entirely fine: three correct cards in `debts`, one silently wrong surface beside
-        them.
+        This asserted `pytest.raises(ValueError, match="spend surface describes one card")` — #50's
+        guard, correct while the artifact had a single-card `spend` field. The field is gone, so a
+        portfolio builds, its `debts` name every card, and there is no surface to describe
+        `cards[0]` with. A guard is not needed where the hazard has no home.
         """
         spec = TestTheWalkCarriesAPortfolio._two_cards()
 
-        with pytest.raises(ValueError, match="spend surface describes one card"):
-            build(spec=spec)
+        artifact = build(spec=spec)
+
+        assert not hasattr(artifact, "spend"), "schema 5 removed it — see 0031 and readpath.py"
+        assert len(artifact.days) == SERVED_DAYS
+        for record in artifact.days:
+            assert {d.debt_id for d in record.debts} == {c.card_id for c in spec.cards}
 
     def test_the_demo_still_builds(self) -> None:
-        """The only thing `build()` exists for. The seeder walks portfolios into Postgres through
-        `walk()` and never comes here."""
+        """The only thing `build()` exists for now: the golden fixture archetype A's decisions are
+        checked against. The seeder walks portfolios into Postgres through `walk()` and never comes
+        here."""
         artifact = build()
 
         assert len(artifact.days) == SERVED_DAYS
-        assert artifact.spend is not None
+        assert artifact.version == art.SCHEMA_VERSION == 5
 
 
 class TestTheArtifactRecordsWhatTheEngineSaw:

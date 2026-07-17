@@ -145,14 +145,15 @@ defects instead — see below.
 | [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 | **done** (#44) |
 | [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022, 0027, 0028 | **done** |
 | [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | **done** (`/spend` split to 0031) |
-| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | **done** (Spending tab awaits 0031) |
+| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | **done** (Spending tab closed by 0031) |
 | [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
 | [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
 | [0032](0032-generate-is-not-prefix-stable.md) | `generate()` is not prefix-stable *(found by 0019, filed 2026-07-17)* | backend-python-agent | — | open — **the harness has never graded the household that ships** |
 | [0030](0030-dayrecord-carries-a-portfolio.md) | `DayRecord` carries a portfolio *(the decision 0027 deferred)* | backend-python-agent | 0023, 0027, 0028 | **done** |
-| [0031](0031-the-spend-surface-per-household.md) | The spend surface, per household *(split from 0024)* | backend-python-agent | 0023, 0024, 0030 | **blocked on ingest [3.1]** — decided, not deferred |
+| [0031](0031-the-spend-surface-per-household.md) | The spend surface, per household — and for a portfolio *(split from 0024)* | backend-python-agent | 0023, 0024, 0030 | **done** — reopened; supersedes #50's `blocked` |
+| [0033](0033-a-migration-that-imports-live-code-is-not-a-migration.md) | A migration that imports live code is not a migration *(spawned by 0031)* | backend-python-agent | — | **done** (fixed inside 0031) |
 
 ## Three things to know before picking one of these up
 
@@ -207,13 +208,40 @@ and reasoned a whole "phase 3" out of it. Measured: **2,699 B**, compressing **7
 documents two prior plugged-in numbers that "pointed the right way for the wrong reason"; this was
 nearly the third, and `0022` is scoped to the smaller claim.
 
-## Status: `0019`–`0022` on `main` (#44). `0027`/`0028` in #46 (open). `0023` is unblocked.
+## Status: `0019`–`0028`, `0030`, `0031` done. `0029` open. `0026` half done.
 
-436 Python tests, 51 mobile tests, ruff clean, `backend/data/decisions.json` byte-identical
-throughout — which is how we know the walk refactor preserved behaviour.
+**522 Python tests, 66 mobile tests, ruff clean**, against a real Postgres.
 
-**`0023` can now start.** Both blockers were found by trying to build it, neither was in its
-ticket, and both are fixed in #46:
+> ⚠️ **Nothing has deployed since `0020`, and the live demo is eleven tickets stale.** PR #50 fixed
+> the manifest that made the container unable to start (`tests/test_requirements.py` now guards it).
+> The deploy still needs `DATABASE_URL` wired, Neon migrated to `0004`, and Neon **seeded** — it
+> never has been. That is `0026`'s unfinished half; the procedure is
+> [`runbooks/deploy.md`](../runbooks/deploy.md), and **nothing in it has been run**.
+
+`backend/data/decisions.json` is at **schema 5** and serves nothing: `0031` moved `/spend`, the last
+route reading it, so the file is now purely the golden fixture for archetype A's decisions.
+Regenerating it for the schema bump was checked the way `0019` requires — the decisions were hashed
+**before** the change (`sha256 987ddbce…`) and the new file compared against that hash: 90/90 days
+identical field for field, `spend` the only key removed.
+
+### `0031` closed the last two open threads from `0024`/`0025`
+
+- **Nothing reads the file.** `app.state.artifact` is gone, and the sentinel test that existed to
+  fail on this day (`test_spend_is_the_one_that_still_does_and_says_so`) was deleted rather than
+  updated, as its ticket asked.
+- **`0025`'s Spending tab closes for real.** It could only refuse for three of four households while
+  the route was single-tenant. It follows the switch now.
+
+And its first problem turned out to be **a false choice**. The ticket offered "store a projection or
+wait for ingest" and called the trade real; `untouchable()` is a pure function of the `Snapshot`, and
+`0022` has been storing the whole frozen snapshot all along — so the entire obligations half was
+already derivable from rows, per card, for every household. Only the History-derived half needed a
+projection, and that is all that got stored. See `backend/spend.py`.
+
+### The old status, kept because the reasoning is still the point
+
+**`0023` was unblocked by two defects found by trying to build it**, neither in its ticket, both
+fixed in #46:
 
 - **`0027` — a ledger per card.** The walk built one `DebtLedger` from `spec.card` and handed that
   balance to every card, so a $3,000 card reported the $14,000 card's $14,009.20. It turned out to
@@ -227,15 +255,32 @@ ticket, and both are fixed in #46:
   household that **sweeps and says nothing about what it saved** — better than the refusal it
   replaces.
 
-**`0026` is half done.** Neon is provisioned and migrated (37 partitions, RLS forced on all five
-scoped tables, `cfo_runtime` created), and `docs/runbooks/neon-provisioning.md` carries the
+**`0026` is half done.** Neon is provisioned and migrated (37 partitions, RLS forced on every
+scoped table, `cfo_runtime` created), and `docs/runbooks/neon-provisioning.md` carries the
 procedure. Cloud Run wiring and Secret Manager are not done.
+
+**It was migrated at `0020`, so it predates `0004`** — `0031` added `spend_projections`, which takes
+the scoped-table count from five to six. The deployed code will refuse to start against Neon as it
+stands, which is `_assert_migrated()` doing its job. `docs/runbooks/deploy.md` `[2]` is the step.
+
+`0031` also wrote the rest of that runbook: it is `0009`'s owed graduation of `DEPLOY.local.md`
+plus `0026`'s database steps, prepped as far as they go without touching live infrastructure.
+**Nothing in it has been run** — `last-verified: never`, and steps `[2]`–`[5]` are written from the
+code rather than from a deploy.
 
 ## The thing worth reading before picking any of these up
 
-Every defect these four tickets found is the same shape: **a mechanism that was built, tested, and
-never actually exercised.** The dial `calibrate.py` swept but `build()` could not read. The RLS
-policies that Neon's default role ignores. The IDOR suite that ran as a superuser. The multi-card
-reserve that has never seen two cards. The `await` that every suite has except one.
+Every defect these tickets found is the same shape: **a mechanism that was built, tested, and never
+actually exercised.** The dial `calibrate.py` swept but `build()` could not read. The RLS policies
+that Neon's default role ignores. The IDOR suite that ran as a superuser. The multi-card reserve
+that has never seen two cards. The `await` that every suite has except one. And now
+[`0032`](0032-a-migration-that-imports-live-code-is-not-a-migration.md): a migration that imported a
+live application constant and iterated it, invisible for exactly as long as the constant stood
+still — which was every day until `0031` added a table to it.
 
 None of them had a symptom. All of them had a green test.
+
+`0032` adds a corollary worth having: **the ones that only break from zero are the quietest of all.**
+Every already-migrated database stays green forever, including CI. It broke only for someone
+starting fresh — a new developer, a new Neon branch — which is the person least equipped to tell a
+real defect from their own setup going wrong.

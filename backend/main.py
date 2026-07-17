@@ -6,14 +6,18 @@ explanations are rebuilt from the `decisions` and `snapshots` rows the seeder wr
 `backend/readpath.py`. ADR-0004 supersedes ADR-0002, and ticket `0024` is where the service
 stopped being a file reader.
 
-## `/spend` is the exception, and it is deliberate rather than forgotten
+## Nothing here reads a file
 
-It still serves the demo household's committed artifact, because its figures — every overlapping
-30-day total by channel, what the card took last cycle — are derived from the full transaction
-`History`, and there is no `transactions` table to derive them from until ingest lands
-(`architecture.md` [3.1], not built). It also reads `portfolio.cards[0]`, so on the portfolio
-households `0023` seeded it would report an arbitrary card. Both are ticket `0031`. Until then this
-one route is single-household and says so, rather than being quietly wrong for three of the four.
+`/spend` was the exception until ticket `0031`, and it is not one any more: the committed artifact
+is a test fixture and this process never opens it. Every route is scoped, and every figure comes
+from a row.
+
+`/spend` is the one route whose data has two sources, and the split is deliberate. Each card's
+statement, unbilled balance and reserve are derived **live** from the frozen `Snapshot` — the same
+per-card terms `untouchable()` sums. What only the full transaction `History` can answer (the
+rolling 30-day series; what each card took last cycle) is a **stored projection**, because there is
+no `transactions` table until ingest lands (`architecture.md` [3.1]) — and ingest deletes it. See
+`backend/spend.py`.
 
 ## Money crosses the wire as a string
 
@@ -25,11 +29,10 @@ receives text and formats it, and no float ever touches a dollar amount in eithe
 
 ## Failure lands at startup, not per-request
 
-A missing API key, an unreachable or unmigrated database, a role that would bypass RLS, a missing
-or malformed artifact — every one of them raises before the first request is served, and the
-process exits. A service that comes up holding bad data and answers with wrong numbers is worse
-than one that never comes up: Cloud Run reports the second, and nobody notices the first
-(ADR-0004 [3.2]).
+A missing API key, an unreachable or unmigrated database, a role that would bypass RLS — every one
+of them raises before the first request is served, and the process exits. A service that comes up
+holding bad data and answers with wrong numbers is worse than one that never comes up: Cloud Run
+reports the second, and nobody notices the first (ADR-0004 [3.2]).
 
 The database check is not a ping. It runs `assert_rls_binds()`, which refuses to start under a role
 that is `rolsuper` or has `rolbypassrls` — because Neon's default role has the latter, and under it
@@ -54,12 +57,17 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend import artifact as art
 from backend import assistant, readpath
+
+# The wire shapes, imported as types and nothing else. `backend.artifact` is where they are
+# defined; the *file* that module reads and writes is a test fixture (`0031`) and this process
+# never opens it. Importing the names rather than the module is what keeps that visible.
+from backend.artifact import DayRecord, Summary
 from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
 from backend.db.session import assert_rls_binds, make_engine
 from backend.db.snapshots import PostgresSnapshotStore
+from backend.spend import CardObligations, SpendProjection
 from engine.explain import explain, render
 
 # The Expo web target runs in a browser, on a different origin from the API — so without
@@ -91,8 +99,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         assert_rls_binds(conn)
         _assert_migrated(conn)
 
-    # Ticket 0031 removes this. `/spend` is the last route reading the file.
-    app.state.artifact = art.load()
     # Built once, at startup, so a deploy without the Anthropic secret fails here rather
     # than the first time a user opens the modal and asks a question.
     app.state.assistant = assistant.build_client()
@@ -107,8 +113,12 @@ def _assert_migrated(conn: Connection) -> None:
     Deliberately not an Alembic revision comparison: this asserts the tables the read path actually
     reads, which is the claim that matters. A service pinned to the right revision against a
     database that lost a table is still a service that cannot answer.
+
+    `spend_projections` joined the list with ticket `0031`, and it is the reason this is a list of
+    what is *read* rather than a list of what exists: it is a table the read path depends on and
+    that ingest will one day drop. When that happens this line moves, and the check stays true.
     """
-    for table in ("households", "decisions", "snapshots"):
+    for table in ("households", "decisions", "snapshots", "spend_projections"):
         try:
             conn.execute(text(f"SELECT 1 FROM {table} LIMIT 1"))
         except SQLAlchemyError as exc:
@@ -132,15 +142,6 @@ app.add_middleware(
 )
 
 
-def artifact_of(request: Request) -> art.Artifact:
-    return request.app.state.artifact
-
-
-# The `Annotated` form of FastAPI's dependency injection, rather than `= Depends(...)` in the
-# signature's defaults: same wiring, but it does not put a function call in an argument
-# default, which is a real footgun everywhere else in Python and which linters rightly flag.
-ArtifactDep = Annotated[art.Artifact, Depends(artifact_of)]
-
 # The household id travels in the path and is bound to both scoping layers in one place
 # (`repository()`), which is what stops them disagreeing. Every route below that touches a
 # household's data goes through it — there is no other way to reach a row.
@@ -163,7 +164,7 @@ def usd(amount: Decimal | None) -> str | None:
     return None if amount is None else str(amount)
 
 
-def decision_json(record: art.DayRecord) -> dict[str, Any]:
+def decision_json(record: DayRecord) -> dict[str, Any]:
     """One day, as the client sees it.
 
     Both the reason *codes* and their rendered sentences travel with the decision. The code
@@ -212,7 +213,7 @@ def decision_json(record: art.DayRecord) -> dict[str, Any]:
     }
 
 
-def summary_json(summary: art.Summary) -> dict[str, Any]:
+def summary_json(summary: Summary) -> dict[str, Any]:
     """The dashboard's headline stats (R3).
 
     `interest_avoided_total` sums the `INTEREST_AVOIDED` reasons the engine itself chose to
@@ -282,11 +283,31 @@ def no_household(household_id: str) -> JSONResponse:
     )
 
 
+def no_spend_projection(household_id: str) -> JSONResponse:
+    """The household is real, its feed renders, and its spend surface was never derived.
+
+    **A 404 for the surface, not for the household**, and a distinct error code from
+    `no_household` — this is a seeding fault (`0031`: a household seeded before the projection
+    existed, or by something that skipped it), and reporting it as "no such household" would send
+    whoever debugs it looking for rows that are right there.
+
+    Not a 500: the service is fine and the question was fair. Not an empty 200 with zeros: a
+    Spending screen full of zeros says this household spends nothing, which is the false-but-
+    plausible answer this codebase keeps refusing to give.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "error": "no_spend_projection",
+            "household_id": household_id,
+            "message": "We don't have a spending picture for that household yet.",
+        },
+    )
+
+
 @app.get("/health", include_in_schema=False)
 async def health() -> dict[str, str]:
     """Cloud Run's probe. Deliberately unauthenticated, and deliberately says nothing.
-
-    If the artifact were missing the process would not be here to answer.
 
     Named `/health`, not `/healthz`: Google's frontend reserves `/healthz` on `*.run.app` and
     answers it itself with a Google 404, so a route by that name is defined here and never
@@ -338,20 +359,21 @@ async def decisions(request: Request, household_id: HouseholdId) -> Any:
     }
 
 
-@app.get("/spend", dependencies=[Depends(require_api_key)])
-async def spend(artifact: ArtifactDep) -> dict[str, Any]:
-    """What the household spends, and what their card is about to take.
+@app.get("/households/{household_id}/spend", dependencies=[Depends(require_api_key)])
+async def spend(request: Request, household_id: HouseholdId) -> Any:
+    """What the household spends, and what their cards are about to take.
 
-    **The one route still reading the file, and the one route still serving a single household.**
-    Not an oversight — ticket `0031`. Its figures come from the whole transaction `History`
-    (every overlapping 30-day total by channel; what the card took last cycle against what came
-    off it), and there is no `transactions` table to rebuild them from until ingest lands
-    (`architecture.md` [3.1]). It also reads `portfolio.cards[0]`, so on the three portfolio
-    households `0023` seeded it would report an arbitrary card as "your card" — which is the bug
-    `0030` just finished removing from the artifact, and it is not being reintroduced in a new
-    place to make a route look finished.
+    **Every card, and this household's.** Ticket `0031` — the route that used to read the committed
+    file and serve `portfolio.cards[0]` as "your card" to whichever household asked. It is scoped
+    through `0021`'s repository like every other route now, and it names each card.
 
-    So it stays honest about its scope instead: this is the demo household's spend surface.
+    **The two halves come from different places, and that is the design.** Each card's statement,
+    unbilled balance and reserve are derived live from the frozen `Snapshot` — `untouchable()`'s own
+    per-card terms, so the figures add up to the number the engine actually withheld rather than
+    resembling it. What only the transaction `History` can answer (the rolling 30-day series; what
+    each card took last cycle) is a stored projection, because there is no `transactions` table
+    until ingest lands (`architecture.md` [3.1]) — and ingest deletes it. `backend/spend.py` carries
+    the argument for why storing the first half too would be the worse choice.
 
     **Comprehension, not a decision.** Nothing served here feeds the engine. The rolling 30-day
     series is the exact structure that will eventually replace `daily_discretionary_high` in the
@@ -359,46 +381,80 @@ async def spend(artifact: ArtifactDep) -> dict[str, Any]:
     having already been looked at by real households. Swapping the forecast onto it today would
     *loosen* the reserve, and loosening needs a measured breach rate we cannot yet produce.
 
-    The two obligations are reported separately because they fall due a **month apart**. A single
-    "what you owe" figure hides precisely the thing the user needs to see: what is already
-    committed, and what is quietly forming behind it.
+    **There is no single due date, and no single "what you owe".** The two obligations are reported
+    separately because they fall due a **month apart**, and a combined figure hides precisely what
+    the user needs to see: what is already committed, and what is quietly forming behind it. With
+    three cards that argument gets stronger, not weaker — the cards do not close together — so the
+    totals below are sums of money and never of dates.
     """
-    s = artifact.spend
+    try:
+        with repository(request.app.state.db, household_id) as repo:
+            surface = readpath.load_spend_surface(repo, PostgresSnapshotStore(repo.conn))
+    except readpath.NoSuchHousehold:
+        return no_household(household_id)
+    except readpath.NoSpendProjection:
+        return no_spend_projection(household_id)
 
     return {
-        "as_of": artifact.window_end.isoformat(),
+        "as_of": surface.as_of.isoformat(),
+        "cards": [_card_spend_json(c, surface.projection) for c in surface.cards],
+        # Sums, and only of money. The reserve total is the portfolio-level fact `untouchable()`
+        # returns; the per-card `held_back` figures above are the terms it is the sum of.
+        "totals": {
+            "statement": usd(surface.statement_total),
+            "unbilled": usd(surface.unbilled_total),
+            "held_back": usd(surface.held_back_total),
+        },
+        "normal": {
+            # Every overlapping 30-day total in the trailing window. The strip chart, and the
+            # answer to "what does a bad month actually look like for me". Cash is a household
+            # fact; the card series is every card's charges, which is what a bad month means for
+            # a household holding three of them.
+            "rolling_30d_cash": [usd(v) for v in surface.projection.rolling_30d_cash],
+            "rolling_30d_card": [usd(v) for v in surface.projection.rolling_30d_card],
+            "worst_30d_cash": usd(surface.projection.worst_30d_cash),
+            "worst_30d_card": usd(surface.projection.worst_30d_card),
+        },
+    }
+
+
+def _card_spend_json(card: CardObligations, projection: SpendProjection) -> dict[str, Any]:
+    """One card's panel: what it owes, what it is forming, and what it took last cycle.
+
+    `last_cycle` is `null` when the projection has no totals for this card rather than zeros —
+    "nothing was charged" and "we have no transactions for this card" are different claims, and
+    only one of them is safe to print next to "your card grew by $0.00".
+    """
+    totals = projection.totals_for(card.card_id)
+
+    return {
+        "card_id": card.card_id,
         "this_cycle": {
             # Already closed. Legally due, inside the horizon, and reserved.
             "statement": {
-                "amount": usd(s.statement_balance),
-                "due": s.statement_due.isoformat(),
+                "amount": usd(card.statement_balance),
+                "due": card.statement_due.isoformat(),
                 "reserved": True,
             },
             # Charged since. Not yet due — this is next month's bill, forming now, and it is
             # the number that makes the card an engine input at all.
             "unbilled": {
-                "amount": usd(s.unbilled_balance),
-                "due": s.unbilled_due.isoformat(),
+                "amount": usd(card.unbilled_balance),
+                "due": card.unbilled_due.isoformat(),
                 "reserved": False,
             },
-            # The line that stops the reserve looking arbitrary: "we're holding back $X for
-            # this."
-            "held_back": usd(s.reserved),
+            # The line that stops the reserve looking arbitrary: "we're holding back $X for this."
+            # This card's own `obligation_in_horizon`, not a share of the total.
+            "held_back": usd(card.held_back),
         },
-        "last_cycle": {
-            "charged": usd(s.charged_last_cycle),
-            "paid": usd(s.paid_last_cycle),
+        "last_cycle": None
+        if totals is None
+        else {
+            "charged": usd(totals.charged_last_cycle),
+            "paid": usd(totals.paid_last_cycle),
             # Positive means the card GREW. A sweep will not catch that up — the spending is
             # the thing to change, and the product should say so rather than stay quiet.
-            "grew_by": usd(s.card_grew_by),
-        },
-        "normal": {
-            # Every overlapping 30-day total in the trailing window. The strip chart, and the
-            # answer to "what does a bad month actually look like for me".
-            "rolling_30d_cash": [usd(v) for v in s.rolling_30d_cash],
-            "rolling_30d_card": [usd(v) for v in s.rolling_30d_card],
-            "worst_30d_cash": usd(s.worst_30d_cash),
-            "worst_30d_card": usd(s.worst_30d_card),
+            "grew_by": usd(totals.grew_by),
         },
     }
 

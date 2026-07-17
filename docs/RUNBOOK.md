@@ -113,20 +113,39 @@ goes to 0.0%** — the one it is most dangerous for today. Nothing changed but t
 ```bash
 export RESFI_API_KEY=dev-key
 export ANTHROPIC_API_KEY=sk-dummy      # required at startup; a dummy is fine unless you use the assistant
+export DATABASE_URL="postgresql+psycopg://postgres@127.0.0.1:55432/cfo_ai"
 python3 -m uvicorn backend.main:app --reload --port 8000
 ```
 
 `ANTHROPIC_API_KEY` is **not optional** — `backend/main.py`'s lifespan builds the assistant client
 and the app refuses to boot without it. A dummy value works for every endpoint except
-`/assistant/message` and `/decisions/{day}/explain`, which actually call Anthropic.
+`/assistant/message` and the `explain` route, which actually call Anthropic.
+
+**`DATABASE_URL` is not optional either, and the households have to be seeded.** Since tickets
+`0024` and `0031` every route reads Postgres — the committed artifact is a test fixture and nothing
+serves it. The app refuses to start on an unreachable or unmigrated database, and *also* on a role
+that bypasses RLS (Neon's default role does; so does a local superuser that owns the tables). See
+[`runbooks/local-development.md`](./runbooks/local-development.md) for standing one up, then:
+
+```bash
+python3 -m alembic upgrade head
+python3 -c "from backend.db.session import make_engine; from backend.seed import seed_all; print(seed_all(make_engine()))"
+```
 
 Check it:
 
 ```bash
-curl -s localhost:8000/health                                    # {"status":"ok"}
-curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/decisions # 401 — auth is on
-curl -s -H "X-API-Key: dev-key" localhost:8000/decisions | python3 -m json.tool | head -20
-curl -s -H "X-API-Key: dev-key" localhost:8000/spend | python3 -m json.tool
+H=hh_demo_biweekly
+curl -s localhost:8000/health                                          # {"status":"ok"}
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8000/households      # 401 — auth is on
+curl -s -H "X-API-Key: dev-key" localhost:8000/households | python3 -m json.tool
+curl -s -H "X-API-Key: dev-key" "localhost:8000/households/$H/decisions" | python3 -m json.tool | head -20
+curl -s -H "X-API-Key: dev-key" "localhost:8000/households/$H/spend" | python3 -m json.tool
+
+# The portfolio household — three cards, each with its own panel. This is what ticket 0031
+# fixed: the old `GET /spend` reported one arbitrary card as "your card", for one household.
+curl -s -H "X-API-Key: dev-key" localhost:8000/households/hh_semimonthly_portfolio/spend \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['totals']); [print(c['card_id'], c['this_cycle']['held_back']) for c in d['cards']]"
 ```
 
 ### Mobile

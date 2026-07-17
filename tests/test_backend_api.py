@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -74,33 +75,38 @@ def auth() -> dict[str, str]:
     return {API_KEY_HEADER: KEY}
 
 
+@pytest.fixture(scope="session")
+def spend_oracle() -> dict:
+    """The demo's `/spend` response as served before ticket `0031`. See the fixture's own comment.
+
+    Captured from the schema-4 artifact **before** the change, never regenerated from the new
+    code's output — the distinction `0019` exists to make.
+    """
+    return json.loads((Path(__file__).parent / "fixtures" / "spend_v4_oracle.json").read_text())
+
+
 class TestStartup:
-    def test_a_malformed_artifact_stops_the_service_coming_up(
+    def test_a_broken_artifact_does_not_stop_the_service_coming_up(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
-        """Fail at startup, not per-request.
+        """The inverse of the two tests this replaces, and ticket `0031` is why.
 
-        A service that comes up holding bad data and answers with wrong numbers looks
-        perfectly healthy to Cloud Run. One that never comes up does not.
+        They asserted that a missing or malformed `decisions.json` stopped the service starting —
+        true, and load-bearing, for as long as the file *was* the persistence layer. `/spend` was
+        the last route reading it, and now the service never opens it: pointing `DEFAULT_PATH` at
+        a file that does not exist must be something it does not notice.
+
+        Proved by taking it away, the same way `TestTheFileIsNoLongerTheSource` proves the feed.
+        The startup contract itself has not weakened — the tests below still assert that a missing
+        key, an unreachable database, an unmigrated one, and a role that bypasses RLS each stop the
+        process. What changed is that the file is not one of the things the service needs.
         """
-        broken = tmp_path / "decisions.json"
-        broken.write_text(json.dumps({"version": 1, "days": []}))
-        monkeypatch.setattr(art, "DEFAULT_PATH", broken)
-
-        from backend.main import app
-
-        with pytest.raises(art.ArtifactError), TestClient(app):
-            pass  # pragma: no cover — the context manager raises on entry
-
-    def test_a_missing_artifact_stops_the_service_coming_up(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path
-    ) -> None:
         monkeypatch.setattr(art, "DEFAULT_PATH", tmp_path / "nope.json")
 
         from backend.main import app
 
-        with pytest.raises(art.ArtifactError, match="cannot read artifact"), TestClient(app):
-            pass  # pragma: no cover
+        with TestClient(app) as c:
+            assert c.get("/health").status_code == 200
 
     def test_a_missing_api_key_stops_the_service_coming_up(
         self, monkeypatch: pytest.MonkeyPatch
@@ -436,7 +442,10 @@ class TestAssistantEndpoint:
 
 
 class TestSpend:
-    """`GET /spend` — comprehension, not a decision.
+    """`GET /households/{id}/spend` — comprehension, not a decision. Ticket `0031`.
+
+    Was `GET /spend`: one route, one household, one card, served off the committed file. Every
+    claim below survived the move; they are simply made per card now.
 
     Nothing served here feeds the engine. The rolling series is the exact structure that will
     eventually replace `daily_discretionary_high` in the forecast, rendered a release *before* it
@@ -444,56 +453,78 @@ class TestSpend:
     """
 
     def test_it_requires_an_api_key(self, client: TestClient) -> None:
-        assert client.get("/spend").status_code == 401
+        assert client.get(f"/households/{DEMO}/spend").status_code == 401
+
+    def test_the_old_unscoped_route_is_gone(self, client: TestClient, auth: dict[str, str]) -> None:
+        """`GET /spend` served whichever household the file happened to hold, to any caller.
+
+        It is not redirected or aliased: a route that still answers is a route the mobile client
+        can still be pointed at, and this one could only ever answer for one household.
+        """
+        assert client.get("/spend", headers=auth).status_code == 404
 
     def test_the_two_obligations_are_reported_separately(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
         """They fall due a **month apart**. A single "what you owe" figure hides exactly the
-        thing the user needs to see: what is committed, and what is quietly forming behind it."""
-        body = client.get("/spend", headers=auth).json()
-        cycle = body["this_cycle"]
+        thing the user needs to see: what is committed, and what is quietly forming behind it.
 
-        assert cycle["statement"]["reserved"] is True
-        assert cycle["unbilled"]["reserved"] is False
-        # The unbilled statement comes due strictly later — that is what makes it unbilled.
-        assert cycle["unbilled"]["due"] > cycle["statement"]["due"]
+        Per card, and there is deliberately no `totals.due`: three cards do not close together, so
+        a single due date would be a fiction. The totals are sums of money only.
+        """
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+
+        assert body["cards"], "a household with no cards has nothing to decide"
+        for card in body["cards"]:
+            cycle = card["this_cycle"]
+            assert cycle["statement"]["reserved"] is True
+            assert cycle["unbilled"]["reserved"] is False
+            # The unbilled statement comes due strictly later — that is what makes it unbilled.
+            assert cycle["unbilled"]["due"] > cycle["statement"]["due"]
+
+        assert "due" not in body["totals"]
 
     def test_the_reserve_is_shown_so_it_does_not_look_arbitrary(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
         """ "We're holding back $X of your cash for this." The line that ties the dashboard to
         the engine."""
-        body = client.get("/spend", headers=auth).json()
-        assert body["this_cycle"]["held_back"] is not None
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+
+        assert body["totals"]["held_back"] is not None
+        for card in body["cards"]:
+            assert card["this_cycle"]["held_back"] is not None
 
     def test_every_money_field_crosses_the_wire_as_a_string(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
         """A float here is a rounding bug with a long fuse. The convention is repo-wide."""
-        body = client.get("/spend", headers=auth).json()
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
 
         money_fields = [
-            body["this_cycle"]["statement"]["amount"],
-            body["this_cycle"]["unbilled"]["amount"],
-            body["this_cycle"]["held_back"],
-            body["last_cycle"]["charged"],
-            body["last_cycle"]["paid"],
-            body["last_cycle"]["grew_by"],
+            *body["totals"].values(),
             body["normal"]["worst_30d_cash"],
             body["normal"]["worst_30d_card"],
             *body["normal"]["rolling_30d_cash"],
             *body["normal"]["rolling_30d_card"],
         ]
+        for card in body["cards"]:
+            money_fields += [
+                card["this_cycle"]["statement"]["amount"],
+                card["this_cycle"]["unbilled"]["amount"],
+                card["this_cycle"]["held_back"],
+                card["last_cycle"]["charged"],
+                card["last_cycle"]["paid"],
+                card["last_cycle"]["grew_by"],
+            ]
+
         for value in money_fields:
             assert isinstance(value, str), f"{value!r} crossed the wire as a number"
 
     def test_the_worst_window_is_the_worst_of_the_series(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
-        from decimal import Decimal
-
-        body = client.get("/spend", headers=auth).json()
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
         series = [Decimal(v) for v in body["normal"]["rolling_30d_cash"]]
 
         assert series, "a 90-day window has overlapping 30-day totals"
@@ -504,12 +535,141 @@ class TestSpend:
     ) -> None:
         """If charges outran payments the sweep is not the answer, and `grew_by` is how the
         product knows to say so instead of staying quiet about it."""
-        from decimal import Decimal
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
 
-        body = client.get("/spend", headers=auth).json()
-        last = body["last_cycle"]
+        for card in body["cards"]:
+            last = card["last_cycle"]
+            assert Decimal(last["grew_by"]) == Decimal(last["charged"]) - Decimal(last["paid"])
 
-        assert Decimal(last["grew_by"]) == Decimal(last["charged"]) - Decimal(last["paid"])
+    def test_it_names_every_card_not_the_first_one(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """`0031`'s second problem, at the boundary. `0027` fixed this in the walk and `0030` in
+        the artifact; this route was its last home, and archetype B is where it showed.
+
+        The card ids are checked against the feed's rather than against a hardcoded list, so the
+        two surfaces cannot disagree about what this household holds.
+        """
+        household = household_id_for("semimonthly_portfolio")
+
+        spend = client.get(f"/households/{household}/spend", headers=auth).json()
+        feed = client.get(f"/households/{household}/decisions", headers=auth).json()
+
+        served = {d["debt_id"] for d in feed["decisions"][0]["debts"]}
+
+        assert len(served) == 3, "the archetype that made cards[0] a lie"
+        assert {c["card_id"] for c in spend["cards"]} == served
+
+    def test_the_per_card_reserve_sums_to_the_portfolio_reserve(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """The claim that makes the per-card shape honest rather than decorative.
+
+        `untouchable()` sums `obligation_in_horizon` over the cards, so each card's `held_back` is
+        a real term of that sum and the total is the number the engine actually withheld — an
+        attribution, not an allocation. If these ever disagree, the dashboard is explaining a
+        reserve nobody took.
+        """
+        for name in ("demo_biweekly", "semimonthly_portfolio", "monthly_thin"):
+            body = client.get(f"/households/{household_id_for(name)}/spend", headers=auth).json()
+
+            parts = sum(Decimal(c["this_cycle"]["held_back"]) for c in body["cards"])
+
+            assert parts == Decimal(body["totals"]["held_back"]), name
+
+    def test_the_totals_are_sums_of_their_cards(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        body = client.get(
+            f"/households/{household_id_for('semimonthly_portfolio')}/spend", headers=auth
+        ).json()
+
+        statement = sum(Decimal(c["this_cycle"]["statement"]["amount"]) for c in body["cards"])
+        unbilled = sum(Decimal(c["this_cycle"]["unbilled"]["amount"]) for c in body["cards"])
+
+        assert statement == Decimal(body["totals"]["statement"])
+        assert unbilled == Decimal(body["totals"]["unbilled"])
+
+    def test_a_household_is_not_served_another_households_spend(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """`/spend` goes through `0021`'s repository like every other route now. The IDOR suite
+        proves the layer; this proves this route is actually standing on it."""
+        demo = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+        other = client.get(
+            f"/households/{household_id_for('semimonthly_portfolio')}/spend", headers=auth
+        ).json()
+
+        assert {c["card_id"] for c in demo["cards"]} == {"card_demo"}
+        assert "card_demo" not in {c["card_id"] for c in other["cards"]}
+
+    def test_an_unknown_household_is_a_404(self, client: TestClient, auth: dict[str, str]) -> None:
+        response = client.get("/households/hh_not_a_household/spend", headers=auth)
+
+        assert response.status_code == 404
+        assert response.json()["error"] == "no_household"
+
+
+class TestTheDemoSpendSurfaceDidNotMove:
+    """`0031`'s oracle AC: the demo household's `/spend` response is unchanged, modulo the route.
+
+    Archetype A is the oracle here for the fourth time — `0019` proved the walk did not drift,
+    `0023` that the seeder wrote what the walk decided, `0024` that the read path serves what the
+    seeder wrote, and this proves the spend surface survived being rebuilt from an entirely
+    different source.
+
+    **The fixture was captured before the change, not regenerated after it.** That is the whole
+    point, and it is `0019`'s rule: a fixture written from the new code's own output proves the new
+    code equals itself. The values come out of the schema-4 artifact's `spend` block, which is
+    exactly what the old route serialized.
+
+    The demo holds one card, so the old flat response maps onto the new per-card one exactly: one
+    entry in `cards`, and the totals equal that card's figures.
+    """
+
+    def test_the_obligations_are_the_same_numbers(
+        self, client: TestClient, auth: dict[str, str], spend_oracle: dict
+    ) -> None:
+        """Statement, unbilled, both due dates, and the reserve. Rebuilt from the stored
+        `Snapshot` rather than read off the file, and identical to the cent."""
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+
+        assert body["as_of"] == spend_oracle["as_of"]
+        assert len(body["cards"]) == 1, "archetype A has always had exactly one card"
+
+        card = body["cards"][0]
+        assert card["card_id"] == spend_oracle["card_id"]
+        assert card["this_cycle"] == spend_oracle["this_cycle"]
+
+    def test_the_reserve_is_the_same_number(
+        self, client: TestClient, auth: dict[str, str], spend_oracle: dict
+    ) -> None:
+        """`held_back` used to come from `untouchable(snapshot)[1]` at build time and now comes
+        from `obligation_in_horizon` per card at request time. Same arithmetic, same terms, and
+        this is the assertion that says so."""
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+        expected = spend_oracle["this_cycle"]["held_back"]
+
+        assert Decimal(body["totals"]["held_back"]) == Decimal(expected)
+        assert body["cards"][0]["this_cycle"]["held_back"] == expected
+
+    def test_last_cycle_is_the_same_numbers(
+        self, client: TestClient, auth: dict[str, str], spend_oracle: dict
+    ) -> None:
+        """The projection half. It travels through `encode_tree` into JSONB and back, and the
+        cents must survive that round trip — which is the one thing a JSONB payload can quietly
+        get wrong."""
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+
+        assert body["cards"][0]["last_cycle"] == spend_oracle["last_cycle"]
+
+    def test_the_strip_chart_is_the_same_series(
+        self, client: TestClient, auth: dict[str, str], spend_oracle: dict
+    ) -> None:
+        """All 121 overlapping windows, in order, to the cent."""
+        body = client.get(f"/households/{DEMO}/spend", headers=auth).json()
+
+        assert body["normal"] == spend_oracle["normal"]
 
 
 class TestTheHouseholdList:
@@ -674,41 +834,49 @@ class TestScoping:
 
 
 class TestTheFileIsNoLongerTheSource:
-    """`0024`'s point: the households come from Postgres.
+    """`0024`'s point, and `0031` is where it becomes true without an asterisk.
 
-    The AC as written was "a test asserts `main.py` does not read `decisions.json` at runtime",
-    and it is **narrowed on purpose**: `/spend` still does, because its figures come from the whole
-    transaction `History` and there is no `transactions` table to rebuild them from until ingest
-    lands. That is ticket `0031`, and it is the whole of what is left. Narrowing it here rather
-    than deleting it keeps the claim honest and keeps the day it becomes true visible.
+    This class carried an exception — `test_spend_is_the_one_that_still_does_and_says_so`, which
+    existed to fail on the day `/spend` stopped reading the file. That day is this ticket, so it is
+    **deleted rather than updated**, which is what `0031` asked for and what makes a sentinel test
+    worth writing: it was never meant to be maintained, only to refuse to be forgotten.
+
+    The AC as originally written was "a test asserts `main.py` does not read `decisions.json` at
+    runtime". It is no longer narrowed.
     """
 
-    def test_the_feed_does_not_touch_the_artifact(
-        self, client: TestClient, auth: dict[str, str]
+    def test_the_service_holds_no_artifact_at_all(self, client: TestClient) -> None:
+        """`app.state.artifact` is **absent**, not `None`. `0031`'s AC in one line.
+
+        The distinction matters: a `None` left in place is a field the next route can be written
+        against, and `art.load()` is one line away from coming back. There is nothing to reach for.
+        """
+        assert not hasattr(client.app.state, "artifact")
+
+    def test_no_route_reads_the_file(
+        self, client: TestClient, auth: dict[str, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Proved by taking it away. A feed that still read the file would raise here; one that
-        reads Postgres does not notice."""
-        client.app.state.artifact = None
+        """Every route, with reading the artifact made fatal.
 
-        response = client.get(f"/households/{DEMO}/decisions", headers=auth)
+        Proved by sabotage rather than by inspection: `art.load` raises, and `DEFAULT_PATH` points
+        at nothing. A route that still touched the file fails here; the ones that read Postgres do
+        not notice. `TestStartup` covers the other half — the lifespan has already run by the time
+        this fixture hands over a client, so that one has to sabotage the path before startup.
+        """
 
-        assert response.status_code == 200
-        assert len(response.json()["decisions"]) == 90
+        def explode(*args: object, **kwargs: object) -> None:
+            raise AssertionError("a route read backend/data/decisions.json")
 
-    def test_neither_does_the_explanation(self, client: TestClient, auth: dict[str, str]) -> None:
-        client.app.state.artifact = None
+        monkeypatch.setattr(art, "load", explode)
+        monkeypatch.setattr(art, "DEFAULT_PATH", Path("/nowhere/decisions.json"))
 
-        response = client.get(f"/households/{DEMO}/decisions/2026-03-02/explain", headers=auth)
+        feed = client.get(f"/households/{DEMO}/decisions", headers=auth)
+        explain = client.get(f"/households/{DEMO}/decisions/2026-03-02/explain", headers=auth)
+        spend = client.get(f"/households/{DEMO}/spend", headers=auth)
 
-        assert response.status_code == 200
-        assert response.json()["narration"]
-
-    def test_spend_is_the_one_that_still_does_and_says_so(
-        self, client: TestClient, auth: dict[str, str]
-    ) -> None:
-        """Not an oversight — ticket 0031. This test exists so the exception cannot quietly
-        become permanent: it fails the day `/spend` moves, which is the day to delete it."""
-        client.app.state.artifact = None
-
-        with pytest.raises(AttributeError):
-            client.get("/spend", headers=auth)
+        assert feed.status_code == 200
+        assert len(feed.json()["decisions"]) == 90
+        assert explain.status_code == 200
+        assert explain.json()["narration"]
+        assert spend.status_code == 200
+        assert spend.json()["cards"], "the last route to move, and it moved"

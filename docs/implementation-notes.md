@@ -1584,3 +1584,213 @@ demo *is* the product surface.
 - **`ENGINE_VERSION = "0-unversioned"`.** `decisions.engine_version` is NOT NULL and
   `architecture.md` [3.3] rests weight on it, but nothing in `engine/` defines a version. The day
   `decide.py` changes without this moving, [3.3]'s backtest guarantee is a story.
+
+---
+
+## 2026-07-16 — Ticket `0031`, the spend surface per household
+
+### The ticket's first problem was a false choice, and the code said so
+
+`0031` framed it as: store the derived surface as a projection, or wait for the `transactions`
+table ingest has not built — noting the second "is architecturally cleaner and blocks the
+switcher's Spending tab for three of four households in the meantime."
+
+**The surface splits**, and the line falls exactly where the system of record already ends:
+
+| | source | needs ingest? |
+|---|---|---|
+| statement, unbilled, `held_back` | the stored `Snapshot` | **no** |
+| charged/paid last cycle, the rolling 30-day series | the transaction `History` | **yes** |
+
+`untouchable()` is a pure function of the `Snapshot`, and `0022` has been storing the whole frozen
+snapshot since it landed. So the *entire* "this cycle" panel — for every household, per card — was
+already derivable from rows, on every request, with no projection at all. Only the History-derived
+half needed a decision.
+
+So: **the obligations are derived live and never stored twice; only the projection is stored**, in
+`spend_projections`, which ingest deletes. Storing the obligations too would have duplicated what
+`snapshots.payload` already holds and let the two disagree about what the engine saw — the argument
+`readpath.py` already makes against denormalizing display fields onto `decisions`, and what [4.1] is
+a whole section about. The trade the ticket asked to be made deliberately got smaller rather than
+harder.
+
+### `held_back` is per card, and it is exact — the "shape question" answers itself
+
+`0031` calls the reserve "a portfolio-level fact, because `untouchable()` reserves against every
+card at once", and says deciding per-card-vs-aggregate is most of the ticket. But:
+
+    reserved = sum(obligation_in_horizon(card, horizon_end) for card in portfolio.cards)
+
+A sum **decomposes into its terms**. Each card's `held_back` is its own `obligation_in_horizon` —
+an attribution, not an allocation, and not a guess. So the response is per card *and* carries a
+portfolio total, both true, and `test_the_per_card_reserve_sums_to_the_portfolio_reserve` pins them
+together across all three portfolio archetypes. There is deliberately **no `totals.due`**: cards do
+not close together, so a single due date would be a fiction — which is the month-apart argument
+getting stronger with three cards, exactly as the ticket predicted.
+
+### The near-miss worth writing down
+
+`cards.observed_monthly_charges` / `observed_monthly_payment` are already columns, and look like
+they would spare us the projection entirely. **They are a different number wearing the right
+label**: trailing engine inputs averaged over a window, against `charged_last_cycle`'s exact
+`[close, close]` cycle. Serving them would have been wrong and would never have shown a symptom —
+the shape of every defect this ticket set has found. Recorded in `backend/spend.py`.
+
+### Decisions
+
+- **`Artifact.spend` removed; schema 4 → 5.** Nothing served it once `/spend` moved, and keeping it
+  would have kept its `cards[0]` derivation alive in a field nobody read. The file is the golden
+  fixture for the *decisions* (ADR-0004 [3] already said so).
+- **The evidence procedure, again (`0019`/`0030`).** The decisions were hashed **before** the schema
+  moved (`sha256 987ddbce…`) and the v5 file checked against it: **90/90 days identical field for
+  field**, summary and window unchanged, `spend` the only key removed. The in-repo byte-identical
+  test cannot prove this — regenerating moves both sides of it.
+- **The demo's `/spend` response is pinned by a fixture captured before the change**
+  (`tests/fixtures/spend_v4_oracle.json`), not regenerated after it. All four assertions pass:
+  obligations, the reserve, last cycle, and all 121 rolling windows — rebuilt from an entirely
+  different source, identical to the cent.
+- **`last_cycle` is nullable, not zeroed.** "No transactions for this card" and "nothing was
+  charged" are different claims, and only one is safe to print next to "your card grew by $0.00".
+- **`NoSpendProjection` is its own 404, distinct from `no_household`.** A household with decisions
+  and no projection is a *seeding* fault; reporting it as "no such household" would send whoever
+  debugs it looking for rows that are right there.
+- **`spend_projections` is JSONB, unlike every other table.** One shape, one consumer, and
+  temporary. Designing typed columns for data whose purpose is to be deleted by the next feature is
+  work thrown away with it. `snapshots` sets the precedent.
+- **`assemble()` refuses a projection whose `as_of` disagrees with the snapshot** rather than
+  rendering this month's statement beside last month's spending unlabelled.
+
+### Caught before it shipped — a migration that was not a migration
+
+**`alembic/versions/0001` imported `HOUSEHOLD_SCOPED` from live application code and iterated it.**
+Adding `spend_projections` to that constant retroactively changed what revision 0001 *does*: a
+fresh `alembic upgrade head` would run `GRANT ... ON spend_projections` at 0001, three revisions
+before the table exists.
+
+Verified by mutation, not by reading: with the import restored, a fresh database dies at 0001 with
+`relation "spend_projections" does not exist`; with the list frozen to a literal, it reaches 0004.
+Every already-migrated database would have stayed green — including CI, which never migrates from
+zero against a used database.
+
+It is the same shape as everything else this plan has turned up: **a mechanism that was built,
+tested, and never actually exercised.** `HOUSEHOLD_SCOPED` had never changed since 0001 was written.
+The fix is one literal and a comment; the rule is that a migration states what *it* did, and the
+application constant states what must be scoped *now* (which is what `test_schema.py` and
+`test_idor.py` parametrize over — and they now cover the new table).
+
+### Open
+
+- **`0029`** — the income bucket. Untouched, and still sequenced behind the forecast.
+- **`ENGINE_VERSION = "0-unversioned"`.** Unchanged by this ticket and still true.
+- **Ingest deletes `spend_projections`.** When the `transactions` table lands, the projection, its
+  table, its migration's `downgrade`, and `_assert_migrated`'s mention of it all go — and
+  `derive_spend_projection` becomes a query. That is the whole of the debt this ticket took on.
+
+
+## 2026-07-16 — `0031` rebased: `main` had already answered it, the other way
+
+**A parallel session shipped `0031` while this one was building it** (PR #50, merged as `cbe6513`),
+with the opposite resolution — `status: blocked`, *"waits for the `transactions` table, and does not
+fake one"*. This branch was rebased onto it and reopens the ticket. `0031` carries the argument; the
+notes worth keeping are about how it was found and what it cost.
+
+### The memory was right and I overrode it
+
+Auto-memory said *"`0019` spawned `0032`"* and *"the read path was the first thing to import
+SQLAlchemy into `main.py` and revealed the deploy manifest never listed it."* Neither was at `main`,
+so I concluded the note had drifted and **edited it to say so**. It had not drifted — it was
+describing #50, which had not merged yet. The note has been restored with a warning: **a memory that
+disagrees with `main` may be describing a branch, not an error.** `git fetch` before starting a
+ticket here; work runs in parallel sessions.
+
+The cost was a full ticket of duplicated effort, including independently rediscovering the deploy
+manifest defect that the memory had already recorded.
+
+### What was taken from #50 rather than kept
+
+- **`backend/requirements.txt` and `tests/test_requirements.py`** — theirs, whole. Their test walks
+  the imports from the AST and checks both directions (declared-and-never-imported flagged `uvicorn`
+  and `psycopg`, both kept with reasons). Strictly better than the CI job this branch had written,
+  which was deleted.
+- **And it corrected a mistake here.** This branch's manifest fix added `alembic`, justified by "the
+  deploy migrates from the image". Its own runbook migrates from a *developer's machine*. #50's list
+  — no alembic — is right.
+- **No `transactions` table.** #50's sharpest argument, and untouched: `sim`'s `Txn` has none of
+  [4]'s `pending_transaction_id` / `reconciled_with` / `internal_transfer_pair`, and a table with
+  the designed name and none of the hard parts leaves ingest reconciling with a fake.
+
+### The one thing a silent auto-merge nearly shipped
+
+`git` merged #50's multi-card `raise` guard **into the body of `derive_spend_projection`** — the
+function written to serve portfolios — with no conflict marker, because it landed in a region this
+branch had not textually touched. It would have rejected every household with more than one card:
+three of the four archetypes, i.e. the entire point of the ticket. Caught by reading the merged
+function rather than by trusting the conflict list, and the tests would have caught it after.
+
+Worth remembering that `git merge-tree`'s old two-arg form reported **0 conflicts** for this rebase.
+The `--write-tree` form reported five. The first number was the one I checked first.
+
+## 2026-07-16 — Ticket `0033`, the deploy prep (was `0032`, renumbered)
+
+Renumbered: #50 filed a different `0032` (`generate()` is not prefix-stable) first.
+
+### The prevention check: #50's, not this branch's
+
+This branch wrote a CI `deployable` job — install `backend/requirements.txt` alone into a clean
+venv, `python -c "import backend.main"` — mutation-tested both ways before it was written. **It was
+deleted on the rebase.** #50's `tests/test_requirements.py` does the job better: it walks the
+imports from the AST rather than a hand-kept list, checks both directions, and names `uvicorn` and
+`psycopg` in `NOT_IMPORTED` with reasons so a future cleanup cannot delete the process that runs the
+app or the driver that reaches the database.
+
+One claim the deleted job made that the AST test does not: it *installed* the manifest, so it would
+also catch an unsatisfiable pin or a missing transitive dependency. Neither is worth a second CI job
+today; noted on `0033` as a follow-up if a third instance of this class shows up.
+
+**The stronger fix, considered and declined twice** — collapsing to one list (`requirements.txt` →
+`.[api]`) removes the class rather than detecting it. It changes how Cloud Run's buildpack installs
+the app, and that is untestable anywhere but a real deploy: it would mean changing the install
+semantics of the one thing already known to be broken and finding out at the worst moment. Worth
+doing once a deploy has succeeded and there is a known-good baseline.
+
+### The deploy: prepped to the edge of live infrastructure, and stopped there
+
+`docs/runbooks/deploy.md` is written — `0009`'s owed graduation of `DEPLOY.local.md` (§12 asked for
+it; the file has been "run and live" since 2026-07-14 and never graduated) **plus** `0026`'s
+database steps. Placeholders only, no secrets.
+
+**Nothing live was touched**: no gcloud auth, no secret created, no Neon write, no deploy. So
+`last-verified: never`, and the runbook says in its own header that steps `[2]`–`[5]` are written
+from the code rather than from a run. A runbook nobody has executed is a hypothesis, and labelling
+it as one is the difference between a runbook and a wish.
+
+Decided while writing it: **migrations run by hand, before the deploy, not in the entrypoint.** An
+entrypoint that migrates has every cold start racing for a schema lock on a service that scales, and
+`--max-instances=1` is a policy rather than a guarantee. The manual step is safe *because*
+`_assert_migrated()` is startup-fatal: a forgotten migration is a failed deploy rather than a
+service answering 500s. Recorded on `0026`'s AC.
+
+### What the live service actually is — I had this wrong
+
+`0031`'s notes said "`main` is not deployable" and let that imply urgency. Checked against the live
+service's own OpenAPI schema rather than inferred:
+
+```
+/decisions   /decisions/{day}/explain   /spend   /assistant/message
+```
+
+No `/households`. The demo is **up**, serving the pre-`0024` build — one household, from the JSON
+file, with the `cards[0]` `/spend` bug still in it. It predates the `/health` rename, so Cloud Run's
+probe has never had a route to hit, which `DEPLOY.local.md` §11 already said.
+
+So the accurate claim is narrower and worse in a different way: not an outage, but **nothing from
+`0019`–`0031` is visible to anyone looking at the deployed product**, and `USERS.md` says the
+deployed demo *is* the product surface. The next deploy is what fails, and it is not a redeploy —
+`/assistant/message` is the only route the two builds share.
+
+Two things nobody had noticed and neither ticket listed:
+
+- **Neon has never been seeded.** `0026`'s AC says "the deployed demo serves the four archetypes";
+  the database was provisioned and migrated at `0020` and no household was ever written to it.
+- **Neon predates migration `0004`.** `spend_projections` takes the scoped-table count from five to
+  six, so the deployed code refuses to start against it until `deploy.md` `[2]` runs.
