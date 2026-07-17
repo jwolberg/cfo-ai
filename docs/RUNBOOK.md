@@ -1,43 +1,62 @@
-# RUNBOOK — reviewing PR #31 (`0018` / U9, spend-model calibration)
+# RUNBOOK — the calibration measurement (`0018` / U9)
 
-How to run this locally, what to look at, and — importantly — **what not to expect to see.**
+How to run the measurement that decided the engine's spend model, what to look at, and —
+importantly — **what not to expect to see.**
 
 > ## Read this first
 >
-> **This PR has almost no UI surface.** The spend model it builds is shipped **inert**: the dial is
+> **This has almost no UI surface.** The spend model `0018` built is shipped **inert**: the dial is
 > off, `forecast.py` still uses the old model, and **not one household decision changes.** If you
-> open the app looking for the feature, you will not find it, and that is the PR working as
+> open the app looking for the feature, you will not find it, and that is the work behaving as
 > intended.
 >
 > The deliverable is a **measurement** — the thing that decided *not* to ship the model. The most
-> important "page" to review is a terminal output (`python3 -m backend.calibrate`) and a learning
-> doc, not a screen.
+> important "page" here is a terminal output (`python -m backend.calibrate`) and a learning doc,
+> not a screen.
+
+> **Written to review PR #31, which merged on 2026-07-14.** Kept because the measurement outlived
+> the review: **2.3% breach / 0 sweep-caused overdrafts / $544,640.58** is cited by `prd.md`,
+> `strategy.md`, and `decision-engine.md`, and this file is the only walkthrough of where those
+> numbers come from. The review-specific framing below is historical; the procedure is current.
 
 ---
 
 ## 0. Setup (once)
 
+Setup now lives in [`runbooks/local-development.md`](./runbooks/local-development.md) — **use the
+venv**, and note the database suites need a real Postgres:
+
 ```bash
 cd ~/workspace/cfo-ai
-git fetch origin && git checkout feat/spend-model-calibration
-
-python3 -m pip install -e ".[dev]"     # pytest, ruff, httpx + the API extras (fastapi, uvicorn)
+python3 -m venv .venv                  # if it does not exist
+.venv/bin/pip install -e ".[dev]"      # pytest, ruff, httpx + the API extras (fastapi, uvicorn)
 ```
 
 `engine/` and `sim/` have **zero dependencies** on purpose. Everything installed above is for the
 web shell and the test tools.
+
+> The original said `git checkout feat/spend-model-calibration` and `python3 -m pip install`. That
+> branch merged, and system `pip` is now wrong — see `local-development.md` for why the venv is not
+> optional. This is `main`.
 
 ---
 
 ## 1. The 60-second check
 
 ```bash
-python3 -m pytest tests/ -q            # 367 passed, ~12s
-python3 -m ruff check backend/ engine/ tests/
-python3 -m ruff format --check backend/ tests/
+.venv/bin/python -m pytest tests/            # 393 passed, 139 skipped, ~48s — no database
+.venv/bin/python -m ruff check backend/ engine/ tests/
+.venv/bin/python -m ruff format --check backend/ tests/
 ```
 
-**Expected:** 367 passed, "All checks passed!", "21 files already formatted".
+**Expected:** 393 passed / 139 skipped, "All checks passed!", "39 files already formatted".
+Measured 2026-07-17.
+
+> **The 139 skips are the database suites**, and they are why this is a 60-second check rather than
+> a real one. With `TEST_DATABASE_URL` set (see
+> [`runbooks/local-development.md`](./runbooks/local-development.md)) it is **531 passed, 1
+> skipped**. This block used to say `python3 -m pytest` and "367 passed" — system Python silently
+> skips every database test, and 367 predates `0020`.
 
 `mypy` reports **12 pre-existing errors in `engine/decide.py`** (`Card | None` union-attr). They are
 on `main` too — confirm with `git stash && python3 -m mypy backend/replay.py`. Nothing in this PR's

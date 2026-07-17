@@ -1,22 +1,17 @@
 ---
 title: Deploy the API to Cloud Run, with the database
-last-verified: never — see [0]
+last-verified: 2026-07-16
 anchor: RB-deploy
 ---
 
 # Deploy the API to Cloud Run, with the database
 
 Tickets `0009` (the Cloud Run path — run and live since 2026-07-14) and `0026` (the database in
-that path — **not yet run**). This is the graduation `DEPLOY.local.md` §12 has been owing since
+that path — run 2026-07-16). This is the graduation `DEPLOY.local.md` §12 has been owing since
 `0009`: the shareable procedure, with the infrastructure values stripped.
 
 **No secrets in this file, or in any file in this repo.** Real values live in `DEPLOY.local.md`
 (gitignored) and in Secret Manager. Every `<placeholder>` below is filled from there.
-
-**The database half of this has never been executed.** Steps `[2]`–`[5]` are written from the
-code and from [`neon-provisioning.md`](./neon-provisioning.md), not from a run — which is why
-`last-verified` says `never`. Bump it, and delete this paragraph, the first time it goes through
-end to end.
 
 ---
 
@@ -26,22 +21,29 @@ Read this or the rest will confuse you.
 
 | | |
 |---|---|
-| **Live revision** | serves the **pre-`0024` build** — one household, from the committed JSON file |
-| **Its routes** | `/decisions`, `/decisions/{day}/explain`, `/spend`, `/assistant/message` |
-| **`main`'s routes** | `/health`, `/households`, `/households/{id}/decisions`, `/households/{id}/spend`, `/assistant/message` |
-| **Overlap** | `/assistant/message`, and nothing else |
+| **Live revision** | `resfi-api-00003-viv` — `main`'s build, reading from Postgres |
+| **Its routes** | `/health`, `/households`, `/households/{id}/decisions`, `/households/{id}/spend`, `/assistant/message` |
+| **Database** | Neon at `0004 (head)`, four households × 90 days |
 
-So this is **not** a routine redeploy. Every client path changes, the service gains a hard
-dependency on Postgres, and the mobile client on `main` calls routes the live revision does not
-have. `/health` does not exist on the live revision either (`DEPLOY.local.md` §11) — this deploy is
-the first one where Cloud Run's probe has something to hit.
+**This is a routine redeploy now. It was not, once, and that is worth thirty seconds.** Until
+2026-07-16 the live revision was `00002-zop`: one household, read out of the committed JSON file,
+served over a flat `/decisions`. The deploy below replaced it wholesale — every client path
+changed, the service took on a hard dependency on Postgres, and `/health` answered for the first
+time in the repo's history. That migration is done. What follows is the procedure that did it, and
+re-running it against `main` today is the ordinary case.
 
 `main` could not deploy at all until PR #50: `backend/requirements.txt` carried no database driver
 while `backend/main.py` has imported SQLAlchemy since `0024`, so the container failed at import
 before the first request while 496 tests passed. That is fixed, and `tests/test_requirements.py`
 now walks the imports from the AST and asserts the manifest agrees, so it cannot rot again.
-**It has still never been built into an image** — that check runs on a GitHub runner, and "the
-manifest imports" and "a buildpack produces a container that starts" are different claims.
+`0033` proved the manifest imports on a GitHub runner; **the 2026-07-16 deploy proved the claim
+`0033` could not** — that a buildpack produces a container which *starts*. Starting at all means
+every lifespan gate passed against real Neon: `expected_key()`, `database_url()`,
+`assert_rls_binds()`, `_assert_migrated()`, `build_client()`.
+
+**Still unmeasured: the cold start.** `--min-instances=1` keeps one instance warm, which removes
+the question rather than answers it — `[6a]` is the measurement, and `0026` stays open until
+someone records the wall-clock. Do not infer it from the ~500ms brochure figure.
 
 ---
 
@@ -99,7 +101,8 @@ export DATABASE_URL='postgresql+psycopg://<owner>:<pw>@<direct-host>/<db>?sslmod
 > 2026-07-16, not a property of the migration: re-check it rather than inherit this conclusion.
 
 **Applied 2026-07-16.** Neon is now at `0004 (head)` and seeded (`[3]`); Postgres is 18.4. The
-remaining unproven step is the deploy itself.
+deploy itself (`[5]`) ran the same day — every step in this file has now been executed at least
+once.
 
 The owner *should* own the schema — that is the one thing Neon's `BYPASSRLS` default role is right
 for. It is a **migration credential and nothing else**; it never reaches the service.
@@ -275,7 +278,8 @@ gcloud run services logs read "$SERVICE" --project "$PROJECT_ID" --region "$REGI
 
 ## [6] Verify
 
-`/health` should answer for the first time ever — it does not exist on the pre-`0024` revision.
+`/health` should answer. It first did on 2026-07-16 — it did not exist on the pre-`0024` revision,
+so a `404` here means you are looking at a revision older than that deploy, not at a broken probe.
 
 ```bash
 SERVICE_URL=$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" \

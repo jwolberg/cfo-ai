@@ -1,3 +1,9 @@
+---
+title: Running the tests locally
+last-verified: 2026-07-17
+anchor: RB-local-development
+---
+
 # Running the tests locally
 
 Since ticket `0020` the suite needs two things it did not need before: a **virtualenv** and a
@@ -68,7 +74,19 @@ The suite migrates the test database itself (`tests/conftest.py`), so there is n
 `alembic upgrade` step. It runs **Alembic**, not `metadata.create_all()`, on purpose: `create_all`
 would silently skip the partitioning and the RLS policies, which are the entire subject.
 
-Expected: **448 passed, 1 skipped** with a database; **~375 passed, ~73 skipped** without.
+Expected: **531 passed, 1 skipped** with a database; **393 passed, 139 skipped** without. Measured
+2026-07-17 by running this file top to bottom — 532 collected either way, 87s with a database, 48s
+without.
+
+> **These numbers were wrong until 2026-07-17.** The line read *"448 passed, 1 skipped; ~375
+> passed, ~73 skipped without"* — counts from before the suite grew to 532. `619375e` corrected the
+> README against a real run (448 → 532) and left this file, which is the one that teaches people
+> what to expect. `docs/RUNBOOK.md` `[1]` still carries the same claim a generation older ("367
+> passed"), against a `python3 -m pytest` this file explains is the wrong invocation.
+>
+> **The skip count is the part worth reading.** Without `TEST_DATABASE_URL` you lose **139 tests**,
+> not the ~73 this line used to claim — the database suites have roughly doubled since. A green
+> `393 passed` with no database says almost nothing about `backend/db/`.
 
 ---
 
