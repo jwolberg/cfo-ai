@@ -1367,3 +1367,142 @@ ticket that found it. None had a symptom. All had a green test.
 - **`USER_ENTERED` has no entry path.** §6.3's "a real product needs a user-entered fallback" is
   still true and still unbuilt; the enum and column exist because provenance is the expensive half
   to retrofit.
+
+---
+
+## 2026-07-16 (later still) — `0023`: the archetypes found three defects and one finding
+
+The ticket the whole multi-tenant plan exists for. It spawned `0027` and `0028` before it could
+start; building it turned up three more things, none of them in the ticket.
+
+### The finding: the income gate is biweekly-shaped, and it is not §9.3
+
+`0023` was written to price `decision-engine.md` §9.3 — the fixed 7-day sweep spacing that is "a
+decent approximation of a biweekly household and a poor one for everyone else." **That is not what
+bites.** The income gate fires first, and §9.3 never gets to run.
+
+All four archetypes carry `payroll.variation = 0.02`. Their income is, by construction, exactly as
+regular as the demo household's. The engine measures:
+
+| archetype | true variation | measured `income_variation` | days over the 0.25 gate |
+|---|---|---|---|
+| A biweekly | 0.02 | 0.003–0.012 | 0/90 |
+| B semimonthly | 0.02 | 0.004–**0.326** | **33/90** |
+| C monthly | 0.02 | 0.007–**0.707** | **19/90** |
+| D biweekly | 0.02 | 0.003–0.012 | 0/90 |
+
+`precompute.INCOME_BUCKET_DAYS = 28` exists because bucketing a *biweekly* earner by calendar month
+scores the ~4-times-a-year three-paycheck month as a 24% swing and trips a 25% gate on a household
+whose income is perfectly regular. Its own comment says a 28-day bucket "is the honest measure of a
+biweekly earner's variability." **It is. It is the measure of nobody else's** — 28 days divides
+evenly into a biweekly calendar and into no other. A semimonthly earner (24/yr) lands 1 or 2
+paychecks in a bucket; a monthly earner (12/yr) lands 0 or 1.
+
+So the fix for the biweekly household is the bug for every other household, and it came within one
+percentage point (24% vs a 25% gate) of being visible in the very case it was written for.
+`prd.md` §2.2's variance gate is working correctly on a number that is wrong.
+
+**Not fixed here, and not a gate to loosen.** §9.3's spacing and `INCOME_BUCKET_DAYS` are the same
+defect wearing two hats — a biweekly-shaped constant applied to everyone — and both wait on the
+recurring-income detector §6.2 lists as assumed away. Loosening the gate to 0.75 would admit
+genuinely variable households, which is what §2.2 exists to refuse. Pinned in
+`tests/test_seed.py::TestTheIncomeGateIsBiweeklyShaped`.
+
+### What it costs, measured across 80 households (4 archetypes × 20 seeds)
+
+| archetype | graded | breach% | sweep-caused overdrafts | false-refusal cost |
+|---|---|---|---|---|
+| `demo_biweekly` | 1440 | 1.2% | 0 | $104,825.11 |
+| `semimonthly_portfolio` | 664 | **19.7%** | 0 | $83,391.00 |
+| `monthly_thin` | 1060 | **7.5%** | 0 | $324,465.76 |
+| `apr_unreported` | 1440 | 0.1% | 0 | $41,378.17 |
+| all | 4604 | 5.0% | **0** | $554,060.04 |
+
+**Read `graded` before `breach%`.** Every archetype is offered 1,800 days. A blocking refusal never
+ran a forecast and is not graded, so B is *unserved 63% of the time* and C 41%. Then, on the days
+they are served, the forecast is far worse: B's 19.7% breach is the same magnitude as the 19.8%
+that got the empirical spend model **refused** as unsafe to ship.
+
+**The guardrail holds everywhere: 0 sweep-caused overdrafts, all four archetypes.** This is a
+service-and-honesty problem, not a safety one — the buffer and the obligation reserve absorb a badly
+calibrated forecast, which is what they are for. Nothing here licenses touching a gate.
+
+`calibrate.measure(None)` is **unchanged at 4,320 days / 2.338% / 0 in 590 / $544,640.58**. The
+archetypes are a *second* population (`measure_archetypes()`), reported beside the dial sweep and
+never folded into it: the spend population measures one spend model across three shapes on one
+calendar; this measures one spend model across four calendars. Averaging them answers neither, and
+folding them would move a number quoted in three documents without anyone being able to say which
+part moved because the engine changed and which because the population did.
+
+### Three defects, all the same shape
+
+**1. `Repository.add_card()` never wrote `apr_source`, and the omission was silent.** The column
+carries `server_default 'reported'` (migration `0002`, so a live table could be backfilled without a
+rewrite), so an INSERT that omits it succeeds and records **a guess as a reported fact**. Proven:
+writing a 23% estimate through the repository stored `apr=0.23000, apr_source=reported`. That is
+`0028` — *act on the estimate, never bill for it* — defeated by a column nobody wrote, and it would
+have surfaced only once `0024`'s read path handed the row to `interest.py`, which would have priced
+it happily and put `prd.md` §5.1's KPI on an invention. `0021` built the method; `0028` added the
+column two PRs later; nothing wrote a card through the repository until the seeder, so nothing
+caught it. Naming the column in the statement makes it a required bind — omission is now an error at
+the boundary.
+
+**2. `accounts.id` and `cards.id` were global primary keys.** Every household the walk derives
+carries the same `chk_demo`/`sav_demo` (module constants in `precompute.py`, baked into
+`assemble_snapshot`'s `funding_account_id`), so the second household seeded raised
+`duplicate key value violates unique constraint "accounts_pkey"`. The schema was already
+inconsistent about this and had no cause to notice: `decisions` is keyed `(household_id, day, id)`,
+`snapshots` hand-namespaces its id, `policies` is keyed by household outright. Only these two
+assumed a global id space — an assumption inherited from a database that held one household.
+
+It bites something larger than the archetypes: `prd.md` §5.2's 60-household population is 60
+`DEMO_SPEC` clones, every one holding `card_demo`. Under a global key that population is not merely
+unseeded, it is **unseedable**. Migration `0003` scopes both keys to `(household_id, id)`. *Decision
+taken with the user; the alternative was per-household ids threaded through the walk, which would
+have changed archetype A's account ids and put the regression oracle at risk.*
+
+**3. `0023`'s own archetype D was inexpressible, and its acceptance criterion unsatisfiable.** The
+ticket's table asks for "2 cards, both `apr=None`" and the AC for "archetype D triggers
+`APR_UNKNOWN`". `CardSpec.apr` is `Decimal`; `derive_card` reads
+`apr=card.apr if card.apr_reported else ESTIMATED_APR` and never emits `None`; `APR_UNKNOWN` fires
+only on `apr is None`. **`APR_UNKNOWN` is unreachable from any `HouseholdSpec`.** The ticket's own
+body already said so — it was updated when `0028` landed and the table and ACs were not. Built per
+the body: `apr_reported=False`, and assert the *absence* of `INTEREST_AVOIDED`.
+
+**Renamed `apr_unknown` → `apr_unreported`.** Naming an archetype after a reason code it is
+structurally incapable of producing is the kind of drift this repo keeps finding in itself. What it
+does produce is better and is the household `0028` argued for: sweeps normally on a 23% guess, and
+says **nothing** about what it saved.
+
+### Decisions taken
+
+- **`ENGINE_VERSION = "0-unversioned"`**, a literal in `seed.py`. `decisions.engine_version` is NOT
+  NULL and `architecture.md` [3.3] rests real weight on it ("replay any new engine version across
+  every historical snapshot"), but **there is no version constant anywhere in `engine/`** — the
+  artifact's `version: 3` is the schema's, a different thing. Not a git SHA: the determinism the
+  seeder promises is "re-seeding produces identical rows", and a SHA would rewrite the decision log
+  of households that did not change on every commit. The day `decide.py`'s logic moves without this
+  moving, [3.3]'s backtest guarantee is a story.
+- **The seeder generates exactly 150 days**, matching `build()`. Not a friendlier default:
+  `generate()` is not prefix-stable, so 181 days is a *different household*. Measured — the same
+  spec and seed, walked over the same 90 served days, differ on **7 of them** between a 150-day and
+  a 181-day generation, including one day where 150 refuses and 181 sweeps $28.37. A seeder that
+  generated 181 would have produced 90 plausible rows and 7 wrong ones, and the oracle catches it
+  only because it compares amounts rather than shapes.
+- **Archetype income held constant at $67,600/yr** across all four calendars ($2,600×26, $2,816.67×24,
+  $5,633.33×12). The same discipline `calibrate._spec_for()` uses when it forces `card_share`
+  constant: if the archetypes differed in wealth as well as cadence, nothing they measured could be
+  attributed to either.
+- **B's transactor holds the portfolio's highest APR (27.99%) deliberately.** A naive `max(apr)`
+  picks it; `_select_target` must pick `card_b_high` at 24.99%, because a transactor clears its
+  statement and sweeping there is a prepayment we would be charging for. The gap is the assertion —
+  a portfolio of three merely-different cards would not have one.
+
+### Open
+
+- **The income bucket needs its own ticket.** It is a real defect with a measured cost and no safe
+  local fix; the honest bucket is the household's own pay cycle, which needs the detector §6.2
+  assumes away. Same dependency as §9.3.
+- **`build()` still can't serve a portfolio**, so B/C/D exist only in Postgres. That is fine while
+  `0024` is unstarted and the artifact serves the demo, and it is a decision `0024` inherits: the
+  read path either serves one card per household or `DayRecord` grows.

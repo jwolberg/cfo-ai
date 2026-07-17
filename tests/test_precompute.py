@@ -465,7 +465,9 @@ class TestTheArtifact:
         assert back.summary.interest_avoided_total == a.summary.interest_avoided_total
         for before, after in zip(a.days, back.days, strict=True):
             assert after.decision == before.decision
-            assert after.debt_apr == before.debt_apr == Decimal("0.2399")  # a rate, not money
+            assert after.debts == before.debts
+            # A rate, not money: quantizing 0.2399 to cents would turn 23.99% into 24%.
+            assert after.debts[0].apr == before.debts[0].apr == Decimal("0.2399")
 
     def test_reason_params_keep_their_types(self) -> None:
         """`Reason.params` is an open mapping of Decimals, dates and ints. Untagged JSON
@@ -1112,18 +1114,95 @@ class TestTheWalkCarriesAPortfolio:
                 assert b.accrued > ZERO, "card B posted on A's close day"
 
 
-class TestBuildStaysSingleCard:
-    """`DayRecord` carries one `debt_balance`, one `debt_apr`, one `debt_id` — the artifact schema
-    has exactly one debt because the demo household has exactly one card.
+class TestBuildServesAPortfolio:
+    """Ticket `0030`. `build()` raised on a multi-card spec from `0027` until `DayRecord` grew the
+    tuple the walk had carried all along.
 
-    Shipping 0027's fix while leaving `build()` to silently report `cards[0]` would re-open the very
-    bug next door.
+    The guard was right for as long as it stood — the only alternatives were reporting `cards[0]`,
+    which is the bug `0027` fixed one function up, or refusing. It refused. These tests are what
+    replaces it, and they check the thing the guard was standing in for: that a portfolio arrives
+    whole, each card with its own balance and its own rate.
     """
 
-    def test_a_multi_card_spec_is_refused_rather_than_half_reported(self) -> None:
+    def test_a_multi_card_spec_is_served_rather_than_refused(self) -> None:
         spec = TestTheWalkCarriesAPortfolio._two_cards()
-        with pytest.raises(ValueError, match="one card"):
-            build(spec=spec)
+        artifact = build(spec=spec)
+
+        assert artifact.days
+        for record in artifact.days:
+            assert len(record.debts) == 2, f"{record.day}: a card went missing"
+
+    def test_each_card_carries_its_own_balance(self) -> None:
+        """0027 one level up: one ledger for a portfolio reported a $3,000 card's balance as
+        $14,009.20. Two cards reporting one balance is that bug arriving in the artifact."""
+        spec = TestTheWalkCarriesAPortfolio._two_cards()
+        artifact = build(spec=spec)
+
+        record = artifact.days[0]
+        balances = {d.debt_id: d.balance for d in record.debts}
+        assert len(set(balances.values())) == 2, f"cards share a balance: {balances}"
+
+    def test_the_portfolio_total_is_the_sum_of_its_cards(self) -> None:
+        spec = TestTheWalkCarriesAPortfolio._two_cards()
+        artifact = build(spec=spec)
+
+        for record in artifact.days:
+            assert record.debt_balance == sum(d.balance for d in record.debts)
+
+    def test_the_summary_targets_a_card_the_engine_actually_chose(self) -> None:
+        """Never `max(apr)`. `_select_target` ranks only among cards it is honest to sweep to, so
+        re-deriving the target from the rates alone would pick a transactor the engine refuses."""
+        spec = TestTheWalkCarriesAPortfolio._two_cards()
+        artifact = build(spec=spec)
+
+        targeted = artifact.summary.targeted_debt_id
+        if targeted is None:
+            pytest.skip("this household never swept, so there is no target to check")
+
+        chosen = {d.decision.target_debt_id for d in artifact.days if d.decision.target_debt_id}
+        assert targeted in chosen, "the summary targets a card no decision ever aimed at"
+
+
+class TestTheArtifactRecordsWhatTheEngineSaw:
+    """Ticket `0030`, and it is the reason the APR half of `debts` is not optional.
+
+    `build()` read `debt_apr=spec.card.apr` — and `spec` is `sim/`, the ground truth the engine is
+    **not allowed to see**. On a card whose issuer does not report a rate, the engine decides
+    against an estimated 23% while the spec knows the real 23.99%, and the artifact recorded the
+    23.99%: `0028` inverted, a guess quietly upgraded to a fact on its way to the dashboard.
+
+    It was invisible because `DEMO_SPEC` reports its rate, so the two agreed, and every household
+    where they disagree was one `build()` refused to serve.
+    """
+
+    @staticmethod
+    def _hidden_rate_spec() -> HouseholdSpec:
+        hidden = replace(DEMO_SPEC.cards[0], apr_reported=False)
+        return replace(DEMO_SPEC, cards=(hidden,))
+
+    def test_an_unreported_rate_is_recorded_as_the_estimate_not_the_truth(self) -> None:
+        spec = self._hidden_rate_spec()
+        artifact = build(spec=spec)
+
+        for record in artifact.days:
+            debt = record.debts[0]
+            assert debt.apr == ESTIMATED_APR, (
+                f"{record.day}: the artifact reports {debt.apr}, which the engine never saw — "
+                f"that is spec.card.apr ({spec.cards[0].apr}), read off the answer key"
+            )
+            assert debt.apr_source is AprSource.ESTIMATED
+
+    def test_the_summary_does_not_leak_it_either(self) -> None:
+        artifact = build(spec=self._hidden_rate_spec())
+        assert artifact.summary.targeted_debt_apr in (None, ESTIMATED_APR)
+
+    def test_a_reported_rate_is_still_the_reported_one(self) -> None:
+        """The other half: the fix must not blanket everything with the estimate."""
+        artifact = build(spec=DEMO_SPEC)
+
+        for record in artifact.days:
+            assert record.debts[0].apr == DEMO_SPEC.cards[0].apr
+            assert record.debts[0].apr_source is AprSource.REPORTED
 
 
 class TestTheAprEstimate:

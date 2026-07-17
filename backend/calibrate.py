@@ -147,6 +147,37 @@ def measure(quantile: float | None, seeds: tuple[int, ...] = SEEDS) -> Reading:
     return Reading(quantile=quantile, per_shape=per_shape)
 
 
+def measure_archetypes(quantile: float | None = None, seeds: tuple[int, ...] = SEEDS) -> Reading:
+    """The four archetypes, each across the same seeds — a **second** population, reported apart.
+
+    **This does not touch `measure()`, and that is the point.** `measure(None)` is the anchor both
+    #44 and #46 used to prove they had changed nothing: 4,320 days, 2.338%, 0 sweep-caused
+    overdrafts, $544,640.58, and those figures are quoted in `prd.md` §5.2/§5.3, `strategy.md`, and
+    `decision-engine.md`. Folding four new households into that number would move all of it at
+    once, and nobody reading the diff could tell which part moved because the *engine* changed and
+    which because the *population* did. Ticket `0023`: "do not re-baseline."
+
+    So this is an addition. The spend population measures the **spend model** against one calendar;
+    this measures **four calendars** against one spend model. They answer different questions and
+    averaging them would answer neither.
+
+    Twenty seeds each rather than the seeder's single household, because `calibrate`'s own rule
+    applies to its own findings: one seed is an anecdote, and "a guardrail measured on one household
+    is not measured" (`prd.md` §5.2) does not stop being true when the household is interesting.
+    """
+    from backend.archetypes import ARCHETYPES
+
+    per_shape: dict[str, Calibration] = {}
+
+    for name, spec in ARCHETYPES.items():
+        graded = [
+            g for seed in seeds for g in replay(spec=spec, seed=seed, spend_quantile=quantile)
+        ]
+        per_shape[name] = calibrate(graded)
+
+    return Reading(quantile=quantile, per_shape=per_shape)
+
+
 def licensed(candidate: Reading, baseline: Reading) -> bool:
     """May this dial setting ship?
 
@@ -256,7 +287,51 @@ def report() -> str:
                 f"{best.per_shape[name].breach_rate:>6.1%}"
             )
 
-    return "\n".join(lines)
+    return "\n".join(lines + [""] + _archetype_lines())
+
+
+def _archetype_lines() -> list[str]:
+    """The second population: four calendars, one spend model. Ticket 0023.
+
+    Reported next to the dial sweep and never folded into it — the sweep's numbers are quoted in
+    three documents and are the anchor that proves a refactor changed nothing.
+    """
+    arch = measure_archetypes(None)
+
+    lines = [
+        "Archetype coverage — at the shipped dial, not a sweep",
+        f"  population: {len(arch.per_shape)} archetypes x {len(SEEDS)} seeds = "
+        f"{len(arch.per_shape) * len(SEEDS)} households",
+        "",
+        "  archetype                graded  breach%  overdrafts  false-refusal cost",
+        "  " + "-" * 74,
+    ]
+
+    for name, c in arch.per_shape.items():
+        lines.append(
+            f"  {name:<24} {c.graded_days:>6}  {c.breach_rate:>6.1%}  "
+            f"{c.sweep_caused_overdrafts:>10}  {'$' + f'{c.total_false_refusal_cost:,.2f}':>18}"
+        )
+
+    lines += [
+        "  " + "-" * 74,
+        f"  {'all':<24} {arch.graded_days:>6}  {arch.breach_rate:>6.1%}  "
+        f"{arch.sweep_caused_overdrafts:>10}  {'$' + f'{arch.false_refusal_cost:,.2f}':>18}",
+        "",
+        "  Read `graded` first, not `breach%`. A blocking refusal never ran a forecast and is",
+        "  not graded, so a low graded count is a household we would not serve. Every archetype",
+        "  is offered the same 1,800 days.",
+        "",
+        "  The guardrail holds everywhere: 0 sweep-caused overdrafts, all four. prd.md §5.2 is",
+        "  not moving, and nothing here licenses touching a gate.",
+        "",
+        "  What it costs is service, not safety. The non-biweekly households are refused most",
+        "  days and forecast badly on the rest -- and their income is, by construction, exactly",
+        "  as regular as the demo's (variation=0.02 for all four). See archetypes.py: the",
+        "  28-day income bucket divides evenly into a biweekly calendar and into no other.",
+    ]
+
+    return lines
 
 
 if __name__ == "__main__":  # pragma: no cover

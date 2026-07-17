@@ -143,12 +143,14 @@ defects instead — see below.
 | [0020](0020-schema-rls-first-migration.md) | Schema, RLS, and the first migration | backend-python-agent | — | **done** (#44) |
 | [0021](0021-repository-scoping-and-idor-suite.md) | Repository scoping and the IDOR suite | backend-python-agent | 0020 | **done** (#44) |
 | [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 | **done** (#44) |
-| [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022, 0027, 0028 | **unblocked, not started** |
+| [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022, 0027, 0028 | **done** |
 | [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | open |
 | [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | open |
 | [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
+| [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
+| [0030](0030-dayrecord-carries-a-portfolio.md) | `DayRecord` carries a portfolio *(the decision 0027 deferred)* | backend-python-agent | 0023, 0027, 0028 | **done** |
 
 ## Three things to know before picking one of these up
 
@@ -165,12 +167,28 @@ Its verification **is** the ticket: `tests/test_precompute.py:489-494` stays gre
 regenerated**, plus a new test that fails on today's code. Regenerating the committed artifact to
 match new output deletes the only evidence the refactor preserved behavior.
 
-**`0023` is what the plan exists for.** Every household this engine has ever run against is
-biweekly, one card, 23.99% — including all 60 in the calibration population, because
-`calibrate._spec_for()` varies only the spend shape. So `decision-engine.md` §9.3's admission that
-the 7-day spacing rule is "a poor approximation for everyone else" has never been tested: there is no
-everyone else. If archetypes B/C/D refuse constantly, **that is the finding**, not a bug — and not a
-reason to loosen a gate.
+**`0023` is what the plan exists for — and it is done. They did refuse constantly, and that was the
+finding. But not §9.3's.** The **income gate fires first**, so the spacing rule never gets to run.
+
+All four archetypes carry `payroll.variation = 0.02` — income exactly as regular as the demo's — and
+the engine measures B at up to **0.326** and C at **0.707** against a **0.25** gate.
+`INCOME_BUCKET_DAYS = 28` divides evenly into a biweekly calendar and into no other, so a semimonthly
+earner lands 1–2 paychecks in a bucket and a monthly earner 0–1. Its own comment predicted the
+mechanism for *calendar-month* buckets on a biweekly household — a 24% swing against a 25% gate —
+without noticing that it generalizes. **The fix for the demo household is the bug for everyone
+else**, and it missed being visible in its own case by one percentage point.
+
+Measured across 80 households: B is unserved **63%** of days, C **41%**, and on the days they are
+served B breaches **19.7%** — the same magnitude this harness **refused** to ship as the empirical
+spend model. **0 sweep-caused overdrafts across all four**, so §5.2 holds and no gate was touched:
+the cost is service and honesty, not safety.
+
+Filed as [`0029`](0029-the-income-bucket-is-biweekly-shaped.md), and **read it before starting
+anything about §9.3** — they are the same defect wearing two hats, waiting on the same unbuilt
+detector. The uncomfortable part is in that ticket: the broken gate is currently the only thing
+standing between a semimonthly household and a forecast that breaches 19.7% of the time. Fixing it
+is a **loosening** that hands those days back to that forecast, so it is sequenced behind the
+forecast rather than ahead of it.
 
 **`0021` tests a mechanism whose identity is fake.** The IDOR suite is real and must be; the auth
 feeding it is a shared API key that may select any household (`0024`). That gap is deliberate —

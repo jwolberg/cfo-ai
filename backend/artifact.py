@@ -46,14 +46,18 @@ from engine.models import (
     ZERO,
     AccountKind,
     Action,
+    AprSource,
     ConnectionState,
     Decision,
     EventKind,
     Reason,
     ReasonCode,
+    money,
 )
 
-SCHEMA_VERSION = 3
+# 4: `DayRecord.debts` — balance and APR per card, sourced from the snapshot rather than from
+# `sim/`, plus `Summary.current_debt_balance`. Ticket 0030. 3 added the spend surface.
+SCHEMA_VERSION = 4
 
 # Where the committed artifact lives. Shipped in the source tree (not built at deploy
 # time) so Cloud Run's buildpacks package it with everything else — see the plan's
@@ -107,12 +111,58 @@ def _decimal(raw: Any, field: str) -> Decimal:
 
 
 @dataclass(frozen=True)
+class DebtRecord:
+    """One card, as the engine saw it on one day. Ticket 0030.
+
+    **Every field here comes from the snapshot, never from `sim/`.** That is not a style note: the
+    predecessor of this type read `debt_apr` straight off `spec.card.apr`, which is the answer key
+    the engine is not allowed to see. On a card whose issuer does not report a rate, the engine
+    decides against an estimated 23% while the spec knows the real 23.99% — and the artifact
+    recorded the 23.99%. `0028` decided we would act on the estimate and never claim from it; an
+    artifact that quietly upgrades the guess back to the truth is that decision inverted.
+
+    `apr_source` travels with `apr` for the same reason it does in the database: a 23% estimate and
+    a reported 23% are the same number, and only this tells them apart.
+    """
+
+    debt_id: str
+    balance: Decimal
+    apr: Decimal | None
+    apr_source: AprSource
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "debt_id": self.debt_id,
+            "balance": _encode(self.balance),
+            "apr": _encode(self.apr),
+            "apr_source": self.apr_source.value,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> DebtRecord:
+        if not isinstance(raw, dict):
+            raise ArtifactError(f"debt record is not an object: {raw!r}")
+        apr = raw["apr"]
+        return cls(
+            debt_id=raw["debt_id"],
+            balance=_decimal(raw["balance"], "debt.balance"),
+            apr=None if apr is None else _decimal(apr, "debt.apr"),
+            apr_source=AprSource(raw["apr_source"]),
+        )
+
+
+@dataclass(frozen=True)
 class DayRecord:
     """One served day: what the engine decided, and the state it decided against.
 
     The snapshot fields are the display subset the dashboard needs (R3) — not the whole
     `Snapshot`. The engine's full input isn't reconstructible from this and isn't meant
     to be; `decide()` already ran, at build time, and its output is what's being served.
+
+    **`debts` is a tuple, not a debt.** It held one until ticket `0030`, which is why `build()`
+    raised on a portfolio rather than report `cards[0]` of one (`0027`). A household at 27.99% and
+    17.99% does not have "a debt", and summing them into one figure would answer a question nobody
+    asked while hiding the one that matters — which card, at what rate.
     """
 
     day: date
@@ -120,10 +170,13 @@ class DayRecord:
     checking_balance: Decimal
     savings_balance: Decimal
     buffer_floor: Decimal
-    debt_balance: Decimal
-    debt_apr: Decimal | None
-    debt_id: str
+    debts: tuple[DebtRecord, ...]
     history_days: int
+
+    @property
+    def debt_balance(self) -> Decimal:
+        """The portfolio total. Derived, so there is exactly one place it is defined."""
+        return money(sum((d.balance for d in self.debts), ZERO))
 
     @property
     def paid_off(self) -> bool:
@@ -154,9 +207,7 @@ class DayRecord:
             "checking_balance": _encode(self.checking_balance),
             "savings_balance": _encode(self.savings_balance),
             "buffer_floor": _encode(self.buffer_floor),
-            "debt_balance": _encode(self.debt_balance),
-            "debt_apr": _encode(self.debt_apr),
-            "debt_id": self.debt_id,
+            "debts": [d.to_dict() for d in self.debts],
             "history_days": self.history_days,
         }
 
@@ -168,7 +219,6 @@ class DayRecord:
         try:
             d = raw["decision"]
             low = d["projected_low_balance"]
-            apr = raw["debt_apr"]
             decision = Decision(
                 action=Action(d["action"]),
                 amount=_decimal(d["amount"], "decision.amount"),
@@ -190,9 +240,7 @@ class DayRecord:
                 checking_balance=_decimal(raw["checking_balance"], "checking_balance"),
                 savings_balance=_decimal(raw["savings_balance"], "savings_balance"),
                 buffer_floor=_decimal(raw["buffer_floor"], "buffer_floor"),
-                debt_balance=_decimal(raw["debt_balance"], "debt_balance"),
-                debt_apr=None if apr is None else _decimal(apr, "debt_apr"),
-                debt_id=raw["debt_id"],
+                debts=tuple(DebtRecord.from_dict(x) for x in raw["debts"]),
                 history_days=int(raw["history_days"]),
             )
         except ArtifactError:
@@ -211,13 +259,19 @@ class Summary:
     targeted_debt_id: str | None
     targeted_debt_balance: Decimal
     targeted_debt_apr: Decimal | None
-    # What the card owed on the **first** served day. The denominator of "how far down is it",
-    # and the only honest one available: the UI cannot derive it, because the per-day
-    # `debt_balance` does not cross the wire.
+    # What the **portfolio** owed on the first and last served day. The denominator and numerator
+    # of "how far down is it".
     #
-    # Note this measures the *card's* progress, not ours. The household's own payments are in
-    # it alongside our sweeps, and the copy must not claim otherwise.
+    # These are totals across every card, and `current_debt_balance` exists because pairing
+    # `starting -> targeted` is coherent only while a household has one card: on a portfolio it
+    # compares a $14,700 total against a $9,000 card and renders $5,700 of progress that did not
+    # happen. For a single-card household the total *is* the card, so neither number moves — which
+    # is why archetype A stays the oracle across this change (ticket 0030).
+    #
+    # Note this measures the *cards'* progress, not ours. The household's own payments are in it
+    # alongside our sweeps, and the copy must not claim otherwise.
     starting_debt_balance: Decimal
+    current_debt_balance: Decimal
     sweep_count: int
     refuse_count: int
     paid_off: bool
@@ -231,6 +285,7 @@ class Summary:
             "targeted_debt_balance": _encode(self.targeted_debt_balance),
             "targeted_debt_apr": _encode(self.targeted_debt_apr),
             "starting_debt_balance": _encode(self.starting_debt_balance),
+            "current_debt_balance": _encode(self.current_debt_balance),
             "sweep_count": self.sweep_count,
             "refuse_count": self.refuse_count,
             "paid_off": self.paid_off,
@@ -256,6 +311,7 @@ class Summary:
                 starting_debt_balance=_decimal(
                     raw["starting_debt_balance"], "starting_debt_balance"
                 ),
+                current_debt_balance=_decimal(raw["current_debt_balance"], "current_debt_balance"),
                 sweep_count=int(raw["sweep_count"]),
                 refuse_count=int(raw["refuse_count"]),
                 paid_off=bool(raw["paid_off"]),
@@ -297,18 +353,45 @@ def summarize(days: tuple[DayRecord, ...]) -> Summary:
                 interest += amount
 
     last = days[-1]
+    target = _last_targeted(days)
+
     return Summary(
         interest_avoided_total=interest,
         total_swept=swept,
         current_buffer=last.buffer_floor,
-        targeted_debt_id=None if last.paid_off else last.debt_id,
-        targeted_debt_balance=last.debt_balance,
-        targeted_debt_apr=last.debt_apr,
+        targeted_debt_id=None if last.paid_off or target is None else target.debt_id,
+        targeted_debt_balance=ZERO if target is None else target.balance,
+        targeted_debt_apr=None if target is None else target.apr,
         starting_debt_balance=days[0].debt_balance,
+        current_debt_balance=last.debt_balance,
         sweep_count=sweeps,
         refuse_count=refusals,
         paid_off=last.paid_off,
     )
+
+
+def _last_targeted(days: tuple[DayRecord, ...]) -> DebtRecord | None:
+    """The card we most recently aimed at, as it stands on the last served day.
+
+    **Read from the decisions, never re-derived.** The obvious implementation once `DayRecord`
+    carries APRs is `max(debts, key=apr)` — and it is wrong: `_select_target` ranks only among cards
+    it is honest to sweep to, and a transactor is never one of them. On archetype B that shortcut
+    picks the 27.99% transactor the engine deliberately refuses to target. Ranking is
+    `engine/decide.py`'s job and it needs `behavior`, which this record does not carry and should
+    not. A second implementation of the ranking is this function's own docstring's warning about
+    `interest_avoided`, one field down.
+
+    Single-card households are unaffected: the only card they ever aimed at is the only card.
+    """
+    last = days[-1]
+    by_id = {d.debt_id: d for d in last.debts}
+
+    for record in reversed(days):
+        target_id = record.decision.target_debt_id
+        if target_id is not None and target_id in by_id:
+            return by_id[target_id]
+
+    return None
 
 
 @dataclass(frozen=True)
@@ -478,14 +561,22 @@ def validate(artifact: Artifact) -> None:
         )
 
     for record in artifact.days:
-        for name, amount in (
+        # Every card's own balance, not just the portfolio total: a total quantizes to cents even
+        # when the balances summed into it did not, so checking only the sum would pass an artifact
+        # carrying sub-cent debt — which is the one thing this whole codec exists to keep out.
+        amounts: list[tuple[str, Decimal]] = [
             ("decision.amount", record.decision.amount),
             ("checking_balance", record.checking_balance),
             ("buffer_floor", record.buffer_floor),
-            ("debt_balance", record.debt_balance),
-        ):
+        ]
+        amounts += [(f"debts[{d.debt_id}].balance", d.balance) for d in record.debts]
+
+        for name, amount in amounts:
             if amount != amount.quantize(CENTS):
                 raise ArtifactError(f"{record.day}: {name}={amount} is not quantized to cents")
+
+        if not record.debts:
+            raise ArtifactError(f"{record.day}: a served day with no cards has nothing to decide")
 
         if record.decision.action is Action.SWEEP and record.decision.amount <= ZERO:
             raise ArtifactError(f"{record.day}: a sweep of {record.decision.amount} is not a sweep")

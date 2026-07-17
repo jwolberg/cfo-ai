@@ -8,13 +8,18 @@
         "$dec": "7960.34"
       },
       "day": "2026-03-02",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13652.42"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13652.42"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -44,13 +49,18 @@
         "$dec": "7914.55"
       },
       "day": "2026-03-03",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13661.33"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13661.33"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -80,13 +90,18 @@
         "$dec": "7888.15"
       },
       "day": "2026-03-04",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13670.25"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13670.25"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -116,13 +131,18 @@
         "$dec": "7831.22"
       },
       "day": "2026-03-05",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13679.16"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13679.16"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -152,13 +172,18 @@
         "$dec": "7781.08"
       },
       "day": "2026-03-06",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13688.07"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13688.07"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -188,13 +213,18 @@
         "$dec": "7588.94"
       },
       "day": "2026-03-07",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13696.99"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13696.99"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -224,13 +254,18 @@
         "$dec": "7342.54"
       },
       "day": "2026-03-08",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13705.90"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13705.90"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -260,13 +295,18 @@
         "$dec": "7342.54"
       },
       "day": "2026-03-09",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13714.82"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13714.82"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -296,13 +336,18 @@
         "$dec": "7342.54"
       },
       "day": "2026-03-10",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13723.73"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13723.73"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -332,13 +377,18 @@
         "$dec": "7307.45"
       },
       "day": "2026-03-11",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13732.65"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13732.65"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -368,13 +418,18 @@
         "$dec": "7156.41"
       },
       "day": "2026-03-12",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13741.56"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13741.56"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -404,13 +459,18 @@
         "$dec": "9658.77"
       },
       "day": "2026-03-13",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13750.48"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13750.48"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -440,13 +500,18 @@
         "$dec": "9658.77"
       },
       "day": "2026-03-14",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13759.39"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13759.39"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -476,13 +541,18 @@
         "$dec": "9658.77"
       },
       "day": "2026-03-15",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13768.31"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13768.31"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -512,13 +582,18 @@
         "$dec": "9658.77"
       },
       "day": "2026-03-16",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13777.22"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13777.22"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -548,13 +623,18 @@
         "$dec": "9628.85"
       },
       "day": "2026-03-17",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13786.13"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13786.13"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -584,13 +664,18 @@
         "$dec": "9618.48"
       },
       "day": "2026-03-18",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13795.05"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13795.05"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -620,13 +705,18 @@
         "$dec": "9618.48"
       },
       "day": "2026-03-19",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13803.96"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13803.96"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -656,13 +746,18 @@
         "$dec": "9123.51"
       },
       "day": "2026-03-20",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "13362.58"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "13362.58"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -730,13 +825,18 @@
         "$dec": "7485.48"
       },
       "day": "2026-03-21",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11770.31"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11770.31"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -798,13 +898,18 @@
         "$dec": "7471.86"
       },
       "day": "2026-03-22",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11778.04"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11778.04"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -866,13 +971,18 @@
         "$dec": "7379.40"
       },
       "day": "2026-03-23",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11785.77"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11785.77"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -934,13 +1044,18 @@
         "$dec": "7347.02"
       },
       "day": "2026-03-24",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11793.50"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11793.50"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1002,13 +1117,18 @@
         "$dec": "7347.02"
       },
       "day": "2026-03-25",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11801.24"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11801.24"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1070,13 +1190,18 @@
         "$dec": "7347.02"
       },
       "day": "2026-03-26",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11808.97"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11808.97"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1138,13 +1263,18 @@
         "$dec": "10004.84"
       },
       "day": "2026-03-27",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "11816.70"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "11816.70"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -1212,13 +1342,18 @@
         "$dec": "8359.53"
       },
       "day": "2026-03-28",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10223.38"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10223.38"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1280,13 +1415,18 @@
         "$dec": "8335.88"
       },
       "day": "2026-03-29",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10230.06"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10230.06"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1348,13 +1488,18 @@
         "$dec": "8335.88"
       },
       "day": "2026-03-30",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10236.74"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10236.74"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1416,13 +1561,18 @@
         "$dec": "8302.96"
       },
       "day": "2026-03-31",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10243.42"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10243.42"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1484,13 +1634,18 @@
         "$dec": "6411.56"
       },
       "day": "2026-04-01",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10250.09"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10250.09"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1552,13 +1707,18 @@
         "$dec": "6385.80"
       },
       "day": "2026-04-02",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10256.77"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10256.77"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1620,13 +1780,18 @@
         "$dec": "6354.00"
       },
       "day": "2026-04-03",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "10263.45"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "10263.45"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -1705,13 +1870,18 @@
         "$dec": "4681.68"
       },
       "day": "2026-04-04",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8669.08"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8669.08"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1773,13 +1943,18 @@
         "$dec": "4681.68"
       },
       "day": "2026-04-05",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8674.71"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8674.71"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1841,13 +2016,18 @@
         "$dec": "4660.92"
       },
       "day": "2026-04-06",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8680.34"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8680.34"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1909,13 +2089,18 @@
         "$dec": "4577.03"
       },
       "day": "2026-04-07",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8685.97"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8685.97"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -1977,13 +2162,18 @@
         "$dec": "4366.77"
       },
       "day": "2026-04-08",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8691.59"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8691.59"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2045,13 +2235,18 @@
         "$dec": "4366.77"
       },
       "day": "2026-04-09",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8697.22"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8697.22"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2113,13 +2308,18 @@
         "$dec": "6951.26"
       },
       "day": "2026-04-10",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "8702.85"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "8702.85"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -2198,13 +2398,18 @@
         "$dec": "5351.26"
       },
       "day": "2026-04-11",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7107.42"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7107.42"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2266,13 +2471,18 @@
         "$dec": "5289.98"
       },
       "day": "2026-04-12",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7112.00"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7112.00"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2334,13 +2544,18 @@
         "$dec": "5196.47"
       },
       "day": "2026-04-13",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7116.58"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7116.58"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2402,13 +2617,18 @@
         "$dec": "5196.47"
       },
       "day": "2026-04-14",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7121.15"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7121.15"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2470,13 +2690,18 @@
         "$dec": "5174.28"
       },
       "day": "2026-04-15",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7125.73"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7125.73"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2538,13 +2763,18 @@
         "$dec": "5130.16"
       },
       "day": "2026-04-16",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7130.31"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7130.31"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2606,13 +2836,18 @@
         "$dec": "5117.01"
       },
       "day": "2026-04-17",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "7134.88"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "7134.88"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -2691,13 +2926,18 @@
         "$dec": "3500.14"
       },
       "day": "2026-04-18",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5538.41"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5538.41"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2759,13 +2999,18 @@
         "$dec": "3481.15"
       },
       "day": "2026-04-19",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5541.93"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5541.93"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2827,13 +3072,18 @@
         "$dec": "3026.61"
       },
       "day": "2026-04-20",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5095.16"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5095.16"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2895,13 +3145,18 @@
         "$dec": "2975.57"
       },
       "day": "2026-04-21",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5098.51"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5098.51"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -2963,13 +3218,18 @@
         "$dec": "2970.46"
       },
       "day": "2026-04-22",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5101.86"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5101.86"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3031,13 +3291,18 @@
         "$dec": "2970.46"
       },
       "day": "2026-04-23",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5105.21"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5105.21"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3099,13 +3364,18 @@
         "$dec": "5624.38"
       },
       "day": "2026-04-24",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "5108.56"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "5108.56"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -3165,13 +3435,18 @@
         "$dec": "4639.70"
       },
       "day": "2026-04-25",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4126.58"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4126.58"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3233,13 +3508,18 @@
         "$dec": "4639.70"
       },
       "day": "2026-04-26",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4129.28"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4129.28"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3301,13 +3581,18 @@
         "$dec": "4639.70"
       },
       "day": "2026-04-27",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4131.98"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4131.98"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3369,13 +3654,18 @@
         "$dec": "4582.66"
       },
       "day": "2026-04-28",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4134.68"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4134.68"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3437,13 +3727,18 @@
         "$dec": "4576.84"
       },
       "day": "2026-04-29",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4137.38"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4137.38"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3505,13 +3800,18 @@
         "$dec": "4576.84"
       },
       "day": "2026-04-30",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4140.09"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4140.09"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3573,13 +3873,18 @@
         "$dec": "2706.16"
       },
       "day": "2026-05-01",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "4142.79"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "4142.79"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -3650,13 +3955,18 @@
         "$dec": "2001.81"
       },
       "day": "2026-05-02",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3474.12"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3474.12"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3718,13 +4028,18 @@
         "$dec": "1952.31"
       },
       "day": "2026-05-03",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3476.38"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3476.38"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3786,13 +4101,18 @@
         "$dec": "1928.42"
       },
       "day": "2026-05-04",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3478.64"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3478.64"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3854,13 +4174,18 @@
         "$dec": "1928.42"
       },
       "day": "2026-05-05",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3480.90"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3480.90"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3922,13 +4247,18 @@
         "$dec": "1891.58"
       },
       "day": "2026-05-06",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3483.16"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3483.16"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -3990,13 +4320,18 @@
         "$dec": "1891.58"
       },
       "day": "2026-05-07",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3485.42"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3485.42"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4058,13 +4393,18 @@
         "$dec": "4307.06"
       },
       "day": "2026-05-08",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "3487.68"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "3487.68"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -4135,13 +4475,18 @@
         "$dec": "2715.14"
       },
       "day": "2026-05-09",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1914.81"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1914.81"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4203,13 +4548,18 @@
         "$dec": "2715.14"
       },
       "day": "2026-05-10",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1916.03"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1916.03"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4271,13 +4621,18 @@
         "$dec": "2656.57"
       },
       "day": "2026-05-11",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1917.26"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1917.26"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4339,13 +4694,18 @@
         "$dec": "2656.57"
       },
       "day": "2026-05-12",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1918.49"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1918.49"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4407,13 +4767,18 @@
         "$dec": "2500.49"
       },
       "day": "2026-05-13",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1919.71"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1919.71"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4475,13 +4840,18 @@
         "$dec": "2500.49"
       },
       "day": "2026-05-14",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1920.94"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1920.94"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4543,13 +4913,18 @@
         "$dec": "2484.71"
       },
       "day": "2026-05-15",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1922.16"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1922.16"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4600,13 +4975,18 @@
         "$dec": "2435.32"
       },
       "day": "2026-05-16",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1923.39"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1923.39"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4657,13 +5037,18 @@
         "$dec": "2435.32"
       },
       "day": "2026-05-17",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1924.62"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1924.62"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4714,13 +5099,18 @@
         "$dec": "2435.32"
       },
       "day": "2026-05-18",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1925.84"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1925.84"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -4791,13 +5181,18 @@
         "$dec": "2409.08"
       },
       "day": "2026-05-19",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1900.81"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1900.81"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4859,13 +5254,18 @@
         "$dec": "1941.75"
       },
       "day": "2026-05-20",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1451.72"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1451.72"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4927,13 +5327,18 @@
         "$dec": "1893.70"
       },
       "day": "2026-05-21",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1452.67"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1452.67"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -4995,13 +5400,18 @@
         "$dec": "4514.23"
       },
       "day": "2026-05-22",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1453.63"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1453.63"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5063,13 +5473,18 @@
         "$dec": "4475.02"
       },
       "day": "2026-05-23",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1454.58"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1454.58"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5131,13 +5546,18 @@
         "$dec": "4475.02"
       },
       "day": "2026-05-24",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1455.54"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1455.54"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5199,13 +5619,18 @@
         "$dec": "4475.02"
       },
       "day": "2026-05-25",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1456.49"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1456.49"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "sweep",
         "amount": {
@@ -5265,13 +5690,18 @@
         "$dec": "3966.98"
       },
       "day": "2026-05-26",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1007.65"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1007.65"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5333,13 +5763,18 @@
         "$dec": "3937.78"
       },
       "day": "2026-05-27",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1008.31"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1008.31"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5401,13 +5836,18 @@
         "$dec": "3937.78"
       },
       "day": "2026-05-28",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1008.97"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1008.97"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5469,13 +5909,18 @@
         "$dec": "3774.81"
       },
       "day": "2026-05-29",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1009.63"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1009.63"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -5537,13 +5982,18 @@
         "$dec": "3774.81"
       },
       "day": "2026-05-30",
-      "debt_apr": {
-        "$dec": "0.2399"
-      },
-      "debt_balance": {
-        "$dec": "1010.28"
-      },
-      "debt_id": "card_demo",
+      "debts": [
+        {
+          "apr": {
+            "$dec": "0.2399"
+          },
+          "apr_source": "reported",
+          "balance": {
+            "$dec": "1010.28"
+          },
+          "debt_id": "card_demo"
+        }
+      ],
       "decision": {
         "action": "refuse",
         "amount": {
@@ -6351,6 +6801,9 @@
     "current_buffer": {
       "$dec": "800.00"
     },
+    "current_debt_balance": {
+      "$dec": "1010.28"
+    },
     "interest_avoided_total": {
       "$dec": "9915.83"
     },
@@ -6371,7 +6824,7 @@
       "$dec": "11705.45"
     }
   },
-  "version": 3,
+  "version": 4,
   "window": {
     "end": "2026-05-30",
     "start": "2026-03-02"

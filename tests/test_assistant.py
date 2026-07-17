@@ -21,7 +21,7 @@ import pytest
 from backend import artifact as art
 from backend import assistant
 from backend.assistant import Facts, Outcome, RateCap, answer, run_tool, verify
-from engine.models import Action, Decision, Reason, ReasonCode
+from engine.models import Action, AprSource, Decision, Reason, ReasonCode
 
 
 @pytest.fixture(scope="module")
@@ -625,9 +625,14 @@ class TestSupportingDates:
             checking_balance=Decimal("1892.44"),
             savings_balance=Decimal("2400.00"),
             buffer_floor=Decimal("800.00"),
-            debt_balance=Decimal("4751.31"),
-            debt_apr=Decimal("0.2399"),
-            debt_id="card_demo",
+            debts=(
+                art.DebtRecord(
+                    debt_id="card_demo",
+                    balance=Decimal("4751.31"),
+                    apr=Decimal("0.2399"),
+                    apr_source=AprSource.REPORTED,
+                ),
+            ),
             history_days=140,
         )
 

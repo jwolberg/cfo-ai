@@ -32,8 +32,10 @@ function decision(over: Partial<Decision> = {}): Decision {
     checking_balance: '3847.41',
     savings_balance: '2400.00',
     buffer_floor: '800.00',
+    debts: [
+      { debt_id: 'card_demo', balance: '3451.64', apr: '0.2399', apr_source: 'reported' },
+    ],
     debt_balance: '3451.64',
-    debt_id: 'card_demo',
     ...over,
   };
 }
@@ -48,6 +50,7 @@ function body(over: Partial<DecisionsResponse> = {}): DecisionsResponse {
       targeted_debt_id: 'card_demo',
       targeted_debt_balance: '3451.64',
       starting_debt_balance: '13652.42',
+      current_debt_balance: '3451.64',
       sweep_count: 35,
       refuse_count: 55,
       paid_off: false,

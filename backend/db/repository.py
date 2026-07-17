@@ -92,13 +92,31 @@ class Repository:
         )
 
     def add_card(self, **f: Any) -> None:
+        """Insert a card. `apr_source` is **required**, which is the whole point of naming it here.
+
+        It was missing from this INSERT until ticket `0023`, and the omission was silent: the column
+        carries `server_default 'reported'` so a live table could be backfilled without a rewrite
+        (migration `0002`), which means an INSERT that simply never mentions it succeeds and records
+        a **guess as a reported fact**. Writing a 23% estimate through here stored
+        `apr=0.23000, apr_source=reported`, and the column's own comment says what that costs:
+        "a 23% estimate and a reported 23% are the same number, and only this column tells them
+        apart... losing this would silently start billing the KPI against a guess."
+
+        That is ticket `0028` — *act on the estimate, never bill for it* — defeated by a column
+        nobody wrote. Nothing caught it because nothing wrote a card through this repository at all
+        until the seeder; `0021` built the method and `0028` added the column two PRs later.
+
+        Naming the column in the statement is what makes it required: SQLAlchemy raises on a missing
+        bind parameter, so forgetting it is now an error at the boundary rather than a household
+        whose rate provenance quietly became a fact.
+        """
         self._exec(
-            "INSERT INTO cards (id, household_id, apr, close_day_of_month, grace_days,"
+            "INSERT INTO cards (id, household_id, apr, apr_source, close_day_of_month, grace_days,"
             " statement_balance, statement_due_date, minimum_payment, unbilled_balance,"
             " next_close_date, behavior, observed_monthly_payment, observed_monthly_charges)"
-            " VALUES (:card_id, :h, :apr, :close_day_of_month, :grace_days, :statement_balance,"
-            " :statement_due_date, :minimum_payment, :unbilled_balance, :next_close_date,"
-            " :behavior, :observed_monthly_payment, :observed_monthly_charges)",
+            " VALUES (:card_id, :h, :apr, :apr_source, :close_day_of_month, :grace_days,"
+            " :statement_balance, :statement_due_date, :minimum_payment, :unbilled_balance,"
+            " :next_close_date, :behavior, :observed_monthly_payment, :observed_monthly_charges)",
             **f,
         )
 
