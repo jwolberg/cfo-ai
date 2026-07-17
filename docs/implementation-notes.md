@@ -2073,3 +2073,31 @@ documented. `last-verified: 2026-07-17` on that file is a real run, not a stamp.
   quantile — has no ticket. Neither does a `today`/day-boundary/timezone definition (zero hits in
   `docs/`), raised by the 2026-07-12 review at [2.4]. Both are the opposite of cruft: work the
   backlog has forgotten rather than work it should drop.
+
+---
+
+## 2026-07-17 — sweep-execution rung, brainstorm re-base (docs/sweep-execution-rung)
+
+Not a code ticket — a scope correction to `docs/brainstorms/2026-07-17-the-sweep-execution-rung.md`
+before it feeds a plan. Three decisions the original (ce-doc-reviewed) scope did not settle:
+
+- **[5.0] resolved → card-targeted.** The feature is: pay a customer's credit card from their bank.
+  Reserve-account ACH dropped (engine emits no reserve decision type; idle cash is the one thing
+  `decision-engine.md` [4] won't sweep).
+- **Rail re-based → ACH debit leg + Method payoff leg.** Fact-checked Method's live API (2026-07-17):
+  lifecycle maps ~1:1 onto `architecture.md` [5], has idempotency keys, required webhooks, and a
+  Simulations API that forces reversals in sandbox (U6's hard gate). Key finding: ACH (Increase/Dwolla)
+  is only the *debit* leg — the *payoff* leg has no universal "pay this card" API, and Method is the
+  verified channel. The prior ACH assumption is not wasted; it funds the payoff.
+- **[5.2] resolved → commit to FBO custody.** Method's payment source must be a platform funding
+  account (an end-user's checking cannot be a source), so user funds transit an account we hold. This
+  commits the rung's *posture* to FBO/custodial (Reg E / GLBA / MTL / reconciliation), which every core
+  doc says to avoid — accepted per explicit product decision. Shadow-mode-first still holds; the
+  compliance build is a predecessor to turning `submit()` on, not a shadow deliverable.
+
+TreasuryDirect on `status.html` was checked and is correctly labeled (the "invest what's freed up"
+half, not the card-paydown rail) — no change needed there.
+
+Follow-up: this re-base did **not** verify the debit-leg provider (Increase) signatures against current
+docs — flagged in [0.2] as a plan-time predecessor. And [7.1] distribution tension: the FBO commitment
+presumes an owned rail; an embedded partner could delete it.
