@@ -1,0 +1,942 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>resfi — what's built, and what isn't</title>
+<style>
+  /* Light only, deliberately — same reasoning as decision-flow.html: `color-scheme: light` stops
+     an OS in dark mode from force-inverting the page into a palette nobody checked.
+
+     Palette and the flow/node/exit shapes are decision-flow.html's, unchanged. Its two colors
+     already carry fixed meanings — BLUE marks the sweep, DEEP GREEN marks a refusal — so **built
+     vs. not-built is drawn with shape, not color**: a built component is a solid white card with a
+     shadow, an unbuilt one is a dashed ghost. Reusing blue/green for build status would collide
+     with the one thing the palette already says. */
+  :root {
+    color-scheme: light;
+
+    --bg: #f5f9fa;
+    --panel: #ffffff;
+    --ink: #15282c;
+    --muted: #5c7178;
+    --faint: #949c9a;
+    --rule: #e3edef;
+    --kicker: #598278;
+
+    --stop: #085041;
+    --stop-bg: #eff5f3;
+    --stop-rule: #c9dcd6;
+
+    --go: #2c7f98;
+    --go-bar: #4aafc9;
+    --go-bg: #edf7fa;
+    --go-rule: #c2e3ec;
+
+    --note: #147257;
+    --note-bar: #1d9e75;
+    --note-bg: #f1f8f5;
+    --note-rule: #cfe7dc;
+
+    /* Neutral, on purpose: the ghost outline must not read as either voice. */
+    --ghost: #b3bdbc;
+
+    --shadow: 0 1px 2px rgba(22, 38, 46, .04), 0 8px 24px -8px rgba(22, 38, 46, .10);
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  a { color: var(--go); text-decoration-color: var(--go-rule); text-underline-offset: 2px; }
+  a:hover { text-decoration-color: var(--go); }
+
+  body {
+    margin: 0;
+    padding: 3rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1020px; margin: 0 auto; }
+
+  header { margin-bottom: 3rem; }
+  .brand { display: block; width: 168px; height: auto; margin: 0 0 1.75rem -6px; }
+  h1 {
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    line-height: 1.15;
+    margin: 0 0 .75rem;
+    letter-spacing: -0.02em;
+  }
+  .lede { font-size: 1.075rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.5rem; }
+  .thesis {
+    border-left: 4px solid var(--stop);
+    padding: .3rem 0 .3rem 1rem;
+    font-size: 1.05rem;
+    max-width: 62ch;
+  }
+  .thesis strong { color: var(--stop); }
+
+  h2 {
+    font-size: 1.125rem;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--go-bar);
+    font-weight: 600;
+    margin: 3.5rem 0 1.4rem;
+    padding-bottom: .85rem;
+    position: relative;
+  }
+  h2::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 110px; height: 4px;
+    border-radius: 2px;
+    background: var(--go-bar);
+  }
+  .section-num {
+    display: inline-block;
+    font: 700 .8rem/1 var(--mono);
+    color: var(--faint);
+    letter-spacing: normal;
+    text-transform: none;
+    margin-right: .6rem;
+  }
+  .subhead {
+    font: 700 1rem/1 var(--mono);
+    letter-spacing: .03em;
+    text-transform: none;
+    color: var(--kicker);
+    margin: 3rem 0 1.1rem;
+  }
+  .subhead:first-of-type { margin-top: 1.75rem; }
+
+  /* --- the product panel ------------------------------------------------ */
+  .product {
+    background: var(--panel);
+    border: 1px solid var(--go-rule);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.6rem 1.75rem;
+  }
+  .product .kicker {
+    font: 600 .7rem/1 var(--mono);
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--go);
+    display: block;
+    margin-bottom: .6rem;
+  }
+  .product h3 {
+    margin: 0 0 .6rem;
+    font-size: 1.35rem;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+  }
+  .product p { margin: 0 0 .7rem; font-size: 1rem; color: var(--muted); max-width: 68ch; }
+  .product p:last-child { margin-bottom: 0; }
+  .product strong { color: var(--go); }
+
+  /* --- legend ----------------------------------------------------------- */
+  .legend { display: flex; flex-wrap: wrap; gap: 1.25rem; margin: 0 0 1.5rem; align-items: center; }
+  .key { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--muted); }
+  .swatch { width: 26px; height: 17px; border-radius: 5px; flex: none; }
+  .swatch.is-built { background: var(--panel); box-shadow: var(--shadow); }
+  .swatch.is-todo { background: transparent; border: 1px dashed var(--ghost); }
+
+  /* --- the component map ------------------------------------------------ */
+  .map { display: flex; flex-direction: column; }
+
+  .lane { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 1rem; align-items: start; }
+  .lane-label {
+    font: 600 .66rem/1.4 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--faint);
+    text-align: right;
+    padding-top: 1.1rem;
+  }
+  .lane-boxes { display: grid; grid-template-columns: repeat(auto-fit, minmax(186px, 1fr)); gap: .6rem; }
+
+  .box {
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: .95rem 1.05rem;
+  }
+  .box .tag {
+    font: 600 .62rem/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--kicker);
+    display: block;
+    margin-bottom: .45rem;
+  }
+  .box h3 { margin: 0 0 .28rem; font-size: .92rem; letter-spacing: -0.01em; }
+  .box p { margin: 0; font-size: .78rem; color: var(--muted); }
+
+  .box.todo { background: transparent; border: 1px dashed var(--ghost); box-shadow: none; }
+  .box.todo .tag,
+  .box.todo h3,
+  .box.todo p { color: var(--faint); }
+
+  .arrow { grid-column: 2; height: 1.1rem; position: relative; }
+  .arrow::before {
+    content: "";
+    position: absolute;
+    left: 26px; top: 0; bottom: 0;
+    width: 2px;
+    background: var(--ghost);
+  }
+
+  /* --- tables ----------------------------------------------------------- */
+  .rules {
+    overflow-x: auto;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: .35rem 1.15rem;
+  }
+  .rules tr:last-child td { border-bottom: none; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; min-width: 460px; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--rule); }
+  th {
+    font: 600 .68rem/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--faint);
+  }
+  td:last-child { color: var(--muted); }
+  td b { color: var(--ink); font-weight: 600; }
+  td code {
+    font: .82em var(--mono);
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+  }
+
+  /* --- the decision flow ------------------------------------------------ */
+  .flow { display: flex; flex-direction: column; gap: 0; }
+
+  .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 2.25rem minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .node {
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.15rem 1.3rem;
+    position: relative;
+  }
+  .node .kicker {
+    font: 600 .9rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--kicker);
+    display: block;
+    margin-bottom: .5rem;
+  }
+  .node h3 { margin: 0 0 .35rem; font-size: 1.02rem; letter-spacing: -0.01em; }
+  .node p { margin: 0; font-size: .875rem; color: var(--muted); }
+  .node code {
+    font: .82em var(--mono);
+    background: var(--bg);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+  }
+  .node.go { border-color: var(--go-rule); background: var(--go-bg); }
+  .node.go h3 { color: var(--go); }
+
+  .link { position: relative; }
+  .link::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 0; bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: var(--rule);
+  }
+  .stage.first .link::before { top: 50%; }
+  .stage.last  .link::before { bottom: 50%; }
+  .link::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    height: 2px;
+    width: 50%;
+    background: var(--stop-rule);
+  }
+  .stage.noexit .link::after { display: none; }
+
+  .gap { height: 1.15rem; }
+  .gap .link::before { top: 0; bottom: 0; }
+  .gap .link::after { display: none; }
+
+  .exit {
+    background: var(--stop-bg);
+    border: 1px solid var(--stop-rule);
+    border-radius: 18px;
+    padding: 1rem 1.15rem;
+    align-self: center;
+  }
+  .exit .verdict {
+    font: 700 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    color: var(--stop);
+    display: block;
+    margin-bottom: .55rem;
+  }
+  .codes { display: flex; flex-wrap: wrap; gap: .35rem; }
+  .code {
+    font: .72rem/1.5 var(--mono);
+    background: var(--panel);
+    border: 1px solid var(--stop-rule);
+    color: var(--stop);
+    border-radius: 999px;
+    padding: .2rem .6rem;
+    white-space: nowrap;
+  }
+  .exit p { margin: .6rem 0 0; font-size: .8rem; color: var(--muted); }
+  .exit.empty { background: none; border: none; }
+
+  .callout {
+    margin-top: 1.25rem;
+    background: var(--note-bg);
+    border: 1px solid var(--note-rule);
+    border-left: 4px solid var(--note-bar);
+    border-radius: 18px;
+    padding: 1.15rem 1.35rem;
+    font-size: .9rem;
+  }
+  .callout strong { color: var(--note); }
+  .callout p { margin: 0 0 .7rem; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout.go { background: var(--go-bg); border-color: var(--go-rule); border-left-color: var(--go-bar); }
+  .callout.go strong { color: var(--go); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: .82rem;
+    color: var(--faint);
+  }
+  footer a { color: var(--go); }
+
+  @media (max-width: 700px) {
+    .lane { grid-template-columns: 1fr; gap: .4rem; }
+    .lane-label { text-align: left; padding-top: .9rem; }
+    .arrow { display: none; }
+
+    .stage { grid-template-columns: 1fr; gap: .6rem; }
+    .link { display: none; }
+    .exit { border-left: 3px solid var(--stop); margin-left: 1rem; }
+    .exit.empty { display: none; }
+    .gap { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img class="brand" src="./design/logos/resfi-brand.svg"
+       alt="resfi — responsible finance" width="259" height="88">
+  <h1>What&rsquo;s built, and what isn&rsquo;t</h1>
+  <p class="lede">
+    Status as of 17 July 2026. <strong>The core functionality between the bank connection and the
+    payment rail is built and deployed</strong>: the decision engine, the database, the API,
+    and the app. The harness that measures it is live as well. This is a grader that scores each decision against what
+    actually happened, though still running only on synthetic data.
+    <b>Neither end is built:</b> one is the next problem, the other is deliberately unchosen.
+  </p>
+  <p class="lede">
+    This is a few days into a large, complex build, and the scope ahead is almost
+    certainly bigger than what stands today. Read this as real progress on the hard middle, not as a
+    finished product.
+  </p>
+  <p class="thesis">
+    <strong>Nothing here has touched a real household.</strong> The engine, the database, the API
+    and the app are live and measured; they run against four synthetic households, and no money has
+    ever moved. The measurement grades <em>the code</em>, not yet <em>the world</em>.
+  </p>
+</header>
+
+<h2><span class="section-num">01</span>The product</h2>
+
+<div class="product">
+  <span class="kicker">Autonomous cashflow optimization</span>
+  <h3>Connect once. Never decide again.</h3>
+  <p>
+    The system continuously cuts interest expense, accelerates paydown, and grows savings and
+    investment. <b>No ongoing user decisions.</b>
+  </p>
+  <p>
+    <strong>This build proves the hardest slice: moving money safely.</strong> Save-more and
+    invest-more are the same engine, downstream.
+  </p>
+</div>
+
+<h2><span class="section-num">02</span>The engineering approach</h2>
+
+<h3 class="subhead">What I built</h3>
+
+<div class="callout go" style="margin-top:0">
+  <p>Built and deployed at <strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
+  Two screens of the customer app and the explain modal, running live against the API and the
+  database. <b>No mechanism for moving real funds is in place</b> ( no Plaid link, no payment
+  rail). Everything below the API is real and runs; everything that would touch an actual bank
+  account is not built.</p>
+  <p>Codebase: <a href="https://github.com/jwolberg/cfo-ai">github.com/jwolberg/cfo-ai</a>
+  is private, so the repository links on this page need access assigned.</p>
+</div>
+
+<p class="lede" style="margin:1.5rem 0">
+  The path from the bank connection to the money actually moving. The core in the middle &mdash;
+  decide, store, serve, and the customer-facing app &mdash; is built and deployed. <b>The ends are
+  not,</b> and the reason differs at each: one is the next problem, the other is deliberately
+  unchosen. Below those, the surfaces a live money-moving service will need &mdash; onboarding and
+  controls, an operator console, and observability &mdash; are scoped here but not yet built.
+</p>
+
+<div class="legend">
+  <span class="key"><span class="swatch is-built"></span> Built and running</span>
+  <span class="key"><span class="swatch is-todo"></span> Not built</span>
+</div>
+
+<div class="map">
+
+  <div class="lane">
+    <div class="lane-label">Source</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Plaid</span>
+        <h3>Bank connection</h3>
+        <p>Links, balances, transactions, card liabilities. Nothing is connected, and no test
+           customer can link an account today.</p>
+      </div>
+      <div class="box">
+        <span class="tag">sim</span>
+        <h3>Household simulator</h3>
+        <p>Generates synthetic households &mdash; paychecks, bills, card charges. The answer key:
+           it knows the truth, so the engine can be graded.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Ingest</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Ingest &amp; sync</h3>
+        <p>Webhook doorbell, cursored pull, nightly reconcile.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Normalize</h3>
+        <p>Pending&rarr;posted matching, internal-transfer detection. Silent corruption if wrong.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Recurring-event detector</h3>
+        <p>Finds paychecks and bills inside raw transactions. <b>The forecast cannot run without
+           it</b> &mdash; the largest single gap between a bank login and a decision.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Built</span>
+        <h3>Seeder</h3>
+        <p>Walks simulated history into the database. Four households, 90 days each.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Store</div>
+    <div class="lane-boxes">
+      <div class="box">
+        <span class="tag">Neon &middot; Postgres</span>
+        <h3>Database</h3>
+        <p>Seven tables. Every decision stores its <b>entire frozen input</b>, not a pointer to it
+           &mdash; so any past decision stays explainable and replayable after the underlying data
+           changes.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Built</span>
+        <h3>Household isolation</h3>
+        <p>Enforced by the database itself, not just the code. The service refuses to start if it
+           connects with a role that could bypass it.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built &middot; KMS</span>
+        <h3>Token encryption</h3>
+        <p>A placeholder column with no key behind it. Arrives with the first real bank token.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Decide</div>
+    <div class="lane-boxes">
+      <div class="box">
+        <span class="tag">engine</span>
+        <h3>Decision engine</h3>
+        <p>Deterministic: no clock, no AI, no randomness near a dollar. Same inputs, same decision,
+           forever. Detailed below.</p>
+      </div>
+      <div class="box">
+        <span class="tag">Built</span>
+        <h3>Grader &amp; calibration</h3>
+        <p>Grades every decision against what actually happened. The only numbers this product has
+           about itself.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Serve</div>
+    <div class="lane-boxes">
+      <div class="box">
+        <span class="tag">Google Cloud Run</span>
+        <h3>API</h3>
+        <p>Read-only. Every route is a GET; the product has no write path at all.</p>
+      </div>
+      <div class="box">
+        <span class="tag">claude-sonnet-5</span>
+        <h3>Explain assistant</h3>
+        <p>Narrates the engine&rsquo;s recorded reasons into plain language. It never produces a
+           decision and is never in the decision path.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built &middot; Clerk</span>
+        <h3>Identity</h3>
+        <p>No login. One shared key, embedded in the page; any holder can view any household. Fine
+           for synthetic data with no owner &mdash; not fine the day a real balance is behind it.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Client</div>
+    <div class="lane-boxes">
+      <div class="box">
+        <span class="tag">Firebase Hosting</span>
+        <h3>resfi web app</h3>
+        <p>Decision feed, spending view, explain view, household switcher. A window, not a control
+           panel: users read, and cannot change anything.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Onboarding</h3>
+        <p>Sign-up, bank-link flow, and the card-completeness attestation the engine already
+           requires before it will move a dollar.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Settings &amp; controls</h3>
+        <p>The guardrails the engine reads but no screen yet writes: buffer floor, sweep caps,
+           blackout windows, pause, and disconnect.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Native apps</h3>
+        <p>The same source targets iOS and Android; only the web build is deployed. App-store
+           presence and push permissions are their own work.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Act</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Payment rail</h3>
+        <p>ACH, bill-pay, or a partner&rsquo;s. <b>Deliberately unchosen</b> &mdash; distribution
+           decides it, and if we embed with a partner they own the rail.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not scoped</span>
+        <h3>TreasuryDirect</h3>
+        <p>Sweep idle cash to T-bills &mdash; the &ldquo;invest-more&rdquo; half of the product
+           above. See the note below.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Notifications</h3>
+        <p>Sweep and refusal confirmations.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Admin</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Operator console</h3>
+        <p>Look up a household, read the exact snapshot behind any decision, and pause sweeps for
+           one account or all of them &mdash; a support surface, kept strictly separate from the
+           customer app.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Overrides &amp; the kill switch</h3>
+        <p>A one-switch global halt on all money movement, and per-household caps an operator can
+           tighten &mdash; every action logged to the same append-only record as a decision.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Access &amp; audit</h3>
+        <p>Who may see or touch a household&rsquo;s data, and an immutable log of who did &mdash;
+           the operator half of the identity story the customer side also still needs.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Observe</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Live calibration</h3>
+        <p>The grader runs offline on synthetic data today. In production it watches every real
+           decision against what actually happened &mdash; the breach rate as a live number, not a
+           batch report.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Alerting &amp; SLOs</h3>
+        <p>Page a human on the things that precede an overdraft: a stale bank connection, a sweep
+           that didn&rsquo;t settle, ingest falling behind, an error-rate spike.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Metrics &amp; tracing</h3>
+        <p>Latency, sync freshness, and per-request traces &mdash; the ordinary operational
+           telemetry a service moving money is expected to keep.</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="callout">
+  <p><strong>The two unbuilt ends are not the same kind of unbuilt.</strong> <b>Source</b> is the
+  next problem: real households need Plaid, an ingest pipeline, and a recurring-event detector that
+  does not exist &mdash; and without that detector there are no forecast events, so a linked
+  household would produce no decision at all.</p>
+  <p><b>Act</b> is unbuilt <em>deliberately</em>. Moving money is two legs, not one. The
+  <b>debit leg</b> pulls from checking &mdash; ordinary ACH, a solved problem. The <b>payoff leg</b>
+  has to land that money on a card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot
+  route. But the reason to wait is that <b>distribution forecloses the choice</b>: if this ships
+  embedded in a bank or an issuer, the partner owns the rail. So nothing in the codebase assumes
+  one &mdash; the engine emits a decision, and something else moves the money.</p>
+  <p><strong>On TreasuryDirect.</strong> It is the &ldquo;invest what&rsquo;s freed up&rsquo;&rdquo;
+  half of the product statement, and it appears nowhere in the codebase. One document needs
+  correcting before it is built: <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a> &sect;4.2 still lists
+  <b>Investments</b> as explicitly <b>out of scope</b>. It is also a different bet, not an extension
+  of this one &mdash; today&rsquo;s engine ranks a sweep by the debt&rsquo;s interest rate, because
+  paying down a 23% card beats any risk-free yield. Sweeping to T-bills only makes sense once the
+  expensive debt is gone, which is the downstream half the product statement describes.</p>
+</div>
+
+<h3 class="subhead">The deployed tech stack</h3>
+
+<div class="rules">
+<table>
+  <thead><tr><th>Layer</th><th>What runs</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Hosting &amp; CI</b></td>
+      <td><b>Google Cloud Run.</b> <b>GitHub Actions</b>: ruff, the Python suite, and the mobile
+          typecheck and tests.</td>
+    </tr>
+    <tr>
+      <td><b>API</b><br><code>backend/</code></td>
+      <td><b>FastAPI + Uvicorn.</b> Serves the decision history and the spend view. Refuses to
+          start without its secrets, or under a database role that could bypass row-level
+          security &mdash; a service holding bad data should not serve wrong numbers one request
+          at a time.</td>
+    </tr>
+    <tr>
+      <td><b>Client</b><br><code>mobile/</code></td>
+      <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same two
+          screens &mdash; the dashboard and the spending view &mdash; and the explain modal run in a
+          browser. That browser build is what&rsquo;s deployed at
+          <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>; the same source targets iOS and
+          Android unchanged.</td>
+    </tr>
+    <tr>
+      <td><b>Persistence</b><br><code>backend/db/</code></td>
+      <td><b>Postgres</b> (Neon), scoped by <code>household_id</code>. Money is <code>NUMERIC</code>,
+          never a float. The decision log is partitioned by month and stores each decision&rsquo;s
+          <b>entire frozen input</b>, so &ldquo;why did you move $220 that Tuesday&rdquo; stays
+          answerable after Plaid rewrites the underlying history. Every table is scoped
+          <b>twice</b> &mdash; at the repository <em>and</em> by row-level security &mdash; and the
+          test suite proves each layer <b>with the other removed</b>. Defence in depth that is only
+          tested end-to-end is one layer wearing a disguise.</td>
+    </tr>
+    <tr>
+      <td><b>Decision engine</b><br><code>engine/</code></td>
+      <td>Python 3.10, and <b>zero dependencies</b>. No clock, no network, no LLM, no randomness
+          anywhere near a dollar amount. The same snapshot yields the same decision forever, which
+          is what makes a sweep explainable, auditable, and replayable in a backtest.</td>
+    </tr>
+    <tr>
+      <td><b>Explain assistant</b><br><code>backend/assistant.py</code></td>
+      <td><b>Claude Sonnet 5</b> &mdash; it <b>looks up decisions the engine already made</b> and puts
+          them in English. It does not make them. Three <b>read-only</b> tools
+          (<code>get_decision</code>, <code>list_decisions</code>, <code>get_summary</code>) fetch a
+          finished decision; the model has no path to move money, size a sweep, or pick a card. Every
+          figure in its reply is checked against that turn&rsquo;s tool results &mdash; keyed by
+          <b>(date, field)</b>, so it cannot quote a real number against the wrong day, and it cannot
+          cite a decision it never fetched. The only path that costs money, and the only one with a
+          rate cap.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <strong>The LLM narrates, never decides.</strong> Sweeps, interest, and reason codes are computed
+  deterministically before the model is ever called; a guard &mdash; not a system prompt &mdash;
+  enforces the boundary. The dashboard and base explanations never call the model at all, so a
+  provider outage can&rsquo;t take the product down.
+</div>
+
+<h3 class="subhead">The Decision Engine</h3>
+
+<p class="thesis" style="margin: 0 0 1.75rem">
+  A logic diagram for how transfer decisions are made. Note: Almost
+  everything branches <strong>off</strong> it, into a reason to do nothing.
+  <strong>Refusal is a feature of the product.</strong>
+</p>
+
+<div class="flow">
+
+  <div class="stage first noexit">
+    <div class="node">
+      <span class="kicker">Input &middot; models.py</span>
+      <h3>Snapshot</h3>
+      <p>Every input the engine may look at, frozen: balances, events, pending, debts, policy.
+         <code>today</code> is a field, never <code>date.today()</code> &mdash; so a sweep stays
+         replayable after Plaid rewrites history beneath us.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Gate &middot; decide.py</span>
+      <h3>Is it safe to look at all?</h3>
+      <p>Conditions under which <em>no</em> amount of surplus justifies moving money. They apply to
+         the <strong>funding account</strong> &mdash; the one the debit actually leaves. A stale
+         savings balance can&rsquo;t overdraw checking; refusing on it would be superstition, not
+         safety.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">MOVE NOTHING</span>
+      <div class="codes">
+        <span class="code">FUNDING_ACCOUNT_MISSING</span>
+        <span class="code">FUNDING_ACCOUNT_NOT_CHECKING</span>
+        <span class="code">CONNECTION_UNHEALTHY</span>
+        <span class="code">BALANCE_STALE</span>
+        <span class="code">INSUFFICIENT_HISTORY</span>
+        <span class="code">INCOME_TOO_VARIABLE</span>
+        <span class="code">BLACKOUT</span>
+        <span class="code">SWEEP_IN_FLIGHT</span>
+      </div>
+      <p>A balance older than <b>2 days</b> is a guess. Under <b>60 days</b> of history you cannot
+         see a monthly bill. Income variation over <b>0.25</b> means their buffer is a rational
+         hedge &mdash; sweeping it is worse than doing nothing.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage noexit">
+    <div class="node">
+      <span class="kicker">Forecast &middot; forecast.py</span>
+      <h3>How low does checking go?</h3>
+      <p>Project the funding account <b>30 days</b> out and take the <strong>running low</strong>,
+         not the ending balance &mdash; a household only has to be broke once. Every uncertain
+         quantity resolves toward the end that hurts them.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Target &middot; decide.py</span>
+      <h3>Which card?</h3>
+      <p>Highest APR wins. But Plaid doesn&rsquo;t report APR for many issuers, and with two cards
+         and no rates, paying the wrong one <em>looks exactly like working</em> while quietly
+         destroying the entire point. So we say so instead.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOTHING TO AIM AT</span>
+      <div class="codes">
+        <span class="code">NO_DEBT</span>
+        <span class="code">APR_UNKNOWN</span>
+      </div>
+      <p><code>NO_DEBT</code> is the happiest refusal in the file.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Reserve &middot; decide.py</span>
+      <h3>What isn&rsquo;t ours to move?</h3>
+      <p><code>available = low &minus; buffer_floor &minus; reserved_minimums</code></p>
+      <p style="margin-top:.5rem">The minimum payment is not surplus. Sweeping it and then missing
+         it causes the exact late fee we exist to prevent.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">THE MONEY ISN&rsquo;T THERE</span>
+      <div class="codes"><span class="code">NO_SURPLUS</span></div>
+      <p>Nothing above the buffer and the reserved minimums.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Cadence &middot; decide.py</span>
+      <h3>Is it simply too soon?</h3>
+      <p>Sweeps are spaced a <b>week</b> apart &mdash; a risk control, not a UX choice; every sweep
+         is an independent draw on the tail. Measured: daily is worth <b>~$36/yr</b> in interest
+         timing, and only pays for itself if the per-sweep overdraft rate stays under <b>~1%</b>
+         (<b>~0.1%</b> at a realistic all-in cost). We now have a bound &mdash; <b>0 overdrafts in
+         590 sweeps</b>, so <b>&le;0.51%</b> &mdash; which rules out the first and cannot yet exclude
+         the second. <b>The cadence stays weekly.</b></p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOT YET</span>
+      <div class="codes"><span class="code">CADENCE_HOLD</span></div>
+      <p>&ldquo;We paid an extra $1,600.00 for you 1 day ago. Our next check-in is in 6 days.&rdquo;
+         What they got, and when we&rsquo;re back &mdash; not a lecture about our cadence policy.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage">
+    <div class="node">
+      <span class="kicker">Caps &middot; decide.py</span>
+      <h3>What are we allowed to move?</h3>
+      <p>Cut to the per-sweep cap, then the weekly cap, then the card balance. The engine may never
+         exceed the user&rsquo;s guardrails &mdash; only fall short of them.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit">
+      <span class="verdict">NOT WORTH IT</span>
+      <div class="codes"><span class="code">BELOW_MIN_SWEEP</span></div>
+      <p>Under <b>$1.00</b>, the ACH risk and the noise of a notification cost more than the interest
+         saved.</p>
+    </div>
+  </div>
+
+  <div class="stage gap"><div></div><div class="link"></div><div></div></div>
+
+  <div class="stage last noexit">
+    <div class="node go">
+      <span class="kicker">Output</span>
+      <h3>Sweep</h3>
+      <p>An amount, a target card, and the <strong>reason codes</strong> that produced them &mdash;
+         never sentences. <code>explain.py</code> holds the only copy in the system, so a wording
+         change cannot break a calculation, and the LLM narrates <em>from</em> the codes rather than
+         paraphrasing a finished financial claim.</p>
+    </div>
+    <div class="link"></div>
+    <div class="exit empty"></div>
+  </div>
+
+</div>
+
+<div class="callout go">
+  <p><strong>The one rule inside the forecast.</strong> <em>Money arrives late and small. It leaves
+  early and large.</em> Every uncertain quantity &mdash; when the paycheck lands, how big rent is,
+  what they spend on a Saturday &mdash; is deliberately resolved against us. <b>A forecast that is
+  right on average overdrafts half its users half the time.</b></p>
+</div>
+
+<h2><span class="section-num">03</span>Where it stands</h2>
+
+<div class="rules">
+<table>
+  <tr><th>Area</th><th>Status</th></tr>
+  <tr><td><b>Decide</b></td><td>Built, deployed, and measured against 60 synthetic households &mdash; 4,320 graded days, a 2.3% forecast breach rate, and 0 sweep-caused overdrafts in 590 sweeps.</td></tr>
+  <tr><td><b>Store</b></td><td>Built and live on Neon. Four households &times; 90 days.</td></tr>
+  <tr><td><b>Serve</b></td><td>Built and live on Cloud Run. Read-only.</td></tr>
+  <tr><td><b>Client</b></td><td>Built and live. Read-only; no linking, no attestation, no policy edits.</td></tr>
+  <tr><td><b>Source</b></td><td><b>Not built.</b> No Plaid, no live balances, no real household.</td></tr>
+  <tr><td><b>Ingest</b></td><td><b>Not built.</b> The recurring-event detector is the gating piece.</td></tr>
+  <tr><td><b>Identity</b></td><td><b>Not built.</b> Arrives with the bank connection.</td></tr>
+  <tr><td><b>Act</b></td><td><b>Not built,</b> and the rail is unchosen on purpose.</td></tr>
+  <tr><td><b>Client (rest)</b></td><td><b>Not built.</b> Onboarding, the bank-link flow, and the settings screens that write the guardrails the engine already reads.</td></tr>
+  <tr><td><b>Admin</b></td><td><b>Not built.</b> An operator console, overrides and a kill switch, access control and audit.</td></tr>
+  <tr><td><b>Observe</b></td><td><b>Not built.</b> Live calibration, alerting on the signals that precede an overdraft, and operational metrics.</td></tr>
+</table>
+</div>
+
+
+<footer>
+  <p><b>Measured on 17 July 2026:</b> 532 Python tests collected; four seeded archetypes; the
+  component inventory above was read from the code, not from the docs.
+  <b>Asserted, carried from</b> <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a>, <a href="https://github.com/jwolberg/cfo-ai/blob/main/README.md">README.md</a>
+  <b>and</b> <a href="./decision-flow.html">decision-flow.html</a>: the 2.3% breach rate, 590
+  sweeps, 4,320 graded days, and the cadence economics &mdash; these are the grader&rsquo;s own
+  reported figures and were not re-run for this page.</p>
+  <p>Companion documents: <a href="./decision-flow.html">decision-flow.html</a> (the bet, the same
+  engine flow, and the open distribution questions) &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/architecture.md">architecture.md</a> &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/brainstorms/2026-07-16-plaid-the-transport-rung.md">the Plaid scoping doc</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>
