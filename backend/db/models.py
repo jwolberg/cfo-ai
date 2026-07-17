@@ -35,6 +35,7 @@ from sqlalchemy import (
     Numeric,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -334,8 +335,39 @@ plaid_transactions = Table(
 )
 
 
+# **The one table deliberately outside `HOUSEHOLD_SCOPED`** (ticket 0035, ADR-0005). Plaid's webhook
+# carries `item_id`, not `household_id`, so the doorbell cannot resolve a household before RLS could
+# be set — and RLS fails closed, so a scoped insert here would see nothing to match and reject the
+# row. The raw store is therefore unscoped, mirroring `GET /households` (`backend/main.py`), and the
+# *worker* resolves `plaid_item_id → household_id` through the `SECURITY DEFINER`
+# `plaid_household_for_item()` function before it touches any financial row. Both holes — this table
+# and that function — are the first exceptions to "every table is scoped by household_id"
+# (`architecture.md` [4]), and ADR-0005 is where they are argued and bounded (including retention).
+#
+# The dedup key is `NULLS NOT DISTINCT`: `cursor` is NULL for the webhook that matters most
+# (TRANSACTIONS / SYNC_UPDATES_AVAILABLE carries none), and under default NULL-distinct semantics
+# two such redeliveries would both be admitted — the opposite of dedup. NULLS NOT DISTINCT treats
+# them as equal so `ON CONFLICT DO NOTHING` drops the redelivery. This is a best-effort guard on the
+# *enqueue*; the sync itself is idempotent by cursor regardless.
+plaid_webhooks = Table(
+    "plaid_webhooks",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("webhook_type", Text, nullable=False),
+    Column("webhook_code", Text, nullable=False),
+    # Whatever cursor the payload carries, if any. Usually NULL — see the note above.
+    Column("cursor", Text, nullable=True),
+    Column("payload", JSONB, nullable=False),
+    Column("received_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    # The named dedup key; the migration declares it NULLS NOT DISTINCT (not expressible here).
+    UniqueConstraint("plaid_item_id", "webhook_code", "cursor", name="uq_plaid_webhooks_dedup"),
+)
+
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
-# each, and ticket 0021's IDOR suite proves both — independently.
+# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` is deliberately
+# NOT here (ADR-0005): a webhook names an item, not a household.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "accounts",
     "cards",
@@ -359,6 +391,7 @@ __all__ = [
     "metadata",
     "plaid_items",
     "plaid_transactions",
+    "plaid_webhooks",
     "policies",
     "snapshots",
     "spend_projections",

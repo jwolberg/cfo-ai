@@ -67,6 +67,7 @@ from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
 from backend.db.session import assert_plaid_tokens_safe_at_rest, assert_rls_binds, make_engine
 from backend.db.snapshots import PostgresSnapshotStore
+from backend.plaid import link, webhook
 from backend.spend import CardObligations, SpendProjection
 from engine.explain import explain, render
 
@@ -144,6 +145,13 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# The Plaid transport rung (tickets 0034-0038). Two routes under `/plaid`: the webhook doorbell
+# (public, authenticated by Plaid's signature — it does NOT carry our API key) and the Link exchange
+# (internal, `Depends(require_api_key)` like everything else). Registered as routers so the route
+# logic lives in `backend/plaid/`, not here.
+app.include_router(webhook.router)
+app.include_router(link.router)
 
 
 # The household id travels in the path and is bound to both scoping layers in one place

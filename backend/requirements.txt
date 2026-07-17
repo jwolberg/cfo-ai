@@ -29,3 +29,12 @@ anthropic>=0.40,<1.0
 # is the same startup failure as a missing library, one layer down.
 sqlalchemy>=2.0,<2.1
 psycopg[binary]>=3.1,<4.0
+
+# The Plaid transport rung (tickets 0034-0038). Three runtime imports the container needs:
+#   - plaid-python:       the API client, /transactions/sync, and the Sandbox endpoints
+#   - google-cloud-tasks: the webhook doorbell hands sync work off to a queue, never runs it inline
+#   - PyJWT[crypto]:       verifies the ES256-signed `Plaid-Verification` header on every webhook
+# These agree with pyproject.toml's [api] extra by test, not by hope (tests/test_requirements.py).
+plaid-python>=39,<40
+google-cloud-tasks>=2.16,<3
+PyJWT[crypto]>=2.8,<3

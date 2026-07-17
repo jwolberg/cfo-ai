@@ -155,6 +155,31 @@ class Repository:
             **f,
         )
 
+    def add_plaid_item(
+        self,
+        *,
+        item_id: str,
+        plaid_item_id: str,
+        access_token: str,
+        institution_id: str | None = None,
+    ) -> None:
+        """Insert a linked Plaid Item, scoped to this household (ticket 0034).
+
+        Through the repository like every other write, so RLS `WITH CHECK` binds the row to
+        `household_id`: a caller that named the wrong household cannot smuggle an item elsewhere,
+        the INSERT is simply rejected. `access_token` is plaintext in Sandbox — the start guard
+        (`backend/db/session.py`) forbids a non-sandbox boot until it is ciphertext.
+        """
+        self._exec(
+            "INSERT INTO plaid_items"
+            " (id, household_id, plaid_item_id, institution_id, access_token)"
+            " VALUES (:item_id, :h, :plaid_item_id, :institution_id, :access_token)",
+            item_id=item_id,
+            plaid_item_id=plaid_item_id,
+            institution_id=institution_id,
+            access_token=access_token,
+        )
+
     def add_decision(self, **f: Any) -> None:
         self._exec(
             "INSERT INTO decisions (id, household_id, day, action, amount, target_card_id,"

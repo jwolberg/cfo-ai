@@ -2133,3 +2133,43 @@ worth a human's eye:
   its deletion is the serving rung's, and `spend_projections`'s annotation is about a different table.
 
 Full suite: 548 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U2 (`0035`): the webhook doorbell, the raw store, the queue
+
+The security-critical unit. Decisions and deviations a reviewer should see:
+
+- **The SECURITY DEFINER function was a genuine P0, and `households.id` is `text` not `uuid`.** The
+  plan sketched `plaid_household_for_item(text) RETURNS uuid`, but the worker needs to read FORCE'd
+  `plaid_items` before it can set a scope — and an unscoped session (even the table owner, under
+  FORCE) sees nothing. The function bypasses RLS *only* because it runs as its owner (the
+  migration-runner, a superuser/BYPASSRLS role) via SECURITY DEFINER. Proven empirically before
+  writing any Python: an unscoped `cfo_app` session reads 0 rows from `plaid_items` directly and
+  resolves the household through the function. Returns `text` (the real household_id type), not `uuid`.
+- **The dedup key needed `NULLS NOT DISTINCT`; the plan's literal UNIQUE would not dedup.** The
+  SYNC_UPDATES_AVAILABLE webhook carries no cursor, so the cursor column is NULL, and Postgres treats
+  NULLs as distinct in a UNIQUE by default — two redeliveries would both insert. `NULLS NOT DISTINCT`
+  (PG15+, both CI and Neon qualify) makes `ON CONFLICT DO NOTHING` actually drop the redelivery.
+- **Added PyJWT[crypto] beyond the plan's two named deps.** The plan named `plaid-python` and
+  `google-cloud-tasks` but the ES256 webhook-JWT verification needs a JWT library; PyJWT[crypto] is
+  the standard choice and pulls `cryptography` for the P-256 signature. All three are in both
+  manifests and `DISTRIBUTION_OF`.
+- **The doorbell is a second endpoint not behind our API key** (after `/health`). Plaid does not have
+  our key; its authentication is the signature. This is deliberate and documented in ADR-0005 [3].
+- **`household_id` on `/plaid/link/exchange` comes from the API-key-authenticated body**, not derived
+  from an end-user session (there is none; Clerk is deferred). The plan said "never read from the
+  request body" — interpreted as "never derive tenancy from an *untrusted* field." The trusted
+  internal caller (shared API key, the same trust every route runs under) supplies it, and the write
+  goes through `repository()` so RLS `WITH CHECK` binds the row. Flagged for review in `link.py`.
+- **Created `client.py` and `repository.add_plaid_item` in U2** though the plan listed `client.py`
+  under U4 — the Link exchange needs both. U4 extends them for the sync loop.
+- **`enqueue only on a fresh insert`**: the doorbell enqueues a sync only when the webhook row was
+  newly inserted (not a dedup conflict), so a redelivery never re-triggers work. The sync is
+  idempotent by cursor anyway, so this is a guard, not a correctness dependency.
+- **conftest `db` fixture now truncates `plaid_webhooks`** too: it has no FK to households, so
+  `TRUNCATE households CASCADE` never reached it (the same reason `decisions` is named there), and
+  webhook rows would otherwise leak across tests.
+- **GCP provisioning and the retention purge are NOT built here** — they are not code. ADR-0005 [4]
+  names the steps; U4 adds the Cloud Scheduler job. The service fails at the first webhook, not at
+  deploy, if the queue/OIDC are missing — which is why they are named loudly rather than gated.
+
+Full suite: 562 passed, 1 skipped, on Postgres 17.
