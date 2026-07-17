@@ -1,8 +1,8 @@
 ---
 id: "0031"
-title: The spend surface, per household — and for a portfolio
+title: The spend surface, per household — blocked on ingest, and that is the finding
 type: feature
-status: open
+status: blocked
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent
@@ -10,81 +10,89 @@ agentKind: classic
 agentScope: repo
 source: docs/tickets/0024-read-path-tenancy.md
 depends_on: ["0023", "0024", "0030"]
+blocked_by: "ingest — architecture.md [3.1], not built"
 created: 2026-07-17
 ---
 
-# The spend surface, per household — and for a portfolio
+# The spend surface, per household — blocked on ingest, and that is the finding
 
-**Split out of `0024`, which migrated every other route to Postgres.** `/spend` is the one route
-still reading `backend/data/decisions.json`, and the one route still serving a single household. It
-is the whole of what stands between this service and having one system of record.
+**Decided 2026-07-17: this waits for the `transactions` table, and does not fake one.**
 
-It was split rather than rushed because it needs **two** decisions, and `0024` was a tenancy
-migration — the same reason `DayRecord`'s portfolio became `0030` rather than riding along inside
-`0023`.
+The ticket's own Out of Scope said *"if this ticket concludes that the surface should wait for them,
+that is a finding worth writing down rather than a reason to store a projection quietly."* It does,
+and this is it.
 
-**Files:** `backend/main.py`, `backend/precompute.py` (`derive_spend_snapshot`),
-`backend/seed.py`, `backend/readpath.py`, `mobile/src/screens/Spending.tsx`, tests.
+## What was decided, and against what
 
-## Problem 1 — the data is not in the database
+`/spend` needs `rolling_30d_cash` / `rolling_30d_card` (every overlapping 30-day total by channel)
+and `charged_last_cycle` / `paid_last_cycle`. All four are derived from the full transaction
+`History`, and there is no `transactions` table — that is ingest, [3.1], not built.
 
-`SpendSnapshot` carries `rolling_30d_cash` and `rolling_30d_card` (every overlapping 30-day total
-in the trailing window, by channel) and `charged_last_cycle` / `paid_last_cycle`. All four are
-derived from the full transaction `History`.
+Three options. The two rejected ones are why this is a decision and not a delay:
 
-**There is no `transactions` table.** That is ingest — `architecture.md` [3.1] — and it is not
-built. The `decisions` and `snapshots` rows do not carry it either: a `Snapshot` holds
-`spend_30d_high` and `daily_discretionary_high`, which are the forecast's inputs, not the series.
+**Store the derived surface** — the seeder holds the `History`, so it could compute `SpendSnapshot`
+and store it per household. Small, and it would have closed the ticket today: the artifact already
+carries a `spend: SpendSnapshot` field, so this is that field relocated rather than a new concept.
+**Rejected because it stores an answer instead of the data the answer comes from.** `/spend` would
+be a lookup of something precomputed at seed time, and every question a reviewer might ask of it
+("what about a different window?") would need another seeder run. Ingest deletes the table anyway.
 
-So either the seeder stores the derived surface (a projection: honest, and something ingest would
-later delete), or this waits for the transactions table it actually wants. **The second is
-architecturally cleaner and blocks the switcher's Spending tab for three of four households in the
-meantime.** That is the trade to make deliberately.
+**Build the `transactions` table now** — seed `sim`'s `Txn`s into it and derive `/spend` from rows,
+the way production eventually will. **Rejected, and this is the sharper one.** [4] designs that
+table *with* `pending_transaction_id`, a `reconciled_with` link, and an `internal_transfer_pair`
+link. [3.2] calls pending→posted reconciliation and internal-transfer detection **"the two hard
+problems, each of which corrupts the forecast silently if wrong."** `sim`'s `Txn` is
+`(day, amount, label, kind, card_id)` and has none of them.
 
-## Problem 2 — it reads `cards[0]`
+A table with the designed name and none of the hard parts is not a head start on [3.1]; it is a
+thing that **looks** like the designed table and is not one — and ingest would then have to
+reconcile with the fake. That is this repo's signature failure, and it would have been introduced
+deliberately, in the schema, to make one route look finished.
 
-`derive_spend_snapshot` (`backend/precompute.py`) is `card = portfolio.cards[0] if portfolio.cards
-else None`, and everything it reports — the closed statement, the unbilled balance, what the card
-took last cycle against what came off it — describes **that one card**.
+## What shipped instead
 
-For the three portfolio households `0023` seeded, that is an arbitrary card presented as "your
-card". It is the same defect `0027` fixed in the walk and `0030` fixed in the artifact, in its last
-remaining home. **Do not fix problem 1 without fixing this**, or the fix stores a `cards[0]`
-surface into Postgres and the bug outlives all three tickets that removed it.
+**The landmine `0030` armed, disarmed.** `0027` refused a multi-card spec at `build()` because
+`DayRecord` held one debt — and that refusal was also, quietly, protecting
+`derive_spend_snapshot`'s `cards[0]`. `0030` fixed `DayRecord` and lifted the guard, and
+`build(archetype_b)` then produced an artifact whose `debts` listed three cards correctly and whose
+`spend` surface silently described `card_b_high` alone. Measured, not theorised.
 
-It is invisible today only because `build()` refused portfolios until `0030`, and because this
-route still serves the one household that has never had more than one card.
+So the refusal moved down to the field that is actually still single-card, and says what it
+actually is. `build()` still serves the demo — the only thing it is for; the seeder walks
+portfolios into Postgres through `walk()` and never comes here.
 
-## The shape question, and it is a real one
+**The Spending tab already tells the truth** (`0025`): for any household but the demo's it says so,
+rather than rendering the demo's figures under another household's label.
 
-The Spending screen renders "this cycle: statement / unbilled / held back" and "last cycle:
-charged / paid / grew by". For a portfolio, each of those is per card — but the **reserve**
-(`held_back`) is a portfolio-level fact, because `untouchable()` reserves against every card at
-once. So the surface is neither purely per-card nor purely aggregate, and deciding which parts are
-which is most of this ticket.
+## The consequence, stated rather than buried
 
-Worth remembering while deciding: the two obligations are reported separately because they fall due
-a **month apart**, and "a single 'what you owe' figure hides exactly the thing the user needs to
-see." That argument does not stop applying because there are three cards. It gets stronger.
+**`backend/data/decisions.json` is read at runtime, indefinitely.** ADR-0004's one-system-of-record
+is not true yet and will not be until ingest lands, which is Plaid — the largest unbuilt thing in
+this repo. "Temporary" here means *years*, plausibly, and the honest word for that is not temporary.
 
-## Acceptance criteria
+That is the price of the decision, and it is worth paying: a fake `transactions` table would make
+[3.1] harder than not having one, and a stored projection would make `/spend` a cache of an answer
+nobody can re-ask. Neither buys anything a reviewer actually wants — the decision feed, which is
+what "understand the dashboards" meant, works for all four households today.
+
+## When this unblocks
+
+[3.1] ingest, or the moment anything real needs a spend surface for a household that is not the
+demo's. Then:
 
 - [ ] `GET /households/{id}/spend`, scoped through `0021`'s repository like every other route.
-- [ ] It describes **every** card, not `cards[0]`. A portfolio household's response names all of
-      them.
-- [ ] The demo household's `/spend` response is unchanged, modulo the route. Archetype A is the
-      oracle here as everywhere else.
+- [ ] It describes **every** card, not `cards[0]`. The reserve (`held_back`) stays portfolio-level
+      — `untouchable()` reserves against every card at once — while the statement, the unbilled
+      balance and the cycle's charges are per card. Deciding which parts are which is most of the
+      work, and the argument in `SpendSnapshot`'s docstring does not weaken with three cards: "the
+      two obligations are kept separate because they are due a month apart, and a single 'what you
+      owe' number hides exactly the thing the user needs to see."
+- [ ] `derive_spend_snapshot`'s guard comes out, replaced by the shape rather than deleted.
 - [ ] `main.py` no longer reads `backend/data/decisions.json` **at all**, and
       `TestTheFileIsNoLongerTheSource::test_spend_is_the_one_that_still_does_and_says_so` is
-      deleted rather than updated — it exists to fail on the day this lands.
-- [ ] `app.state.artifact` is gone. The file stays in the tree as the golden fixture proving
-      archetype A's decisions never moved (`0019`, `0023`, `0030`), which is a test input, not
-      persistence. ADR-0004 [3] already says this.
-- [ ] `mobile/src/screens/Spending.tsx` renders whatever shape this lands on.
-- [ ] `pytest` and `ruff` clean.
-
-## Out of scope
-
-The `transactions` table and ingest ([3.1]). If this ticket concludes that the surface should wait
-for them, **that is a finding worth writing down** rather than a reason to store a projection
-quietly.
+      **deleted** rather than updated — it exists to fail on that day.
+- [ ] `app.state.artifact` is gone. The file stays as the golden fixture proving archetype A's
+      decisions never moved (`0019`, `0023`, `0030`) — a test input, not persistence. ADR-0004 [3]
+      already says so.
+- [ ] `mobile/src/screens/Spending.tsx`'s "we can't show this yet" state is deleted, and the tab
+      follows the switch for real — closing `0025`'s one `[~]`.

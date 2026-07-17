@@ -214,37 +214,50 @@ money is serialized as **strings**, never JSON numbers — the same reason `code
 | `GET /decisions/{day}/explain` | one day, plus narration from `engine/explain.py`. An unknown day is `404 no_record` |
 | `POST /assistant/message` | the LLM turn. The only endpoint that costs money |
 
-**What serves a request today is a JSON file.** `main.py` loads
-[`data/decisions.json`](../backend/data) once at startup, validates it, and serves it from memory
-for the process lifetime. There is **no write path**, and the artifact is not generated in
-production — it is built on a developer's machine by `python -m backend.precompute` and committed
-to the repo, because the buildpack deploy packages whatever is in the source tree.
+**Households come from Postgres** as of ticket `0024`. The feed, the explanations and the assistant
+are rebuilt from the `decisions` and `snapshots` rows the seeder wrote — scoped by the repository
+and again by RLS — in two queries: the decisions for a window, then every snapshot they point at
+through `0022`'s seam. `backend/readpath.py`, and `ServedWindow` rather than `Artifact`: nothing
+versions a query.
 
-**And `db/` is not in the read path.** [`seed.py`](../backend/seed.py) writes to it — ticket `0023`
-— but **no route has ever opened a connection to it.** Every request is still answered from the
-JSON file above. [`backend/requirements.txt`](../backend/requirements.txt), what Cloud Run actually
-installs, is `fastapi`, `uvicorn`, `anthropic`: **the deployed image contains no database driver at
-all**, so the seeded households exist only where a developer can reach them.
+**One route still reads the file, and it is named rather than hidden.** `/spend` serves the demo
+household's committed artifact. Its figures — every overlapping 30-day total by channel, what the
+card took last cycle — come from the whole transaction `History`, and **there is no `transactions`
+table** to rebuild them from ([3.1], not built). See `0031`, and [3.6.1] below: that is now a
+decision rather than a gap.
 
-**That is deliberate, and it is worth being precise about why**, because it looks exactly like the
-failure this repo keeps finding in itself and is not one.
-[ADR-0004](./decisions/0004-postgres-scoped-by-household.md) decides it explicitly — *"decide now,
-wire when something real needs it."* Tenancy and provenance are the expensive halves to retrofit:
-a column added later is a migration, but a scoping key added later is every query in the system.
-So the schema is built ahead of its caller **on purpose**, and ticket `0024` is the caller.
+**The deploy nearly did not survive this.** `backend/requirements.txt` — what the buildpack
+installs — listed `fastapi`, `uvicorn`, `anthropic`, and `0024` made `main.py` import SQLAlchemy.
+The container would have failed at import, before the first request, while 496 tests passed: the
+venv and CI both install `pyproject.toml`'s `[api]` extra, which is a superset, so **the only
+environment that could see it was production**. Fixed, and `tests/test_requirements.py` now asserts
+the manifest and the imports agree. The same shape as everything else in this section, with the
+twist that the unexercised mechanism was the deploy.
 
-The distinction that matters: `0019`–`0022`'s defects were mechanisms *believed* to be working.
-This one is **known** to be unwired, and that is the whole of why it is safe. The residual risk is
-still real, because RLS is precisely the kind of mechanism that reports green while doing nothing —
-which is not a hypothetical here. It already happened twice on this schema: the IDOR suite ran as
-the superuser that owns the tables, and Neon's default role bypasses RLS outright.
+### [3.6.1] The schema was built ahead of its caller, and here is what that cost
 
-**And a third time, the moment something finally wrote through it.** `0023`'s seeder was the first
-caller `Repository.add_card` ever had, and it found that the method never named `apr_source` in its
-INSERT — so the column's `server_default` recorded a *guessed* 23% rate as **`reported`**, a fact.
-`0021` built the method; `0028` added the column two PRs later; nothing wrote a card in between.
-That is the cost of a schema built ahead of its caller, paid exactly where this section says it
-would be, and it is the argument for `0024` landing sooner rather than later.
+[ADR-0004](./decisions/0004-postgres-scoped-by-household.md) decided it explicitly — *"decide now,
+wire when something real needs it."* Tenancy and provenance are the expensive halves to retrofit: a
+column added later is a migration, but a scoping key added later is every query in the system. The
+argument was right and the bill came anyway, which is worth recording rather than declaring victory.
+
+`0019`–`0022`'s defects were mechanisms *believed* to be working. The unwired schema was **known**
+to be unwired, and that is the whole of why it was safe. But RLS is precisely the kind of mechanism
+that reports green while doing nothing, and on this schema that happened **three times**:
+
+- The IDOR suite ran as the superuser that owns the tables, which bypasses RLS even when FORCEd.
+- Neon's default role has `rolbypassrls`. `assert_rls_binds()` now refuses to start under it — at
+  startup, since `0024`, because reachable and migrated is not the same as scoped.
+- **`Repository.add_card` never named `apr_source` in its INSERT.** `0023`'s seeder was the first
+  caller the method ever had, and the column's `server_default` had been recording a *guessed* 23%
+  rate as **`reported`** — a fact. `0021` built the method; `0028` added the column two PRs later;
+  nothing wrote a card in between.
+
+Three for three: every part of this schema that was not exercised was wrong, and each one was found
+by the first thing that finally exercised it. The lesson is not that ADR-0004 was mistaken — the
+scoping key really would have been every query — but that "decide now, wire later" buys a correct
+*shape* and guarantees nothing about the *code*, and the interval between the two is where the
+defects live.
 
 **The guard that came out of it.** [`db/session.py`](../backend/db/session.py)'s `assert_rls_binds()`
 refuses to start under a role that is `rolsuper` or `rolbypassrls`. Neon's default `neondb_owner`
