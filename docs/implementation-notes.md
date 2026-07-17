@@ -1886,3 +1886,78 @@ alternative (view, then paste at a bare `-w` prompt) is noted in the runbook.
 - **`DEPLOY.local.md` and `docs/runbooks/deploy.md` duplicate most of their content**, and drifted
   within a day of the runbook being written (claim 1 above). The duplication, not the graduation,
   is now the risk. Steps whose only content is reasoning are the ones worth collapsing.
+
+---
+
+## 2026-07-16 — the deploy ran, and the container started
+
+The claim `0033` could not settle is settled: a buildpack produced a container that **starts**.
+Revision `resfi-api-00003-viv` serves `https://resfi-api-ax7jrjo2tq-uc.a.run.app`, reading four
+seeded households out of Neon. `/health` returned `{"status":"ok"}` — **the first time that check
+has ever passed**, across every revision since `0009`.
+
+Starting at all means every lifespan gate passed against the real database, not a fixture:
+`expected_key()`, `database_url()`, `assert_rls_binds()`, `_assert_migrated()`, `build_client()`.
+That is the whole of `0026`'s and `0033`'s risk, retired in one boot.
+
+### The frontend deploy is not a documentation task
+
+The plan was "deploy, then update the READMEs". The READMEs were the least urgent thing in it.
+The live API served `/decisions`; `main` serves `/households/{id}/decisions`. **The only route the
+two builds share is `/assistant/message`** — so the deployed web bundle (zero occurrences of
+`households`, measured) breaks completely the moment API traffic flips. Deploying the web first
+inverts the failure rather than avoiding it: the new bundle calls `/households`, which the old API
+does not serve.
+
+There is no ordering that avoids a broken window. There is only making it short: **pre-build the
+web export, deploy the API, push the prebuilt bundle immediately.** That turns the gap into a
+`firebase deploy` (~30s) instead of an `expo export` plus a deploy. Done that way; `§8b`'s own trap
+checks (bundle points at Cloud Run, not `localhost`) were run against the build *before* the API
+moved.
+
+Worth naming because the coupling is invisible in both runbooks: they document the two deploys as
+independent sections (`[5]`, `§8b`), and nothing says that shipping one without the other is an
+outage.
+
+### Two "bugs" I reported that were mine
+
+Both caught before they reached the user, and both worth recording because the failure mode is
+identical: **a grep or a script that is wrong in a way that looks exactly like a broken product.**
+
+- `/households/{id}/decisions/{day}/explain` appeared to be missing from `main` — the route list I
+  built with a one-line `grep` for `@app.get("…"` missed it, because its decorator spans lines
+  (`backend/main.py:462`). The client calls it; the API serves it; nothing was wrong.
+- The live `explain` check returned `404` — because my shell extracted the day from a field named
+  `day`, and the field is `date`. Passing an empty string produced `/decisions//explain`.
+
+The lesson is the one this file keeps relearning from the other direction: **when a check fails,
+suspect the check.** An unscoped `SELECT count(*) FROM households` returning 4 rows looked like an
+RLS leak the same way; it was `models.py:251` working as designed.
+
+### README, corrected against measurement rather than memory
+
+- **448 → 532 Python tests, 51 → 66 mobile.** Measured: `pytest --collect-only` collects 532;
+  locally 393 pass and 139 skip (the DB suites decline without `TEST_DATABASE_URL`, exactly as the
+  README says they should), 0 fail. CI sets it and runs all 532.
+- **`artifact.py` is not superseded, and saying so would have been wrong.** `db/` replaced it as
+  what the deployed demo *reads*, but `main.py`, `readpath.py` and `assistant.py` still import
+  `DayRecord`/`Summary` from it as wire shapes — `main.py:62` says "imported as types and nothing
+  else". The README now distinguishes the module from the data source.
+- **`precompute.py`'s "(next) the seeder"** — the seeder exists and just wrote production.
+- **The household picker was undocumented.** `HouseholdPicker.tsx` (ticket `0025`) is wired into
+  `App.tsx` and the README still said "two screens and a modal". Documented *with* its constraint,
+  because the constraint is the interesting part: it is a reviewer affordance, not a customer
+  feature, and `USERS.md` §2 forecloses the admin view it would otherwise grow into.
+
+**Not touched:** the "no money has ever moved" claims. No Plaid, no rail, no real auth, and shadow
+mode still has not run against a real household. A deploy is not evidence for any of that, and the
+Status section should not drift toward implying it is.
+
+### Still open
+
+- **Version 1 of `resfi-database-url`** is stale (direct host, no `+psycopg`, since-rotated
+  password). Inert — `:latest` is what resolves — but worth disabling.
+- **`8535c05` and this entry are not on `main`.** PR #53 merged the earlier docs mid-session; this
+  branch is ahead again.
+- **`§7`'s acceptance checks are stale**: they curl `/decisions` and `/spend`, which the live
+  service no longer serves. The checks that matter now are in `deploy.md` `[4]` and this entry.
