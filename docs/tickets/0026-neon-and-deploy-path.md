@@ -65,10 +65,13 @@ is already spent.
 
 ## Acceptance criteria
 
-- [~] Neon project provisioned; connection string in Secret Manager; nothing secret in the deploy
+- [x] Neon project provisioned; connection string in Secret Manager; nothing secret in the deploy
       command or the repo. — *Neon provisioned and `cfo_runtime` created (`0020`);
-      [`neon-provisioning.md`](../runbooks/neon-provisioning.md) carries it. Secret Manager not
-      done: `docs/runbooks/deploy.md` `[4]` is the exact command, and it needs your gcloud auth.*
+      [`neon-provisioning.md`](../runbooks/neon-provisioning.md) carries it. **Secret Manager done
+      2026-07-16** (`deploy.md` `[4]`): the connection string is a secret reference, version 2 —
+      version 1 held the pre-correction string and is stale. The bind was verified as `cfo_runtime`
+      **through the pooler, using the Secret Manager value itself** rather than a hand-typed one:
+      an unscoped read of `decisions` returned 0 rows, a scoped read returned only the household's.*
 - [x] Migrations run in the deploy path; the step is documented. — **Decided: by hand, before the
       deploy, not in the entrypoint** (`deploy.md` `[2]`). An entrypoint that migrates has every
       cold start racing for a schema lock on a service that scales, and `--max-instances=1` is a
@@ -89,9 +92,12 @@ is already spent.
       seeding (`0031`). Rotation lives in `neon-provisioning.md`; the unreachable-database symptom
       table is `deploy.md` `[5]`. What is missing is the cold-start section, which cannot be written
       before it is measured.*
-- [ ] The deployed demo serves the four archetypes. — **The blocker, and it is not code.** Nothing
-      has ever seeded Neon; `deploy.md` `[3]` is the step. The live revision still serves the
-      pre-`0024` build.
+- [x] The deployed demo serves the four archetypes. — **Done 2026-07-16.** This was called "the
+      blocker, and it is not code", and that was right: the fix was running `deploy.md` `[3]`.
+      Revision `resfi-api-00003-viv` serves `demo_biweekly`, `semimonthly_portfolio`,
+      `monthly_thin`, and `apr_unreported` — 90 days each — out of Neon at `0004 (head)`, over
+      `/households/{id}/…`. `/health` answered `{"status":"ok"}` for the first time in the repo's
+      history, and an unknown household `404`s.
 
 ## Prepped by `0031` (2026-07-16) — everything short of touching live infrastructure
 
@@ -107,12 +113,19 @@ What it did, and deliberately did not do:
 - **[`docs/runbooks/deploy.md`](../runbooks/deploy.md) is written** — `0009`'s graduation plus this
   ticket's database steps, placeholders only, no secrets.
 - **Not done, by choice:** no gcloud auth used, no secret created, no Neon write, no deploy. The
-  runbook's `last-verified` says `never` and steps `[2]`–`[5]` are written from the code rather
+  runbook's `last-verified` said `never` and steps `[2]`–`[5]` were written from the code rather
   than from a run. **Do not trust them until one of them has failed and been fixed.**
 
-⚠️ **Neon predates migration `0004`.** It was migrated at `0020`; `0031` added `spend_projections`
-(five scoped tables → six). The deployed code will refuse to start against it until `deploy.md`
-`[2]` runs. That refusal is `_assert_migrated()` working, not a bug.
+  *Superseded 2026-07-16: they ran, and the distrust was earned.* `[2]`–`[5]` went through end to
+  end and the run **disproved four of the runbook's own claims** — see `neon-provisioning.md` and
+  PR #54. Written-from-the-code was not good enough, exactly as this bullet warned. The runbook now
+  says `last-verified: 2026-07-16`.
+
+⚠️ **Neon predated migration `0004`.** It was migrated at `0020`; `0031` added `spend_projections`
+(five scoped tables → six). The deployed code would refuse to start against it until `deploy.md`
+`[2]` ran. That refusal is `_assert_migrated()` working, not a bug. **Resolved 2026-07-16:** `[2]`
+ran, Neon is at `0004 (head)`, and the service starts — which is that gate passing rather than
+being skipped.
 
 ## If the cold start misses
 
