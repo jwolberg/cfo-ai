@@ -15,9 +15,14 @@ and a Postgres. Without them it **skips loudly** rather than reporting a green i
 same posture `tests/conftest.py` takes with the database suites, and the exact failure this rung's
 own philosophy warns about: "a mechanism that was built, tested, and never actually exercised."
 
-> ⚠️ Provenance: as of the initial commit this harness has **not yet been run against Plaid** — the
-> build environment had no Sandbox credentials. The first engineer with credentials runs it and
-> reconciles anything Sandbox does differently from the plan (see the `removed`-row note below).
+> ✅ Provenance: **run green against real Plaid Sandbox on 2026-07-17.** Two things Sandbox does
+> differently from the plan were reconciled in the process, both now reflected here:
+>   1. `/sandbox/item/fire_webhook` refuses (`SANDBOX_WEBHOOK_INVALID`) unless the item has a
+>      webhook URL configured — so `_create_and_exchange` sets a placeholder one.
+>   2. `fire_webhook SYNC_UPDATES_AVAILABLE` does **not** redeliver a notification; it *generates* a
+>      new batch of transactions. So the redelivery-is-a-no-op proof is an unchanged re-sync (step
+>      2), and the fired webhook is the *incremental*-update path (step 3). The plan modeled it as a
+>      redelivery; Plaid's own behavior corrected that.
 """
 
 from __future__ import annotations
@@ -58,14 +63,27 @@ def _make_client():
 
 
 def _create_and_exchange(client) -> tuple[str, str]:
-    """A Sandbox public token, exchanged for an access token and item id. No Link UI."""
+    """A Sandbox public token, exchanged for an access token and item id. No Link UI.
+
+    A webhook URL is configured on the item — not because this test receives the webhook (it drives
+    `run_sync` directly), but because `/sandbox/item/fire_webhook` refuses with
+    `SANDBOX_WEBHOOK_INVALID` unless the item has one set. The URL is a placeholder; delivery is
+    irrelevant to the redelivery-is-a-no-op assertion, which reads the stored cursor.
+    """
     from plaid.model.item_public_token_exchange_request import ItemPublicTokenExchangeRequest
     from plaid.model.products import Products
     from plaid.model.sandbox_public_token_create_request import SandboxPublicTokenCreateRequest
+    from plaid.model.sandbox_public_token_create_request_options import (
+        SandboxPublicTokenCreateRequestOptions,
+    )
 
     public_token = client.sandbox_public_token_create(
         SandboxPublicTokenCreateRequest(
-            institution_id=INSTITUTION, initial_products=[Products("transactions")]
+            institution_id=INSTITUTION,
+            initial_products=[Products("transactions")],
+            options=SandboxPublicTokenCreateRequestOptions(
+                webhook="https://example.com/plaid/webhook"
+            ),
         )
     ).public_token
     exchange = client.item_public_token_exchange(
@@ -100,6 +118,25 @@ def _sync_until_rows(engine: Engine, item_id: str, client, *, attempts: int = 5)
     return result
 
 
+def _item(db, item_id: str):
+    with db.begin():
+        return db.execute(
+            text(
+                "SELECT cursor, status, last_successful_sync_at FROM plaid_items"
+                " WHERE plaid_item_id = :i"
+            ),
+            {"i": item_id},
+        ).one()
+
+
+def _txn_rows(db, item_id: str) -> list:
+    with db.begin():
+        return db.execute(
+            text("SELECT id FROM plaid_transactions WHERE plaid_item_id = :i"),
+            {"i": item_id},
+        ).all()
+
+
 @requires_plaid_sandbox
 def test_the_transport_works_end_to_end_against_plaid_sandbox(db, app_engine: Engine) -> None:
     client = _make_client()
@@ -125,39 +162,47 @@ def test_the_transport_works_end_to_end_against_plaid_sandbox(db, app_engine: En
     first = _sync_until_rows(app_engine, item_id, client)
     assert first.status == "ok"
     assert first.added > 0, "Sandbox returned no transactions to ingest"
-    with db.begin():
-        item = db.execute(
-            text(
-                "SELECT cursor, status, last_successful_sync_at FROM plaid_items"
-                " WHERE plaid_item_id = :i"
-            ),
-            {"i": item_id},
-        ).one()
+    item = _item(db, item_id)
     assert item.status == "healthy"
     assert item.cursor is not None
     assert item.last_successful_sync_at is not None
 
-    # 2. Fire the webhook and sync again: a redelivery from the stored cursor changes nothing.
-    _fire_sync_webhook(client, access_token)
+    # 2. An immediate re-sync from the stored cursor is a no-op. **This**, not a fired webhook, is
+    #    the redelivery-is-a-no-op proof: nothing changed at Plaid, so the cursor is at the end and
+    #    /transactions/sync returns an empty page. (Sandbox's fire_webhook does NOT redeliver — it
+    #    *generates* new transactions, which is step 3.)
     second = run_sync(app_engine, item_id, client)
     assert (second.added, second.modified, second.removed) == (0, 0, 0), (
-        "the redelivery was not a no-op — the cursor did not persist, or the loop re-fetched"
+        "an unchanged re-sync was not a no-op — the cursor did not persist, or the loop re-fetched"
     )
 
-    # 3. Break the login and sync: status flips to login_required and the loop stops.
-    _reset_login(client, access_token)
+    # 3. Fire SYNC_UPDATES_AVAILABLE. In Sandbox this makes Plaid generate a *new* batch; the next
+    #    sync consumes it incrementally **from the stored cursor** (not from scratch — the row count
+    #    would double if it re-fetched), and then converges back to a no-op. That whole cycle is the
+    #    cursor mechanics the plan set out to prove against Plaid itself.
+    before = len(_txn_rows(db, item_id))
+    _fire_sync_webhook(client, access_token)
     third = run_sync(app_engine, item_id, client)
-    assert third.status == "login_required"
-    with db.begin():
-        after = db.execute(
-            text(
-                "SELECT status, last_successful_sync_at FROM plaid_items WHERE plaid_item_id = :i"
-            ),
-            {"i": item_id},
-        ).one()
+    assert third.status == "ok"
+    after_update = len(_txn_rows(db, item_id))
+    assert after_update == before + third.added + third.modified + third.removed, (
+        "the incremental sync did not append exactly its delta — the cursor reset or double-counted"
+    )
+    converged = run_sync(app_engine, item_id, client)
+    assert (converged.added, converged.modified, converged.removed) == (0, 0, 0)
+
+    # Freshness after the last successful sync — it must NOT advance on the failure below.
+    freshness_before_failure = _item(db, item_id).last_successful_sync_at
+
+    # 4. Break the login and sync: status flips to login_required, the loop stops, freshness frozen.
+    _reset_login(client, access_token)
+    failed = run_sync(app_engine, item_id, client)
+    assert failed.status == "login_required"
+    after = _item(db, item_id)
     assert after.status == "login_required"
-    # Freshness was stamped by the successful first sync and must NOT advance on the failed one.
-    assert after.last_successful_sync_at == item.last_successful_sync_at
+    assert after.last_successful_sync_at == freshness_before_failure, (
+        "freshness advanced on a failed sync — balance_age_days would lie"
+    )
 
 
 @requires_plaid_sandbox

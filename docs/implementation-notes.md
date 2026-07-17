@@ -2233,3 +2233,31 @@ The hard gate, and the one unit I could not finish honestly.
 
 Net: U1-U4 built, tested against a real Postgres and a fake Plaid client, and committed. U5's code is
 written and waiting on a credential to become the real proof it is meant to be.
+
+## 2026-07-17 — U5 (`0038`) GREEN: the hard gate crossed against real Plaid Sandbox
+
+The harness ran, and Plaid corrected the plan twice. The transport is now proven against Plaid
+itself, not a mock.
+
+- **Sandbox reconciliation 1 — `fire_webhook` needs a webhook URL.** `/sandbox/item/fire_webhook`
+  refuses `SANDBOX_WEBHOOK_INVALID` unless the item has a webhook configured. `_create_and_exchange`
+  now sets a placeholder URL via `SandboxPublicTokenCreateRequestOptions`. (The test drives run_sync
+  directly and never receives the webhook, so delivery is irrelevant — only that a URL exists.)
+- **Sandbox reconciliation 2 — `fire_webhook SYNC_UPDATES_AVAILABLE` generates data, it does not
+  redeliver.** The plan modeled it as a redelivery whose next sync is a no-op; the real sync returned
+  `(32 added, 16 modified)`. That is Sandbox *generating* a new batch, and it landing incrementally
+  from the stored cursor is itself proof the cursor persisted. Restructured the test: the
+  redelivery-is-a-no-op proof is now an **unchanged re-sync** (step 2), and the fired webhook is the
+  **incremental-update path** (step 3, an exact-delta row-count check). This is precisely what a hard
+  gate is for — the plan's assumption meeting the vendor's behavior, and the vendor winning.
+- **One sub-test stays deferred, honestly.** `test_a_removed_transaction_lands_as_a_null_column_row`
+  is still an explicit `skip`: forcing a `removed` in Sandbox is not deterministic from the sync flow
+  alone (needs a custom Sandbox user or /sandbox/transactions). U3 proves the NULL-column insert at
+  the schema layer, so the residual risk is "does Sandbox emit this shape", not "does our code handle
+  it". Ticket 0038 keeps that acceptance box open.
+- **Plan status flipped `active → completed`;** the Build Progress table refreshed to the shipping
+  snapshot; the stale `adr:` frontmatter path corrected to the real filename
+  (`0005-plaid-webhook-tenancy-exceptions.md`).
+
+The rung is done: U1-U4 proven against a real Postgres and a fake client, U5 proven against Plaid
+Sandbox. It ends at rows in a table, one seam short of `assemble_snapshot()`, exactly as scoped.
