@@ -579,8 +579,9 @@
       <div class="box todo">
         <span class="tag">Not built</span>
         <h3>Payment rail</h3>
-        <p>ACH, bill-pay, or a partner&rsquo;s. <b>Deliberately unchosen</b> &mdash; distribution
-           decides it, and if we embed with a partner they own the rail.</p>
+        <p><b>Scoped, not built.</b> Two legs: an <b>ACH debit</b> pulls from checking into a funding
+           account, then a <b>biller-payoff API</b> lands it on the card at any issuer. That commits us
+           to <b>holding the funds in transit</b> (an FBO) &mdash; a bet distribution could still delete.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not scoped</span>
@@ -657,12 +658,17 @@
   next problem: real households need Plaid, an ingest pipeline, and a recurring-event detector that
   does not exist &mdash; and without that detector there are no forecast events, so a linked
   household would produce no decision at all.</p>
-  <p><b>Act</b> is unbuilt <em>deliberately</em>. Moving money is two legs, not one. The
-  <b>debit leg</b> pulls from checking &mdash; ordinary ACH, a solved problem. The <b>payoff leg</b>
-  has to land that money on a card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot
-  route. But the reason to wait is that <b>distribution forecloses the choice</b>: if this ships
-  embedded in a bank or an issuer, the partner owns the rail. So nothing in the codebase assumes
-  one &mdash; the engine emits a decision, and something else moves the money.</p>
+  <p><b>Act</b> was unbuilt <em>deliberately</em>, and as of 2026-07-17 it is <b>scoped</b> (the
+  sweep-execution rung). Moving money is two legs, not one. The <b>debit leg</b> pulls from checking
+  &mdash; ordinary ACH, a solved problem. The <b>payoff leg</b> has to land that money on a card at
+  <em>someone else&rsquo;s</em> issuer, which plain ACH cannot route; the channel that reaches any
+  issuer is a <b>biller-payoff API</b> (Method, the working assumption). Because that API pays only
+  from an account <em>we</em> hold, the design <b>commits to holding funds in transit</b> &mdash; the
+  FBO posture the docs say to avoid, taken on knowingly. Two honest caveats remain: <b>distribution
+  can still delete the choice</b> (embed with a bank or issuer and the partner owns the rail, and the
+  custody), and <b>the code still assumes nothing and moves nothing</b> &mdash; the engine emits a
+  decision, the saga runs in <em>shadow</em>, and no dollar moves until a measured tail-risk number
+  and the compliance posture are both real.</p>
   <p><strong>On TreasuryDirect.</strong> It is the &ldquo;invest what&rsquo;s freed up&rsquo;&rdquo;
   half of the product statement, and it appears nowhere in the codebase. One document needs
   correcting before it is built: <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a> &sect;4.2 still lists
