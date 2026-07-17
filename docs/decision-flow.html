@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>resfi — the bet, the build, and what's still open</title>
+<title>resfi — the bet, the build, and what's still open (archived)</title>
 <style>
   /* Light only, deliberately. `color-scheme: light` also stops the browser (or an OS in dark
      mode) from force-inverting the page into a palette nobody checked.
@@ -97,6 +97,52 @@
     max-width: 62ch;
   }
   .thesis strong { color: var(--stop); }
+
+  /* --- archived banner --------------------------------------------------
+     This page is kept at its original URL because it has been linked to; the
+     banner is how a reader finds out it is no longer the current status. BLUE,
+     not the refusal green: this is a redirect, and blue is this palette's
+     informational voice. The ARCHIVED pill is the only place `--stop` is used
+     as a fill rather than as a rule — it has to win the page at a glance. */
+  .archive-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: .75rem 1.25rem;
+    background: var(--go-bg);
+    border: 1px solid var(--go-rule);
+    border-left: 5px solid var(--go-bar);
+    border-radius: 18px;
+    padding: 1.15rem 1.4rem;
+    margin: 0 0 2.5rem;
+  }
+  .archive-banner .flag {
+    flex: none;
+    font: 700 .64rem/1 var(--mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--panel);
+    background: var(--stop);
+    border-radius: 999px;
+    padding: .42rem .75rem;
+  }
+  .archive-banner p {
+    flex: 1 1 300px;
+    margin: 0;
+    font-size: .92rem;
+    color: var(--muted);
+  }
+  .archive-banner .cta {
+    flex: none;
+    font: 600 .85rem/1 var(--sans);
+    color: var(--panel);
+    background: var(--go);
+    border-radius: 999px;
+    padding: .6rem 1.15rem;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .archive-banner .cta:hover { background: var(--stop); }
 
   h2 {
     font-size: 1.125rem;
@@ -401,6 +447,10 @@
      from document mode, and those would otherwise win and push the slide over. */
   body.deck .slide { --shadow: 0 1px 2px rgba(22,38,46,.04), 0 6px 18px -8px rgba(22,38,46,.10); }
   body.deck .callout { padding: .95rem 1.2rem; margin-top: .85rem; }
+  /* The archived banner earns its full size in the scroll, but in deck mode it
+     is chrome on slide 1 and must not push the slide past a 720p projector —
+     the same overflow this file's fixed-height slides exist to prevent. */
+  body.deck .archive-banner { padding: .7rem 1rem; margin-bottom: 1rem; }
   body.deck .thesis { margin: 1rem 0 !important; }
   body.deck .rules { padding: .25rem 1rem; }
   body.deck th, body.deck td { padding: .45rem .6rem; }
@@ -419,6 +469,14 @@
 <div class="wrap">
 
 <section class="slide">
+<div class="archive-banner">
+  <span class="flag">Archived</span>
+  <p>This page is kept at its original link, but it is <b>no longer the current status</b> &mdash;
+     it describes the build as it stood earlier. For what is built today, what isn&rsquo;t, and why,
+     read the status page.</p>
+  <a class="cta" href="./status.html">Current status &rarr;</a>
+</div>
+
 <header>
   <img class="brand" src="./design/logos/resfi-brand.svg"
        alt="resfi — responsible finance" width="259" height="88">

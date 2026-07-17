@@ -26,7 +26,7 @@
     "web": "expo start --web",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "copy:docs": "mkdir -p dist/design/logos && cp ../docs/decision-flow.html dist/decision-flow.html && cp ../docs/design/logos/resfi-brand.svg dist/design/logos/resfi-brand.svg",
+    "copy:docs": "mkdir -p dist/design/logos && cp ../docs/status.html dist/status.html && cp ../docs/decision-flow.html dist/decision-flow.html && cp ../docs/design/logos/resfi-brand.svg dist/design/logos/resfi-brand.svg",
     "build:web": "expo export --platform web && npm run copy:docs",
     "deploy:web": "npm run build:web && firebase deploy --only hosting"
   },
