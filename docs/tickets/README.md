@@ -44,7 +44,7 @@ them).
 # Card spend and the portfolio reserve
 
 Ticket set for `docs/plans/2026-07-14-001-feat-card-spend-portfolio-reserve-plan.md`, one per
-Implementation Unit (U1–U8 → `0010`–`0017`).
+Implementation Unit (U1–U8 → `0010`–`0017`, plus `0018` for U9, added after the plan was written).
 
 The feature makes credit-card spend a first-class engine input and, in doing so, closes a hole in
 the safety core: the reserve currently holds back each card's **minimum payment** when it should hold
@@ -75,10 +75,16 @@ in full has a $2,000 obligation and a $40 minimum. We reserve $40.
 | [0015](0015-backend-spend-endpoint.md) | Backend — `GET /spend` | backend-python-agent | 0012 |
 | [0016](0016-mobile-spending-surface.md) | Mobile — bottom tabs, Spending screen, attestation gate | mobile-rn-agent | 0015 |
 | [0017](0017-grader-and-replay-driver.md) | Wire the grader and build the replay driver | backend-python-agent | — |
+| [0018](0018-spend-model-calibration.md) | Ship the empirical spend model behind a measured dial *(U9, added after the plan)* | backend-python-agent | 0017 | **done** (#31) — **the measurement refused the swap** |
 
 ## Status: all eight landed (2026-07-14)
 
 `0010`–`0013` shipped in **#28**, `0014`–`0017` in **#29**. 357 Python tests, 39 mobile tests.
+
+**`0018` (U9) landed later, in #31**, and is the reason `0017` exists: it built the empirical spend
+model, put it behind `SPEND_QUANTILE`, and let the population measurement decide. The measurement
+said no — **19.8% breach against today's 2.3%** — so the model ships **inert** and
+`daily_discretionary_high` never moved. [`docs/RUNBOOK.md`](../RUNBOOK.md) is its review guide.
 
 Two exceptions worth carrying forward rather than closing quietly:
 
@@ -274,13 +280,13 @@ Every defect these tickets found is the same shape: **a mechanism that was built
 actually exercised.** The dial `calibrate.py` swept but `build()` could not read. The RLS policies
 that Neon's default role ignores. The IDOR suite that ran as a superuser. The multi-card reserve
 that has never seen two cards. The `await` that every suite has except one. And now
-[`0032`](0032-a-migration-that-imports-live-code-is-not-a-migration.md): a migration that imported a
+[`0033`](0033-a-migration-that-imports-live-code-is-not-a-migration.md): a migration that imported a
 live application constant and iterated it, invisible for exactly as long as the constant stood
 still — which was every day until `0031` added a table to it.
 
 None of them had a symptom. All of them had a green test.
 
-`0032` adds a corollary worth having: **the ones that only break from zero are the quietest of all.**
+`0033` adds a corollary worth having: **the ones that only break from zero are the quietest of all.**
 Every already-migrated database stays green forever, including CI. It broke only for someone
 starting fresh — a new developer, a new Neon branch — which is the person least equipped to tell a
 real defect from their own setup going wrong.

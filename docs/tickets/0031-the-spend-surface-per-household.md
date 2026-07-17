@@ -202,7 +202,7 @@ cycle. It would have been wrong and shown no symptom.
 
 ## What it spawned
 
-[`0032`](0032-a-migration-that-imports-live-code-is-not-a-migration.md) — `alembic/versions/0001`
+[`0033`](0033-a-migration-that-imports-live-code-is-not-a-migration.md) — `alembic/versions/0001`
 imported `HOUSEHOLD_SCOPED` from live application code. Adding a table to that constant retroactively
 changed what revision 0001 *does*, and a fresh `alembic upgrade head` would have failed at 0001
 while every already-migrated database stayed green. Fixed here because this ticket could not land
