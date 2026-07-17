@@ -215,12 +215,12 @@ artifact and moves every measured number in three documents, so it needs its own
 
 | File | What it does |
 | --- | --- |
-| `precompute.py` | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One walk, three consumers — the artifact builder, the replay driver, and (next) the seeder. There were 2.5 copies of it and they had already drifted; see Status. |
+| `precompute.py` | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One walk, three consumers — the artifact builder, the replay driver, and the seeder (`seed.py`, which now writes the deployed demo's four households). There were 2.5 copies of it and they had already drifted; see Status. |
 | `replay.py` | Drives the walk and grades every day it can honestly grade. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast and pull the whole error distribution toward the origin. |
 | `calibrate.py` | Grades a **population** at every setting of the spend dial. `prd.md` §5.2's lesson, learned the hard way: *a guardrail measured on one household is not measured.* |
-| `db/` | Postgres, scoped by `household_id`. Schema, a repository, and the `SnapshotStore` seam. |
+| `db/` | Postgres, scoped by `household_id`. Schema, a repository, and the `SnapshotStore` seam. **This is what the deployed API reads** — Neon, four seeded households, RLS enforced by the connecting role. |
 | `codec.py` | Tagged-scalar JSON. JSON has no decimal type, and a cent that round-trips through a float is no longer the cent the engine decided on. Generic and type-driven, so it **cannot drift from the dataclass**. |
-| `artifact.py` | The demo's committed decision history. Being superseded by `db/` — see [ADR-0004](docs/decisions/0004-postgres-scoped-by-household.md). |
+| `artifact.py` | The demo's committed decision history, **and** the wire shapes (`DayRecord`, `Summary`) the API serializes. `db/` has superseded it as what the deployed demo *reads* — see [ADR-0004](docs/decisions/0004-postgres-scoped-by-household.md) — but the types still live here, and `main.py`, `readpath.py` and `assistant.py` import them as types and nothing else. |
 | `assistant.py` | The only path that costs money. The LLM looks up decisions the engine already made and puts them in English; it never makes one. |
 
 **The data layer is scoped by household, twice, on purpose.** Every query goes through a
@@ -237,9 +237,18 @@ one forgotten `WHERE` clause is not an acceptable single point of failure."*
 ## `mobile/` — the surface
 
 Expo / React Native in TypeScript, with `react-native-web` so the same source runs in a browser and
-on a phone. Two screens and a modal: the decision feed, the spending view, and the explanation.
+on a phone. Two screens and a modal: the decision feed, the spending view, and the explanation —
+plus a **household picker** (`HouseholdPicker.tsx`, ticket 0025) that switches which of the four
+seeded archetypes you are looking at.
 
-Deployed at [cfo-ai-1.web.app](https://cfo-ai-1.web.app).
+The picker is **not a customer feature and the design says so**: a customer has one household, and
+a picker on their surface would be nonsense. It exists for the reviewer `USERS.md` names as the
+second audience — the one who wants to see, in under a minute, what the engine does to households
+that are not the demo's. So it sits lightly, one line above the tabs, and there is deliberately no
+admin view behind it: `USERS.md` §2 says the demonstration *is* the product surface.
+
+Deployed at [cfo-ai-1.web.app](https://cfo-ai-1.web.app), reading the four households out of
+Postgres over `/households/{id}/…`.
 
 ---
 
@@ -287,7 +296,15 @@ reversed.
 ## Status
 
 **Built and running.** `engine/`, `sim/`, `backend/` (the walk, the grader, the population
-calibration, the API, Postgres), and `mobile/`. 448 Python tests, 51 mobile tests.
+calibration, the API, Postgres), and `mobile/`. 532 Python tests, 66 mobile tests.
+
+**Deployed, and reading from Postgres.** The API runs on Cloud Run against a Neon database holding
+four seeded households, 90 days each; the client at [cfo-ai-1.web.app](https://cfo-ai-1.web.app)
+reads them over the `/households/{id}/…` surface. The service connects as a role that is **neither
+superuser nor `BYPASSRLS`** and refuses to start otherwise — so the row-level security this README
+describes is a property of the deployment, not only of the test suite. `docs/runbooks/deploy.md`
+and `docs/runbooks/neon-provisioning.md` are the procedure, and are blunt about why the obvious
+connection string is the wrong one.
 
 **Not built.** Plaid — no link, no live balances, nothing has touched a real household. No payment
 rail, and deliberately so: `prd.md` §6.1 says no rail is chosen and *"nothing in the codebase
