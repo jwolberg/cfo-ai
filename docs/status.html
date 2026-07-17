@@ -146,6 +146,7 @@
   .key { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--muted); }
   .swatch { width: 26px; height: 17px; border-radius: 5px; flex: none; }
   .swatch.is-built { background: var(--panel); box-shadow: var(--shadow); }
+  .swatch.is-proven { background: var(--panel); box-shadow: var(--shadow); border: 1px dashed var(--go-rule); }
   .swatch.is-todo { background: transparent; border: 1px dashed var(--ghost); }
 
   /* --- the component map ------------------------------------------------ */
@@ -184,6 +185,12 @@
   .box.todo .tag,
   .box.todo h3,
   .box.todo p { color: var(--faint); }
+
+  /* Built in code and proven against Plaid Sandbox, but not yet deployed: a solid card (it has
+     substance) with a dashed edge (it isn't live). The interior says built; the border says
+     not-running. */
+  .box.proven { background: var(--panel); border: 1px dashed var(--go-rule); box-shadow: var(--shadow); }
+  .box.proven .tag { color: var(--go); }
 
   .arrow { grid-column: 2; height: 1.1rem; position: relative; }
   .arrow::before {
@@ -362,8 +369,11 @@
     payment rail is built and deployed</strong>: the decision engine, the database, the API,
     and the app. The harness that measures it is live as well. This is a grader that scores each decision against what
     actually happened, though still running only on synthetic data.
-    The <b>bank connection</b> (Plaid ingest) is the next problem, and
-    the <b>payment rail</b> that moves the money is deliberately unchosen for now.
+    The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook doorbell,
+    and a cursored sync that lands transactions in a table &mdash; is now <b>built and proven
+    end-to-end against Plaid Sandbox</b>, but not deployed. What still stands between a real bank
+    login and a decision is the <b>recurring-event detector</b> (it needs real data to build
+    against); the <b>payment rail</b> that moves the money is deliberately unchosen for now.
   </p>
   <p class="lede">
     This is a few days into a large, complex build, and the scope ahead is almost
@@ -416,6 +426,7 @@
 
 <div class="legend">
   <span class="key"><span class="swatch is-built"></span> Built and running</span>
+  <span class="key"><span class="swatch is-proven"></span> Built &amp; Sandbox-proven, not yet deployed</span>
   <span class="key"><span class="swatch is-todo"></span> Not built</span>
 </div>
 
@@ -424,11 +435,12 @@
   <div class="lane">
     <div class="lane-label">Source</div>
     <div class="lane-boxes">
-      <div class="box todo">
-        <span class="tag">Plaid</span>
+      <div class="box proven">
+        <span class="tag">Plaid &middot; Sandbox</span>
         <h3>Bank connection</h3>
-        <p>Links, balances, transactions, card liabilities. Nothing is connected, and no test
-           customer can link an account today.</p>
+        <p>Token exchange and item storage are built and <b>proven end-to-end against Plaid
+           Sandbox</b> &mdash; linked by us, not deployed. There is still no customer link screen, so
+           no test customer can connect an account today.</p>
       </div>
       <div class="box">
         <span class="tag">sim</span>
@@ -444,15 +456,18 @@
   <div class="lane">
     <div class="lane-label">Ingest</div>
     <div class="lane-boxes">
-      <div class="box todo">
-        <span class="tag">Not built</span>
+      <div class="box proven">
+        <span class="tag">Sandbox-proven</span>
         <h3>Ingest &amp; sync</h3>
-        <p>Webhook doorbell, cursored pull, nightly reconcile.</p>
+        <p>Webhook doorbell (signature-verified, never inline), cursored <code>/transactions/sync</code>,
+           and a nightly reconcile &mdash; all built and proven against Sandbox. Lands rows in an
+           append-only table; not yet deployed, so nothing real flows through it.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not built</span>
         <h3>Normalize</h3>
-        <p>Pending&rarr;posted matching, internal-transfer detection. Silent corruption if wrong.</p>
+        <p>Pending&rarr;posted matching, internal-transfer detection. Silent corruption if wrong
+           &mdash; and Sandbox data can&rsquo;t validate it, so it waits for real data.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not built</span>
@@ -489,7 +504,9 @@
       <div class="box todo">
         <span class="tag">Not built &middot; KMS</span>
         <h3>Token encryption</h3>
-        <p>A placeholder column with no key behind it. Arrives with the first real bank token.</p>
+        <p>A placeholder column with no key behind it, arriving with the first real bank token. A
+           tripwire is already in place: the service <b>refuses to boot</b> outside Sandbox until the
+           token is encrypted &mdash; so the plaintext column can&rsquo;t quietly go live.</p>
       </div>
     </div>
   </div>
@@ -654,9 +671,12 @@
 
 <div class="callout">
   <p><strong>The two unbuilt ends are not the same kind of unbuilt.</strong> <b>Source</b> is the
-  next problem: real households need Plaid, an ingest pipeline, and a recurring-event detector that
-  does not exist &mdash; and without that detector there are no forecast events, so a linked
-  household would produce no decision at all.</p>
+  next problem, and it is now partly solved: the <b>Plaid ingest transport is built and proven
+  against Sandbox</b> &mdash; token exchange, the webhook doorbell, and cursored sync all land rows
+  in a table. What remains is deploying it, a customer link screen, and the piece Sandbox can&rsquo;t
+  help build: a <b>recurring-event detector</b> that turns raw transactions into paychecks and bills.
+  Without it there are no forecast events, so a linked household would still produce no decision at
+  all &mdash; which is why the transport rung deliberately stops one seam short of the forecast.</p>
   <p><b>Act</b> is unbuilt <em>deliberately</em>. Moving money is two legs, not one. The
   <b>debit leg</b> pulls from checking &mdash; ordinary ACH, a solved problem. The <b>payoff leg</b>
   has to land that money on a card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot
@@ -914,8 +934,8 @@
   <tr><td><b>Store</b></td><td>Built and live on Neon. Four households &times; 90 days.</td></tr>
   <tr><td><b>Serve</b></td><td>Built and live on Cloud Run. Read-only.</td></tr>
   <tr><td><b>Client</b></td><td>Built and live. Read-only; no linking, no attestation, no policy edits.</td></tr>
-  <tr><td><b>Source</b></td><td><b>Not built.</b> No Plaid, no live balances, no real household.</td></tr>
-  <tr><td><b>Ingest</b></td><td><b>Not built.</b> The recurring-event detector is the gating piece.</td></tr>
+  <tr><td><b>Source</b></td><td><b>Transport built, Sandbox-proven, not deployed.</b> Token exchange and item storage work end-to-end against Plaid Sandbox. Still no customer link screen and no real household.</td></tr>
+  <tr><td><b>Ingest</b></td><td><b>Transport built, Sandbox-proven.</b> The webhook doorbell, cursored sync, and nightly reconcile land rows against Sandbox. <b>Normalization and the recurring-event detector are still not built</b> &mdash; the detector is the gating piece for a forecast.</td></tr>
   <tr><td><b>Identity</b></td><td><b>Not built.</b> Arrives with the bank connection.</td></tr>
   <tr><td><b>Act</b></td><td><b>Not built,</b> and the rail is unchosen on purpose.</td></tr>
   <tr><td><b>Client (rest)</b></td><td><b>Not built.</b> Onboarding, the bank-link flow, and the settings screens that write the guardrails the engine already reads.</td></tr>
@@ -926,7 +946,8 @@
 
 
 <footer>
-  <p><b>Measured on 17 July 2026:</b> 532 Python tests collected; four seeded archetypes; the
+  <p><b>Measured on 17 July 2026:</b> 574 Python tests collected (the Plaid transport rung added the
+  webhook, sync, link, and Sandbox suites); four seeded archetypes; the
   component inventory above was read from the code, not from the docs.
   <b>Asserted, carried from</b> <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a>, <a href="https://github.com/jwolberg/cfo-ai/blob/main/README.md">README.md</a>
   <b>and</b> <a href="./decision-flow.html">decision-flow.html</a>: the 2.3% breach rate, 590
@@ -935,7 +956,8 @@
   <p>Companion documents: <a href="./decision-flow.html">decision-flow.html</a> (the bet, the same
   engine flow, and the open distribution questions) &middot;
   <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/architecture.md">architecture.md</a> &middot;
-  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/brainstorms/2026-07-16-plaid-the-transport-rung.md">the Plaid scoping doc</a>.</p>
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/brainstorms/2026-07-16-plaid-the-transport-rung.md">the Plaid scoping doc</a> &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md">the Plaid transport rung plan</a> (built, merged, Sandbox-proven).</p>
 </footer>
 
 </div>
