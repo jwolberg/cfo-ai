@@ -104,6 +104,22 @@ def two_households(db):
                 ),
                 {"id": f"pi-{h}", "h": h, "pid": f"item-{h}"},
             )
+            # And one transaction each (ticket 0036), for the same reason: without a row, the
+            # append-only table would ride the leak test empty and prove nothing about isolation.
+            db.execute(
+                text(
+                    "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                    " plaid_account_id, plaid_transaction_id, amount, change_type)"
+                    " VALUES (:id, :h, :item, :acct, :ptx, '10.00', 'added')"
+                ),
+                {
+                    "id": f"ptx-{h}",
+                    "h": h,
+                    "item": f"item-{h}",
+                    "acct": f"acct-{h}",
+                    "ptx": f"txn-{h}",
+                },
+            )
     return db
 
 

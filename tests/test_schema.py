@@ -420,6 +420,121 @@ class TestPlaidTokenStartGuard:
             assert_plaid_tokens_safe_at_rest(db)
 
 
+class TestPlaidTransactions:
+    """The append-only landing table (ticket 0036). Every sync outcome is an INSERT; corrections are
+    new rows. RLS rides the `HOUSEHOLD_SCOPED` parametrization and the IDOR suite — these are the
+    append-only and Plaid-shape claims those do not make."""
+
+    def _txn(
+        self,
+        conn,
+        hid: str,
+        row_id: str,
+        txn_id: str = "ptx-1",
+        change_type: str = "added",
+        amount: str | None = "12.34",
+    ) -> None:
+        conn.execute(
+            text(
+                "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                " plaid_account_id, plaid_transaction_id, amount, date, name, change_type)"
+                " VALUES (:id, :h, 'item-1', 'acct-1', :ptx, :amt, '2026-03-01', 'Coffee', :ct)"
+            ),
+            {
+                "id": row_id,
+                "h": hid,
+                "ptx": txn_id,
+                "amt": Decimal(amount) if amount is not None else None,
+                "ct": change_type,
+            },
+        )
+
+    def _removed(self, conn, hid: str, row_id: str, txn_id: str = "ptx-1") -> None:
+        """A Plaid-shaped `removed`: only the two ids, no amount/date/name/merchant_name."""
+        conn.execute(
+            text(
+                "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                " plaid_account_id, plaid_transaction_id, change_type)"
+                " VALUES (:id, :h, 'item-1', 'acct-1', :ptx, 'removed')"
+            ),
+            {"id": row_id, "h": hid, "ptx": txn_id},
+        )
+
+    def test_modified_and_removed_are_new_rows_not_in_place_edits(self, db) -> None:
+        """The same `plaid_transaction_id` appears as added, then modified, then removed — three
+        rows, nothing updated or deleted in place. A UNIQUE on that column would reject the very
+        corrections append-only exists to keep."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1", txn_id="ptx-9", change_type="added", amount="10.00")
+            self._txn(db, "h1", "r2", txn_id="ptx-9", change_type="modified", amount="12.00")
+            self._removed(db, "h1", "r3", txn_id="ptx-9")
+            rows = db.execute(
+                text(
+                    "SELECT change_type, amount FROM plaid_transactions"
+                    " WHERE plaid_transaction_id='ptx-9' ORDER BY id"
+                )
+            ).all()
+        assert [r.change_type for r in rows] == ["added", "modified", "removed"]
+        assert [r.amount for r in rows] == [Decimal("10.00"), Decimal("12.00"), None]
+
+    def test_a_plaid_shaped_removed_payload_inserts_with_nulls(self, db) -> None:
+        """`removed` carries only `transaction_id`/`account_id`. The value columns are NULL — the
+        honest absence, not a fabricated full row."""
+        with db.begin():
+            _household(db, "h1")
+            self._removed(db, "h1", "r1")
+            row = db.execute(
+                text(
+                    "SELECT amount, date, name, merchant_name FROM plaid_transactions WHERE id='r1'"
+                )
+            ).one()
+        assert (row.amount, row.date, row.name, row.merchant_name) == (None, None, None, None)
+
+    def test_a_numeric_amount_round_trips_a_decimal_exactly(self, db) -> None:
+        """NUMERIC, never float (ADR-0002 [2.2]) — the same rule the money columns hold."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1", amount="1234.56")
+            got = db.execute(text("SELECT amount FROM plaid_transactions WHERE id='r1'")).scalar()
+        assert got == Decimal("1234.56")
+        assert isinstance(got, Decimal), f"got {type(got).__name__} — a float reached the money"
+
+    def test_an_unknown_change_type_is_rejected(self, db) -> None:
+        with pytest.raises(Exception, match="ck_plaid_transactions_change_type"), db.begin():
+            _household(db, "h1")
+            db.execute(
+                text(
+                    "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                    " plaid_account_id, plaid_transaction_id, change_type)"
+                    " VALUES ('r1', 'h1', 'item-1', 'acct-1', 'ptx-1', 'deleted')"
+                )
+            )
+
+    def test_the_app_role_cannot_update_or_delete_an_append_only_row(self, db, as_app) -> None:
+        """Append-only is a **grant**, not a convention: `cfo_app` holds SELECT and INSERT and
+        nothing else, so no application path can rewrite or erase history even by mistake. Proven by
+        trying both as the app role and being refused at the privilege layer."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1")
+
+        with pytest.raises(Exception, match="permission denied"):
+            as_app(
+                "h1",
+                lambda c: c.execute(text("UPDATE plaid_transactions SET name='x' WHERE id='r1'")),
+            )
+        with pytest.raises(Exception, match="permission denied"):
+            as_app(
+                "h1",
+                lambda c: c.execute(text("DELETE FROM plaid_transactions WHERE id='r1'")),
+            )
+
+        with db.begin():
+            still = db.execute(text("SELECT name FROM plaid_transactions WHERE id='r1'")).scalar()
+        assert still == "Coffee", "the row was rewritten despite the grant"
+
+
 def test_deleted_at_records_the_shred_not_a_soft_delete(db) -> None:
     """ADR-0004 C4. `deleted_at` is set when the household's KMS key is destroyed — the bytes are
     genuinely unrecoverable at that point. It is not a filter the repository has to remember, and

@@ -2105,3 +2105,31 @@ The table, its RLS, and one startup tripwire. Deviations and decisions worth a h
 - **Process note (not a code decision).** The first U1 commit (`ad6a9b6`, later rebased) overwrote
   this very file with a fresh 27-line stub because it was written without reading the existing 2075-line
   log first. Caught on resume and repaired by restoring `main`'s copy and appending this entry.
+
+## 2026-07-17 — U3 (`0036`): plaid_transactions, append-only
+
+The landing table for `/transactions/sync` (`docs/plans/2026-07-17-001-...-plan.md`). Decisions
+worth a human's eye:
+
+- **Append-only is enforced by the grant, not just documented.** `cfo_app` is granted `SELECT,
+  INSERT` on `plaid_transactions` and nothing else — the only scoped table whose grant omits
+  UPDATE/DELETE. So "corrections are new rows" is a database guarantee: no application path can
+  rewrite history even by mistake. A test drives an UPDATE and a DELETE as the app role and asserts
+  `permission denied`, with the row unchanged after. This is a stronger claim than the plan spelled
+  out (it said "append-only, all INSERTs") and cheap to make, so I made it.
+- **Deliberately no UNIQUE on `plaid_transaction_id`.** The plan's Key Technical Decisions call this
+  out — a second `modified` of the same transaction legitimately repeats the id. A UNIQUE would
+  reject the correction the design depends on. The test lands the same id three times (added,
+  modified, removed) as three rows.
+- **`plaid_account_id` is NOT NULL.** The plan's removed-shape says "only transaction_id/account_id",
+  so account_id is present on every event including removed. If a Sandbox `removed` in U5 turns out to
+  omit account_id (older Plaid API versions did), that is a U5 finding and a one-line migration —
+  flagged here so it is not a surprise. The value columns (`amount`/`date`/`name`/`merchant_name`)
+  ARE nullable, which is the sparse-removed case the plan's verification names.
+- **Extended the IDOR `two_households` fixture again** (as with `plaid_items` in U1) to insert a
+  transaction per household, so the append-only table is proven isolated with real rows, not empty.
+- **Left `spend_projections`'s "ingest deletes this, ticket 0031" annotation alone.**
+  `plaid_transactions` does not die in this rung — the `assemble_snapshot()` seam is not crossed — so
+  its deletion is the serving rung's, and `spend_projections`'s annotation is about a different table.
+
+Full suite: 548 passed, 1 skipped, on Postgres 17.

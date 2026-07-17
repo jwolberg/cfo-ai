@@ -290,6 +290,50 @@ plaid_items = Table(
 )
 
 
+# Every `/transactions/sync` outcome — added, modified, removed — lands here as an INSERT (ticket
+# 0036). **Append-only**: corrections are new rows carrying a `change_type`, never an UPDATE or a
+# DELETE (`architecture.md` [4]). The migration enforces it at the privilege layer — `cfo_app` is
+# granted SELECT and INSERT and nothing else — so append-only is a guarantee, not a convention.
+#
+# `plaid_transaction_id` is therefore **not unique**: a legitimate second `modified` of the same
+# transaction shares it, and so does a later `removed`. The reconciliation that would collapse them
+# is normalization, which this rung defers.
+#
+# `amount`/`date`/`name`/`merchant_name` are **nullable** because a `removed` event carries only
+# ids (`plaid_transaction_id` and `plaid_account_id`) — NULL is the honest absence, not a fabricated
+# row. `pending_transaction_id` is a column with no consumer here; the reconciliation that reads it
+# is normalization's, not this rung's ([Resolved Decisions], brainstorm [2] U3).
+plaid_transactions = Table(
+    "plaid_transactions",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("plaid_account_id", Text, nullable=False),
+    Column("plaid_transaction_id", Text, nullable=False),
+    # The id of the pending transaction a posted one supersedes. Stored, never yet read — the
+    # reconciliation that consumes it is normalization ([3]), out of this rung.
+    Column("pending_transaction_id", Text, nullable=True),
+    # NUMERIC, never float (ADR-0002 [2.2]). Nullable: a `removed` event carries no amount.
+    Column("amount", MONEY, nullable=True),
+    Column("date", Date, nullable=True),
+    Column("name", Text, nullable=True),
+    Column("merchant_name", Text, nullable=True),
+    # added | modified | removed — all INSERTs. The CHECK says so where the data lives.
+    Column("change_type", Text, nullable=False),
+    Column("ingested_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "change_type IN ('added', 'modified', 'removed')",
+        name="ck_plaid_transactions_change_type",
+    ),
+)
+
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
 # each, and ticket 0021's IDOR suite proves both — independently.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
@@ -300,6 +344,7 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "snapshots",
     "spend_projections",
     "plaid_items",
+    "plaid_transactions",
 )
 
 __all__ = [
@@ -313,6 +358,7 @@ __all__ = [
     "households",
     "metadata",
     "plaid_items",
+    "plaid_transactions",
     "policies",
     "snapshots",
     "spend_projections",
