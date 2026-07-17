@@ -1,10 +1,10 @@
 ---
 title: The Plaid transport rung — items, a doorbell, and cursored sync, ending at rows
 type: feat
-status: active
+status: completed
 date: 2026-07-17
 origin: docs/brainstorms/2026-07-16-plaid-the-transport-rung.md
-adr: docs/decisions/0005-the-raw-webhook-table-is-unscoped.md (owed by U2)
+adr: docs/decisions/0005-plaid-webhook-tenancy-exceptions.md
 ---
 
 # The Plaid transport rung — items, a doorbell, and cursored sync, ending at rows
@@ -44,15 +44,17 @@ stops being a guess.
 
 ## Build Progress
 
-*Not started. Five units, five tickets (`0034`–`0038`), one ADR (`0005`). No code yet.*
+*Complete. Five units, five tickets (`0034`–`0038`), ADR-0005, all built on
+`feat/plaid-transport-rung`. The hard gate (U5) ran **green against real Plaid Sandbox** on
+2026-07-17. Authoritative state lives in git and the tickets; this table is the shipping snapshot.*
 
 | Unit | Ticket | Status |
 |------|--------|--------|
-| U1 `plaid_items`, RLS, and the migration | `0034` | not started |
-| U2 The doorbell, the raw store, and the queue | `0035` | not started |
-| U3 `plaid_transactions`, append-only | `0036` | not started |
-| U4 The cursored sync loop | `0037` | not started |
-| U5 The Sandbox harness | `0038` | not started |
+| U1 `plaid_items`, RLS, and the migration | `0034` | done |
+| U2 The doorbell, the raw store, and the queue | `0035` | done |
+| U3 `plaid_transactions`, append-only | `0036` | done |
+| U4 The cursored sync loop | `0037` | done |
+| U5 The Sandbox harness | `0038` | done (Sandbox run green; one `removed`-row sub-test deferred) |
 
 ---
 

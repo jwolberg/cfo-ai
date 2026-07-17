@@ -143,6 +143,25 @@ class TestStartup:
         with pytest.raises(Exception), TestClient(app):  # noqa: B017 — driver-specific
             pass  # pragma: no cover
 
+    def test_a_production_plaid_env_without_encryption_stops_the_service_coming_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The quiet trigger, made loud, and proven to be *wired* — not merely defined.
+
+        In Sandbox a plaintext `access_token` protects nothing; the day `PLAID_ENV` flips to
+        production the same column is a credential that can drain a household. Until KMS makes it
+        ciphertext, that flip must stop the boot. A guard defined but never called is exactly the
+        built-tested-never-exercised defect this repo keeps finding — so this drives the real
+        lifespan through `TestClient` rather than calling the function directly.
+        """
+        monkeypatch.setenv("PLAID_ENV", "production")
+
+        from backend.db.session import PlaidAccessTokenWouldLeak
+        from backend.main import app
+
+        with pytest.raises(PlaidAccessTokenWouldLeak), TestClient(app):
+            pass  # pragma: no cover
+
     def test_an_unmigrated_database_is_refused(self, db_engine: Engine) -> None:
         """Reachable is not the same as usable. A database that answers `SELECT 1` and has no
         `decisions` table is a service that comes up and 500s on its first real request.

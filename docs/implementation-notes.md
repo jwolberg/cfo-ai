@@ -2073,3 +2073,191 @@ documented. `last-verified: 2026-07-17` on that file is a real run, not a stamp.
   quantile — has no ticket. Neither does a `today`/day-boundary/timezone definition (zero hits in
   `docs/`), raised by the 2026-07-12 review at [2.4]. Both are the opposite of cruft: work the
   backlog has forgotten rather than work it should drop.
+
+## 2026-07-17 — U1 (`0034`): plaid_items, RLS, and the access_token start guard
+
+First unit of the Plaid transport rung (`docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md`).
+The table, its RLS, and one startup tripwire. Deviations and decisions worth a human's eye:
+
+- **Wired the start guard into `backend/main.py` lifespan.** U1's Files list named
+  `backend/db/session.py`, not `main.py`. But a guard that is defined and never called is exactly the
+  built-tested-never-exercised defect the `0019`–`0033` post-mortems keep naming, so
+  `assert_plaid_tokens_safe_at_rest()` is called in the lifespan beside `assert_rls_binds()`, and a
+  `TestClient` boot test in `test_backend_api.py` proves a production `PLAID_ENV` stops the service
+  coming up. A one-line `main.py` change the plan did not enumerate but its intent requires.
+- **Pulled the `plaid_items` half of the IDOR extension forward from U5.** The plan assigns the full
+  IDOR extension to U5. But adding `plaid_items` to `HOUSEHOLD_SCOPED` without a row in
+  `test_idor.py`'s `two_households` fixture would ship RLS on a new scoped table proven only
+  structurally (a policy exists) and never behaviorally (alice's item invisible to bob). Added the
+  fixture row now; U5 still owns the repository-bypassed proof for both new tables.
+- **`_plaid_token_encryption_active()` returns `False` unconditionally.** KMS is out of this rung, so
+  the honest interim state is that a non-sandbox deploy cannot keep a real token safe and must not
+  boot. The function names the exact conditions (KMS client initializes AND token is ciphertext) that
+  flip it when KMS lands. The signal is the encryption capability, never a non-null `dek_id` — a
+  placeholder `dek_id` with no key behind it is the false "looks protected" the guard refuses.
+- **Left `test_plaid_tables_do_not_exist_yet` untouched.** It guards the bare names
+  `items`/`transactions`/`recurring_events`/`payments`/`users`; the new tables are `plaid_`-prefixed,
+  so they do not trip it and it still guards the genuinely-unbuilt ones. Its name reads slightly stale
+  now, but the assertion is still correct.
+- **Migrations are not linted by CI** (`ruff check engine sim backend tests` excludes `alembic/`).
+  Kept `0005`'s import grouping consistent with `0004` (house style) rather than with `ruff --fix`,
+  which treats the local `alembic/` dir as first-party and regroups differently.
+- **Process note (not a code decision).** The first U1 commit (`ad6a9b6`, later rebased) overwrote
+  this very file with a fresh 27-line stub because it was written without reading the existing 2075-line
+  log first. Caught on resume and repaired by restoring `main`'s copy and appending this entry.
+
+## 2026-07-17 — U3 (`0036`): plaid_transactions, append-only
+
+The landing table for `/transactions/sync` (`docs/plans/2026-07-17-001-...-plan.md`). Decisions
+worth a human's eye:
+
+- **Append-only is enforced by the grant, not just documented.** `cfo_app` is granted `SELECT,
+  INSERT` on `plaid_transactions` and nothing else — the only scoped table whose grant omits
+  UPDATE/DELETE. So "corrections are new rows" is a database guarantee: no application path can
+  rewrite history even by mistake. A test drives an UPDATE and a DELETE as the app role and asserts
+  `permission denied`, with the row unchanged after. This is a stronger claim than the plan spelled
+  out (it said "append-only, all INSERTs") and cheap to make, so I made it.
+- **Deliberately no UNIQUE on `plaid_transaction_id`.** The plan's Key Technical Decisions call this
+  out — a second `modified` of the same transaction legitimately repeats the id. A UNIQUE would
+  reject the correction the design depends on. The test lands the same id three times (added,
+  modified, removed) as three rows.
+- **`plaid_account_id` is NOT NULL.** The plan's removed-shape says "only transaction_id/account_id",
+  so account_id is present on every event including removed. If a Sandbox `removed` in U5 turns out to
+  omit account_id (older Plaid API versions did), that is a U5 finding and a one-line migration —
+  flagged here so it is not a surprise. The value columns (`amount`/`date`/`name`/`merchant_name`)
+  ARE nullable, which is the sparse-removed case the plan's verification names.
+- **Extended the IDOR `two_households` fixture again** (as with `plaid_items` in U1) to insert a
+  transaction per household, so the append-only table is proven isolated with real rows, not empty.
+- **Left `spend_projections`'s "ingest deletes this, ticket 0031" annotation alone.**
+  `plaid_transactions` does not die in this rung — the `assemble_snapshot()` seam is not crossed — so
+  its deletion is the serving rung's, and `spend_projections`'s annotation is about a different table.
+
+Full suite: 548 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U2 (`0035`): the webhook doorbell, the raw store, the queue
+
+The security-critical unit. Decisions and deviations a reviewer should see:
+
+- **The SECURITY DEFINER function was a genuine P0, and `households.id` is `text` not `uuid`.** The
+  plan sketched `plaid_household_for_item(text) RETURNS uuid`, but the worker needs to read FORCE'd
+  `plaid_items` before it can set a scope — and an unscoped session (even the table owner, under
+  FORCE) sees nothing. The function bypasses RLS *only* because it runs as its owner (the
+  migration-runner, a superuser/BYPASSRLS role) via SECURITY DEFINER. Proven empirically before
+  writing any Python: an unscoped `cfo_app` session reads 0 rows from `plaid_items` directly and
+  resolves the household through the function. Returns `text` (the real household_id type), not `uuid`.
+- **The dedup key needed `NULLS NOT DISTINCT`; the plan's literal UNIQUE would not dedup.** The
+  SYNC_UPDATES_AVAILABLE webhook carries no cursor, so the cursor column is NULL, and Postgres treats
+  NULLs as distinct in a UNIQUE by default — two redeliveries would both insert. `NULLS NOT DISTINCT`
+  (PG15+, both CI and Neon qualify) makes `ON CONFLICT DO NOTHING` actually drop the redelivery.
+- **Added PyJWT[crypto] beyond the plan's two named deps.** The plan named `plaid-python` and
+  `google-cloud-tasks` but the ES256 webhook-JWT verification needs a JWT library; PyJWT[crypto] is
+  the standard choice and pulls `cryptography` for the P-256 signature. All three are in both
+  manifests and `DISTRIBUTION_OF`.
+- **The doorbell is a second endpoint not behind our API key** (after `/health`). Plaid does not have
+  our key; its authentication is the signature. This is deliberate and documented in ADR-0005 [3].
+- **`household_id` on `/plaid/link/exchange` comes from the API-key-authenticated body**, not derived
+  from an end-user session (there is none; Clerk is deferred). The plan said "never read from the
+  request body" — interpreted as "never derive tenancy from an *untrusted* field." The trusted
+  internal caller (shared API key, the same trust every route runs under) supplies it, and the write
+  goes through `repository()` so RLS `WITH CHECK` binds the row. Flagged for review in `link.py`.
+- **Created `client.py` and `repository.add_plaid_item` in U2** though the plan listed `client.py`
+  under U4 — the Link exchange needs both. U4 extends them for the sync loop.
+- **`enqueue only on a fresh insert`**: the doorbell enqueues a sync only when the webhook row was
+  newly inserted (not a dedup conflict), so a redelivery never re-triggers work. The sync is
+  idempotent by cursor anyway, so this is a guard, not a correctness dependency.
+- **conftest `db` fixture now truncates `plaid_webhooks`** too: it has no FK to households, so
+  `TRUNCATE households CASCADE` never reached it (the same reason `decisions` is named there), and
+  webhook rows would otherwise leak across tests.
+- **GCP provisioning and the retention purge are NOT built here** — they are not code. ADR-0005 [4]
+  names the steps; U4 adds the Cloud Scheduler job. The service fails at the first webhook, not at
+  deploy, if the queue/OIDC are missing — which is why they are named loudly rather than gated.
+
+Full suite: 562 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U4 (`0037`): the sync worker and the cursored loop
+
+The worker that lands real rows. Decisions worth a human's eye:
+
+- **Failure is atomic; the status flip is a second transaction.** The plan says
+  "last_successful_sync_at untouched on failure" and "status flips". If I flipped status inside the
+  sync transaction, a rollback would undo the flip; if I kept partial inserts, the cursor question
+  gets murky. So the sync transaction is all-or-nothing (a mid-loop error rolls back every insert and
+  leaves the cursor unmoved), and `_flip_status` runs in its own transaction afterward. Clean
+  failure, visible status, no partial page. Verified on the ITEM_LOGIN_REQUIRED path.
+- **The nightly poll enumerates households, not a third definer function.** The poll must reach every
+  item across households, but `plaid_items` is FORCE'd. Rather than add a second SECURITY DEFINER
+  function (ADR-0005 said the two exceptions are the only two), the poll reads the **unscoped
+  `households`** table (it has no RLS — it is the tenant registry, and `GET /households` already
+  reads it unscoped), then lists each household's items under scope. No new tenancy exception.
+- **The FOR UPDATE race guard is proven with real threads, not asserted.** A two-thread test holds
+  the lock through the first sync and shows the second run blocks, then reads the advanced cursor and
+  inserts nothing — 2 rows, not 4. This is the one verification the plan named that a single-threaded
+  test cannot make honestly.
+- **`Decimal(str(amount))`, never `Decimal(float)`.** Plaid's SDK types `amount` as a float; the
+  str-conversion is the only one that keeps the exact cent for the NUMERIC column.
+- **OIDC verification is real but injected.** `verify_google_oidc` validates the Google-issued token
+  against the configured audience and service account; it is a FastAPI dependency so tests stub it,
+  and the no-token path short-circuits to False before any network call.
+- **`response_model=None` on the sync routes.** They return a dict on success and a bare `Response`
+  on 401/400; FastAPI cannot build a response model from `Response | dict`, so the annotation is
+  disabled explicitly.
+- **U5 needs live Plaid Sandbox credentials I do not have.** The hard gate — a real
+  public_token→exchange→sync→fire_webhook→reset_login run — cannot execute without
+  `PLAID_CLIENT_ID`/`PLAID_SECRET`. The transport is proven against a fake client at every seam; U5
+  is what proves it against Plaid itself, and it is the one unit blocked on a credential.
+
+Full suite: 571 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U5 (`0038`): the Sandbox harness — written, NOT yet run
+
+The hard gate, and the one unit I could not finish honestly.
+
+- **The harness is complete and it has never touched Plaid.** No Sandbox credentials in this
+  environment, so `tests/test_plaid_sandbox.py` skips loudly (like the DB suites without
+  TEST_DATABASE_URL). It lints and collects; that is all I can verify. The plan is explicit that a
+  green fake-client suite is NOT evidence here, and I am not going to pretend otherwise: **the hard
+  gate is not crossed.** Ticket 0038 is `status: blocked`, one credential away.
+- **What I verified instead:** every seam is proven against a fake client — JWT verification, dedup,
+  the definer-function bypass, the cursor loop, resumability, the FOR UPDATE race (real threads), the
+  login-required halt, RLS scoping. What remains unproven is precisely what only Plaid can prove:
+  that Sandbox's real responses flow through all of it. That is the harness's job.
+- **The `removed`-row assertion is an explicit un-green skip, not a fabricated pass.** Forcing a
+  `removed` in Sandbox is not deterministic from the sync flow alone (it needs a custom Sandbox user
+  or the /sandbox/transactions endpoints). Left as a marked TODO to wire on first real run. U3 already
+  proves the NULL-column insert at the schema layer, so the risk is "does Sandbox emit this shape",
+  not "does our code handle it".
+- **What the whole rung still owes before a *serving* rung** (all out of scope, all named): GCP
+  provisioning (queue, OIDC, scheduler, retention purge), the Neon migration + deploy, and every
+  deferred piece in the plan's Scope Boundaries (the recurring-event detector, Link UI, KMS,
+  normalization, 0029).
+
+Net: U1-U4 built, tested against a real Postgres and a fake Plaid client, and committed. U5's code is
+written and waiting on a credential to become the real proof it is meant to be.
+
+## 2026-07-17 — U5 (`0038`) GREEN: the hard gate crossed against real Plaid Sandbox
+
+The harness ran, and Plaid corrected the plan twice. The transport is now proven against Plaid
+itself, not a mock.
+
+- **Sandbox reconciliation 1 — `fire_webhook` needs a webhook URL.** `/sandbox/item/fire_webhook`
+  refuses `SANDBOX_WEBHOOK_INVALID` unless the item has a webhook configured. `_create_and_exchange`
+  now sets a placeholder URL via `SandboxPublicTokenCreateRequestOptions`. (The test drives run_sync
+  directly and never receives the webhook, so delivery is irrelevant — only that a URL exists.)
+- **Sandbox reconciliation 2 — `fire_webhook SYNC_UPDATES_AVAILABLE` generates data, it does not
+  redeliver.** The plan modeled it as a redelivery whose next sync is a no-op; the real sync returned
+  `(32 added, 16 modified)`. That is Sandbox *generating* a new batch, and it landing incrementally
+  from the stored cursor is itself proof the cursor persisted. Restructured the test: the
+  redelivery-is-a-no-op proof is now an **unchanged re-sync** (step 2), and the fired webhook is the
+  **incremental-update path** (step 3, an exact-delta row-count check). This is precisely what a hard
+  gate is for — the plan's assumption meeting the vendor's behavior, and the vendor winning.
+- **One sub-test stays deferred, honestly.** `test_a_removed_transaction_lands_as_a_null_column_row`
+  is still an explicit `skip`: forcing a `removed` in Sandbox is not deterministic from the sync flow
+  alone (needs a custom Sandbox user or /sandbox/transactions). U3 proves the NULL-column insert at
+  the schema layer, so the residual risk is "does Sandbox emit this shape", not "does our code handle
+  it". Ticket 0038 keeps that acceptance box open.
+- **Plan status flipped `active → completed`;** the Build Progress table refreshed to the shipping
+  snapshot; the stale `adr:` frontmatter path corrected to the real filename
+  (`0005-plaid-webhook-tenancy-exceptions.md`).
+
+The rung is done: U1-U4 proven against a real Postgres and a fake client, U5 proven against Plaid
+Sandbox. It ends at rows in a table, one seam short of `assemble_snapshot()`, exactly as scoped.

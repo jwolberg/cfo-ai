@@ -155,6 +155,75 @@ class Repository:
             **f,
         )
 
+    def add_plaid_item(
+        self,
+        *,
+        item_id: str,
+        plaid_item_id: str,
+        access_token: str,
+        institution_id: str | None = None,
+    ) -> None:
+        """Insert a linked Plaid Item, scoped to this household (ticket 0034).
+
+        Through the repository like every other write, so RLS `WITH CHECK` binds the row to
+        `household_id`: a caller that named the wrong household cannot smuggle an item elsewhere,
+        the INSERT is simply rejected. `access_token` is plaintext in Sandbox — the start guard
+        (`backend/db/session.py`) forbids a non-sandbox boot until it is ciphertext.
+        """
+        self._exec(
+            "INSERT INTO plaid_items"
+            " (id, household_id, plaid_item_id, institution_id, access_token)"
+            " VALUES (:item_id, :h, :plaid_item_id, :institution_id, :access_token)",
+            item_id=item_id,
+            plaid_item_id=plaid_item_id,
+            institution_id=institution_id,
+            access_token=access_token,
+        )
+
+    def plaid_item_ids(self) -> list[str]:
+        """Every linked Item's Plaid id for this household. The nightly poll enumerates households
+        (unscoped — `households` has no RLS, it is the tenant registry) and asks each one this."""
+        rows = self._all("SELECT plaid_item_id FROM plaid_items WHERE household_id = :h")
+        return [r["plaid_item_id"] for r in rows]
+
+    def add_plaid_transaction(
+        self,
+        *,
+        transaction_id: str,
+        plaid_item_id: str,
+        plaid_account_id: str,
+        plaid_transaction_id: str,
+        change_type: str,
+        pending_transaction_id: str | None = None,
+        amount: Decimal | None = None,
+        date: date | None = None,
+        name: str | None = None,
+        merchant_name: str | None = None,
+    ) -> None:
+        """Append one `/transactions/sync` outcome (ticket 0036). INSERT only — the table grants the
+        app role no UPDATE or DELETE, so a correction is a new row, never a rewrite.
+
+        `amount` is a `Decimal`. The caller converts Plaid's float through `str` (never
+        `Decimal(float)`), so the cent that reaches this NUMERIC column is the cent Plaid sent.
+        """
+        self._exec(
+            "INSERT INTO plaid_transactions"
+            " (id, household_id, plaid_item_id, plaid_account_id, plaid_transaction_id,"
+            " pending_transaction_id, amount, date, name, merchant_name, change_type)"
+            " VALUES (:tid, :h, :plaid_item_id, :plaid_account_id, :plaid_transaction_id,"
+            " :pending_transaction_id, :amount, :date, :name, :merchant_name, :change_type)",
+            tid=transaction_id,
+            plaid_item_id=plaid_item_id,
+            plaid_account_id=plaid_account_id,
+            plaid_transaction_id=plaid_transaction_id,
+            pending_transaction_id=pending_transaction_id,
+            amount=amount,
+            date=date,
+            name=name,
+            merchant_name=merchant_name,
+            change_type=change_type,
+        )
+
     def add_decision(self, **f: Any) -> None:
         self._exec(
             "INSERT INTO decisions (id, household_id, day, action, amount, target_card_id,"
