@@ -152,10 +152,20 @@ export function Spending({ householdId }: Props) {
 /**
  * One card: what it owes, what is forming behind that, and whether it grew.
  *
- * `showName` is off for a single-card household — naming "card_demo" when there is only one card
- * is noise, and the id is ours, not something the user calls it. With a portfolio the panels have
- * to be tellable apart, and the id is the only handle the API gives us. A real display name is a
- * Plaid field this product does not have yet.
+ * ## The card reference is a reference, not a name
+ *
+ * `card_id` is **our primary key**, not something the user calls their card. A real display name is
+ * a Plaid field this product does not have, and inventing one ("Card 1 of 3") would be worse than
+ * having none — it is a name we made up, presented as theirs.
+ *
+ * So on a portfolio it appears, because three identical panels have to be tellable apart and the id
+ * is the only handle the API gives us — but in the **quiet register**, beside the label rather than
+ * as the title. The first draft shouted `CARD_B_HIGH` where the panel's name goes, which is a
+ * database key wearing a headline. `readpath.Household.label` exists because *"a label is copy, and
+ * copy that lives in a database is copy nobody can grep for"*; the same argument reaches here, and
+ * until there is real copy to show, the honest thing is to show the id as what it is.
+ *
+ * On a single-card household it is omitted entirely: naming the only card is noise.
  */
 function CardPanel({ card, showName }: { card: CardSpend; showName: boolean }) {
   const { this_cycle: cycle, last_cycle: last } = card;
@@ -163,7 +173,14 @@ function CardPanel({ card, showName }: { card: CardSpend; showName: boolean }) {
   return (
     <>
       <View style={styles.card} testID={`this-cycle-${card.card_id}`}>
-        <Text style={styles.label}>{showName ? card.card_id.toUpperCase() : 'THIS CYCLE'}</Text>
+        <View style={styles.cardHead}>
+          <Text style={styles.label}>THIS CYCLE</Text>
+          {showName && (
+            <Text style={styles.cardRef} testID={`card-ref-${card.card_id}`}>
+              {card.card_id}
+            </Text>
+          )}
+        </View>
         <Text style={styles.stat}>{formatMoney(cycle.unbilled.amount)} charged</Text>
         <Text style={styles.body}>Due {formatDateLong(cycle.unbilled.due)}.</Text>
 
@@ -194,9 +211,10 @@ function CardPanel({ card, showName }: { card: CardSpend; showName: boolean }) {
           same as "nothing was charged" — so there is nothing to say, and we say nothing. */}
       {last !== null && isPositive(last.grew_by) && (
         <View style={[styles.card, styles.grew]} testID={`card-grew-${card.card_id}`}>
+          {/* "This card", never `card_b_low` — the panel sits directly under the card it is about,
+              so the reference is already on screen and a primary key in a sentence is not copy. */}
           <Text style={styles.heading}>
-            {showName ? `${card.card_id} grew` : 'Your card grew'} {formatMoney(last.grew_by)} last
-            cycle.
+            {showName ? 'This card grew' : 'Your card grew'} {formatMoney(last.grew_by)} last cycle.
           </Text>
           <Text style={styles.body}>
             You charged {formatMoney(last.charged)} and paid {formatMoney(last.paid)}. A sweep will
@@ -279,6 +297,12 @@ const styles = StyleSheet.create({
   // Not a warning colour. See the header note: there is no red in this product, and a
   // household whose card is growing is being told the truth, not shown a fault.
   grew: { borderLeftWidth: 4, borderLeftColor: colors.deepGreen },
+  // The label and the card reference share a baseline: "THIS CYCLE   card_b_high". The label is
+  // the heading; the id is an aside next to it, which is the whole point of not making it the title.
+  cardHead: { flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' },
+  // Muted, lowercase, tabular. It is an identifier — it should read like one, not like a name we
+  // are claiming is theirs. See CardPanel's note.
+  cardRef: { ...type.small, color: colors.muted, fontVariant: ['tabular-nums'] },
   label: { ...type.label },
   stat: { ...type.stat, marginTop: space.xs },
   heading: { ...type.heading },

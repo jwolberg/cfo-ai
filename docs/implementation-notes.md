@@ -1794,3 +1794,41 @@ Two things nobody had noticed and neither ticket listed:
   the database was provisioned and migrated at `0020` and no household was ever written to it.
 - **Neon predates migration `0004`.** `spend_projections` takes the scoped-table count from five to
   six, so the deployed code refuses to start against it until `deploy.md` `[2]` runs.
+
+### The card label — found by looking, not by testing (`0031`, post-review)
+
+**Sixty-six passing tests went green through a database primary key rendered as the panel's title.**
+The portfolio Spending screen read `CARD_B_HIGH` where the card's name goes, and the growing-card
+panel said `card_b_low grew $310.00 last cycle` — a primary key in a sentence.
+
+Nothing caught it because every mobile test asserts on `testID`s, and **a testID does not care what
+the words say**. It took running the app and looking at the screen. The defect was even predicted in
+the code comment directly above it — *"the id is ours, not something the user calls it"* — and
+shipped anyway, which is its own lesson: writing the caveat down is not the same as honouring it.
+
+It is below this repo's own bar, and the repo says so in two places. `readpath.Household.label`
+exists because *"a label is copy, and copy that lives in a database is copy nobody can grep for."*
+And this is the codebase that renamed "worst 30 days" to "your highest 30 days" because *"telling
+someone their life is the worst kind of it is a judgement we have not earned"* — then showed them
+`CARD_B_HIGH`.
+
+**The fix is the honest interim, not a name.** There is no display name: that is a Plaid field this
+product does not have, and inventing one ("Card 1 of 3") would be worse — a name we made up,
+presented as theirs. So the id stays, because three identical panels must be tellable apart and it
+is the only handle the API gives us, but in the quiet register: `THIS CYCLE` is the title again and
+`card_b_high` is a muted aside beside it. The growing-card panel says "This card grew" — it sits
+directly under the card it is about, so the reference is already on screen.
+
+Three tests now pin the copy, mutation-tested both ways: restore `.toUpperCase()` on the key and two
+of them fail. They assert on **text**, deliberately, because the testID suite is what let this
+through.
+
+**Worth carrying forward:** the single-card demo hid this. `showName` is false for one card, so
+every screenshot anyone had ever taken of this screen looked fine. It is the same shape as
+everything else this plan has found — a path that was never exercised — wearing a copy defect
+instead of a logic one.
+
+**Left alone, and worth a look separately:** the panel headline is `$0.00 charged` for a card with
+nothing unbilled, which reads as a null state when the real story is the $164.89 statement below it.
+That is `0016`'s original design (`{unbilled} charged`), correct for the single-card demo where
+unbilled was $106.08, and only exposed by a portfolio. Not this ticket's, and not a regression.

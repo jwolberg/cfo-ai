@@ -223,6 +223,65 @@ test('the portfolio total is shown for many cards and suppressed for one', async
   expect(screen.queryByTestId('portfolio-totals')).toBeNull();
 });
 
+// --- the card reference is a reference, not a name ---------------------------------------
+//
+// These exist because 13 passing tests went green through the defect: they all assert on
+// `testID`s, and a testID does not care what the words say. The first draft rendered
+// `CARD_B_HIGH` where the panel's title goes — our primary key, shouted, presented as the name
+// of the user's card. Nothing caught it until someone looked at the screen.
+
+test('a portfolio shows the card reference quietly, and never as the panel title', async () => {
+  getSpend.mockResolvedValue(portfolio());
+  await render(<Spending householdId={PORTFOLIO} />);
+
+  await waitFor(() => expect(screen.getByTestId('this-cycle-card_a')).toBeTruthy());
+
+  // Present — three identical panels have to be tellable apart, and the id is the only handle
+  // the API gives us until a real display name arrives with Plaid.
+  expect(screen.getByTestId('card-ref-card_b_high')).toBeTruthy();
+
+  // But as an aside, not a headline: the panel is still titled by what it is. And never
+  // SHOUTED — `.toUpperCase()` on a database key is what this test exists to prevent.
+  const panel = within(screen.getByTestId('this-cycle-card_b_high'));
+  expect(panel.getByText('THIS CYCLE')).toBeTruthy();
+  expect(panel.queryByText('CARD_B_HIGH')).toBeNull();
+});
+
+test('a single-card household is not told the name of its only card', async () => {
+  getSpend.mockResolvedValue(spend());
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
+
+  await waitFor(() => expect(screen.getByTestId('this-cycle-card_demo')).toBeTruthy());
+
+  // Naming the only card is noise. There is nothing to tell apart.
+  expect(screen.queryByTestId('card-ref-card_demo')).toBeNull();
+  expect(screen.queryByText(/card_demo/i)).toBeNull();
+});
+
+test('a growing card in a portfolio says "this card", not a primary key', async () => {
+  getSpend.mockResolvedValue(
+    spend({
+      cards: [
+        card({ card_id: 'card_a' }),
+        card({
+          card_id: 'card_b_low',
+          last_cycle: { charged: '1760.00', paid: '1450.00', grew_by: '310.00' },
+        }),
+      ],
+      totals: { statement: '4480.00', unbilled: '2480.00', held_back: '4480.00' },
+    }),
+  );
+  await render(<Spending householdId={PORTFOLIO} />);
+
+  await waitFor(() => expect(screen.getByTestId('card-grew-card_b_low')).toBeTruthy());
+
+  // The panel sits directly under the card it is about, so the reference is already on screen.
+  // `card_b_low grew $310.00 last cycle` is a database key in a sentence.
+  const grew = within(screen.getByTestId('card-grew-card_b_low'));
+  expect(grew.getByText(/This card grew \$310\.00 last cycle/)).toBeTruthy();
+  expect(grew.queryByText(/card_b_low grew/)).toBeNull();
+});
+
 test('a card with no transaction history says nothing, rather than "grew by $0.00"', async () => {
   // `last_cycle: null` means we have no transactions for this card — not that nothing was
   // charged. Only one of those is safe to print, and it is neither of the two panels.
