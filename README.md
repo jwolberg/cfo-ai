@@ -209,6 +209,13 @@ survive (20 arbitrary seeds per shape are still 20 valid households); per-househ
 Pinned in `tests/test_precompute.py::TestGenerateIsNotPrefixStable` — fixing it regenerates the
 artifact and moves every measured number in three documents, so it needs its own diff.
 
+**This now reaches production, and the seeder is why it does not get worse.** `seed.py` passes
+`days=WARMUP_DAYS + SERVED_DAYS` — **150, exactly what `build()` passes** — so the four households
+served from Postgres are the *same* households the artifact shipped, not a third identity. That is
+deliberate, and it is the whole reason the defect stayed a documentation problem rather than
+becoming a data one. The ungraded-household gap is unchanged: the demo still ships 150-day
+households and the harness still grades 181-day ones.
+
 ---
 
 ## `backend/` — the walk, the API, and the data
@@ -231,6 +238,42 @@ depth that is only ever tested end-to-end is one layer wearing a disguise: delet
 
 `architecture.md` [4] is blunt about why: *"An IDOR here exposes someone's complete financial life;
 one forgotten `WHERE` clause is not an acceptable single point of failure."*
+
+### The surface
+
+Every route below `/health` carries `Depends(require_api_key)`. Each read opens a scoped
+repository for one household and closes it with the request — there is no cache, because a cache
+would be a second copy of a number the database already holds.
+
+| Route | What | Costs money? |
+| --- | --- | --- |
+| `GET /health` | Cloud Run's probe. Deliberately unauthenticated, and deliberately says nothing. | no |
+| `GET /households` | The directory — every household the demo can be switched to. The one table with **no** RLS, and necessarily so: it hands you the id everything else is scoped by. | no |
+| `GET /households/{id}/decisions` | The served window, newest first — the order the feed reads in. 90 days. | no |
+| `GET /households/{id}/spend` | What the household spends, and what their cards are about to take. | no |
+| `GET /households/{id}/decisions/{day}/explain` | Why the engine did what it did, in plain language. **No LLM in this path** — `engine/explain.py` writes every sentence, so it cannot fail slowly or cost anything. | no |
+| `POST /assistant/message` | **The only path that spends money.** | **yes** |
+
+**`/assistant/message` is the interesting one, and the constraint is the point.** The LLM never
+decides anything: it looks up decisions the engine already made and puts them in English. The
+window is loaded **scoped** and handed to the model as the only decisions that exist — so it cannot
+fetch another household's figure to assert, and a guard (`backend/assistant.py`) then checks the
+prose against the record before the user sees it. The `outcome` field says which path you got:
+`answered`, `no_record` (**including a caught hallucination** — the guard rejected the model's
+claim), `rate_limited`, or an availability failure. A `no_record` is the guard working, not the
+service failing.
+
+`household_id` travels in the **body**, not the path, because it is an input to the answer rather
+than a sub-resource of it — this route reads a household's decisions and posts nothing to them.
+There is no server-side session: the modal resends the conversation each turn, which is exactly why
+the assistant re-fetches every time rather than trusting what it said earlier. **The history is the
+client's word, not the engine's.**
+
+The rate cap (10 turns/minute, 300/day) is **in-memory and per-instance**, which is why the service
+is pinned to `--max-instances=1`. The API key ships inside the Expo bundle and is public by
+construction, so that cap is the only thing between a leaked key and an unbounded Anthropic bill —
+and N instances would mean N × the cap. One instance, one cap. If this ever takes real traffic, the
+cap has to move somewhere shared *before* the instance limit goes up.
 
 ---
 
