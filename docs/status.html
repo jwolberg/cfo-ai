@@ -362,7 +362,8 @@
     payment rail is built and deployed</strong>: the decision engine, the database, the API,
     and the app. The harness that measures it is live as well. This is a grader that scores each decision against what
     actually happened, though still running only on synthetic data.
-    <b>Neither end is built:</b> one is the next problem, the other is deliberately unchosen.
+    The <b>bank connection</b> (Plaid ingest) is the next problem, and
+    the <b>payment rail</b> that moves the money is deliberately unchosen for now.
   </p>
   <p class="lede">
     This is a few days into a large, complex build, and the scope ahead is almost
@@ -370,9 +371,9 @@
     finished product.
   </p>
   <p class="thesis">
-    <strong>Nothing here has touched a real household.</strong> The engine, the database, the API
-    and the app are live and measured; they run against four synthetic households, and no money has
-    ever moved. The measurement grades <em>the code</em>, not yet <em>the world</em>.
+    The engine, the database, the API
+    and the app with four synthetic households are live and measured. No money has
+    ever moved. The measurement grades <em>the code</em>, not yet <em>real accounts</em>.
   </p>
 </header>
 
@@ -406,10 +407,10 @@
 </div>
 
 <p class="lede" style="margin:1.5rem 0">
-  The path from the bank connection to the money actually moving. The core in the middle &mdash;
-  decide, store, serve, and the customer-facing app &mdash; is built and deployed. <b>The ends are
+  The path from the bank connection to the money actually moving. The core in the middle which
+  decides, stores, serves, and the customer-facing app is built and deployed. <b>The ends are
   not,</b> and the reason differs at each: one is the next problem, the other is deliberately
-  unchosen. Below those, the surfaces a live money-moving service will need &mdash; onboarding and
+  unchosen. Below those, the additional surfaces a live money-moving service will need &mdash; onboarding and
   controls, an operator console, and observability &mdash; are scoped here but not yet built.
 </p>
 
