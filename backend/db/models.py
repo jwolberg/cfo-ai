@@ -35,6 +35,7 @@ from sqlalchemy import (
     Numeric,
     Table,
     Text,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
@@ -246,8 +247,127 @@ spend_projections = Table(
 )
 
 
+# One row per linked Plaid Item — a bank connection. Ticket 0034, the Plaid transport rung
+# (`docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md`). HOUSEHOLD_SCOPED and RLS-FORCEd
+# like every table that holds a credential or a balance: the `access_token` *is* a credential.
+#
+# It is plaintext here because in Sandbox a token grants access to fabricated data and protects
+# nothing, so KMS envelope encryption defers to the first real token (`architecture.md` [7.2]).
+# The trigger fires quietly, though — the day `PLAID_ENV` flips to production the same column
+# becomes a live credential — so `backend/db/session.py`'s start guard refuses a non-sandbox boot
+# until the token is actually encrypted. `dek_id` (on `households`) is the other half of that story
+# and still has no key behind it.
+plaid_items = Table(
+    "plaid_items",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # Plaid's own stable id for the Item, unique across the whole deployment — it is Plaid's key,
+    # not ours, and the webhook doorbell resolves `plaid_item_id → household_id` through it before
+    # any household is known (ADR-0005). The named UNIQUE constraint lives in the migration.
+    Column("plaid_item_id", Text, nullable=False, unique=True),
+    Column("institution_id", Text, nullable=True),
+    # Plaintext in Sandbox; the startup guard forbids a non-sandbox boot while it stays that way.
+    Column("access_token", Text, nullable=False),
+    # The `/transactions/sync` position, persisted per item. NULL before the first sync — Plaid's
+    # "sync from the beginning" is the absent cursor, not a sentinel.
+    Column("cursor", Text, nullable=True),
+    # engine.models.ConnectionState. Ships `healthy`; flips to `login_required` on
+    # ITEM_LOGIN_REQUIRED, which is the first thing that drives `ConnectionState` off a constant.
+    Column("status", Text, nullable=False, server_default=text("'healthy'")),
+    # Becomes `Account.balance_age_days`, the freshness gate — "the thing standing between a
+    # dropped webhook and an overdraft" (`architecture.md` [3.1]). NULL until the first success.
+    Column("last_successful_sync_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("error_code", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "status IN ('healthy', 'login_required', 'disconnected')", name="ck_plaid_items_status"
+    ),
+)
+
+
+# Every `/transactions/sync` outcome — added, modified, removed — lands here as an INSERT (ticket
+# 0036). **Append-only**: corrections are new rows carrying a `change_type`, never an UPDATE or a
+# DELETE (`architecture.md` [4]). The migration enforces it at the privilege layer — `cfo_app` is
+# granted SELECT and INSERT and nothing else — so append-only is a guarantee, not a convention.
+#
+# `plaid_transaction_id` is therefore **not unique**: a legitimate second `modified` of the same
+# transaction shares it, and so does a later `removed`. The reconciliation that would collapse them
+# is normalization, which this rung defers.
+#
+# `amount`/`date`/`name`/`merchant_name` are **nullable** because a `removed` event carries only
+# ids (`plaid_transaction_id` and `plaid_account_id`) — NULL is the honest absence, not a fabricated
+# row. `pending_transaction_id` is a column with no consumer here; the reconciliation that reads it
+# is normalization's, not this rung's ([Resolved Decisions], brainstorm [2] U3).
+plaid_transactions = Table(
+    "plaid_transactions",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("plaid_account_id", Text, nullable=False),
+    Column("plaid_transaction_id", Text, nullable=False),
+    # The id of the pending transaction a posted one supersedes. Stored, never yet read — the
+    # reconciliation that consumes it is normalization ([3]), out of this rung.
+    Column("pending_transaction_id", Text, nullable=True),
+    # NUMERIC, never float (ADR-0002 [2.2]). Nullable: a `removed` event carries no amount.
+    Column("amount", MONEY, nullable=True),
+    Column("date", Date, nullable=True),
+    Column("name", Text, nullable=True),
+    Column("merchant_name", Text, nullable=True),
+    # added | modified | removed — all INSERTs. The CHECK says so where the data lives.
+    Column("change_type", Text, nullable=False),
+    Column("ingested_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "change_type IN ('added', 'modified', 'removed')",
+        name="ck_plaid_transactions_change_type",
+    ),
+)
+
+
+# **The one table deliberately outside `HOUSEHOLD_SCOPED`** (ticket 0035, ADR-0005). Plaid's webhook
+# carries `item_id`, not `household_id`, so the doorbell cannot resolve a household before RLS could
+# be set — and RLS fails closed, so a scoped insert here would see nothing to match and reject the
+# row. The raw store is therefore unscoped, mirroring `GET /households` (`backend/main.py`), and the
+# *worker* resolves `plaid_item_id → household_id` through the `SECURITY DEFINER`
+# `plaid_household_for_item()` function before it touches any financial row. Both holes — this table
+# and that function — are the first exceptions to "every table is scoped by household_id"
+# (`architecture.md` [4]), and ADR-0005 is where they are argued and bounded (including retention).
+#
+# The dedup key is `NULLS NOT DISTINCT`: `cursor` is NULL for the webhook that matters most
+# (TRANSACTIONS / SYNC_UPDATES_AVAILABLE carries none), and under default NULL-distinct semantics
+# two such redeliveries would both be admitted — the opposite of dedup. NULLS NOT DISTINCT treats
+# them as equal so `ON CONFLICT DO NOTHING` drops the redelivery. This is a best-effort guard on the
+# *enqueue*; the sync itself is idempotent by cursor regardless.
+plaid_webhooks = Table(
+    "plaid_webhooks",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("webhook_type", Text, nullable=False),
+    Column("webhook_code", Text, nullable=False),
+    # Whatever cursor the payload carries, if any. Usually NULL — see the note above.
+    Column("cursor", Text, nullable=True),
+    Column("payload", JSONB, nullable=False),
+    Column("received_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    # The named dedup key; the migration declares it NULLS NOT DISTINCT (not expressible here).
+    UniqueConstraint("plaid_item_id", "webhook_code", "cursor", name="uq_plaid_webhooks_dedup"),
+)
+
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
-# each, and ticket 0021's IDOR suite proves both — independently.
+# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` is deliberately
+# NOT here (ADR-0005): a webhook names an item, not a household.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "accounts",
     "cards",
@@ -255,6 +375,8 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "decisions",
     "snapshots",
     "spend_projections",
+    "plaid_items",
+    "plaid_transactions",
 )
 
 __all__ = [
@@ -267,6 +389,9 @@ __all__ = [
     "decisions",
     "households",
     "metadata",
+    "plaid_items",
+    "plaid_transactions",
+    "plaid_webhooks",
     "policies",
     "snapshots",
     "spend_projections",

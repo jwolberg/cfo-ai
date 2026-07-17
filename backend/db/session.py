@@ -68,6 +68,65 @@ def assert_rls_binds(conn: Connection) -> None:
         )
 
 
+class PlaidAccessTokenWouldLeak(RuntimeError):
+    """Raised at startup when a real Plaid access_token would be stored in plaintext."""
+
+
+def plaid_env() -> str:
+    """The Plaid environment, defaulting to the safe one.
+
+    `sandbox` is the default because it is the only environment where a plaintext access_token is
+    harmless — the token grants access to fabricated data and can drain nothing. Any other value
+    means the tokens on `plaid_items.access_token` are real credentials.
+    """
+    return os.environ.get("PLAID_ENV", "sandbox").strip().lower()
+
+
+def _plaid_token_encryption_active(conn: Connection) -> bool:
+    """Whether Plaid access tokens are encrypted at rest by a live key. False until KMS lands.
+
+    The signal is the encryption *capability*, deliberately **not** `households.dek_id`. A `dek_id`
+    with no key behind it — which is every synthetic household today (`backend/db/models.py`) — is
+    exactly the false "looks protected" this refuses to be fooled by: a presence-check on `dek_id`
+    would pass while the token stayed plaintext, which is the whole failure this guard exists to
+    stop (brainstorm [5.1]).
+
+    When KMS envelope encryption lands (`architecture.md` [7.2], the first real token), this returns
+    True only when a KMS client initializes against its configured key AND `access_token` is stored
+    as ciphertext — and this function moves with that code. Until then it is honestly False: a
+    non-sandbox deploy cannot keep a real token safe, so it must not come up. `conn` is taken now so
+    the future ciphertext check has the connection it will need.
+    """
+    return False
+
+
+def assert_plaid_tokens_safe_at_rest(conn: Connection) -> None:
+    """Refuse to start if a real Plaid access_token would sit in plaintext. Call once, at startup.
+
+    **The trigger fires quietly, which is the reason this exists.** In Sandbox the access_token
+    protects nothing, so it is stored in plaintext and KMS is deferred (`architecture.md` [7.2]).
+    The day `PLAID_ENV` flips to `production` the *same column* becomes a live credential that can
+    drain a household — with no migration to force the question and no failing test to notice. This
+    is that failing test, made a startup gate, in the same shape as `assert_rls_binds()` above.
+
+    Keyed on a real encryption signal, never on `households.dek_id`: a stray non-null `dek_id` must
+    not satisfy it while the token stays plaintext (see `_plaid_token_encryption_active`). The
+    interim invariant, explicit until KMS lands: nothing sets `dek_id` before the encryption path
+    that consumes it.
+    """
+    if plaid_env() == "sandbox":
+        return
+    if not _plaid_token_encryption_active(conn):
+        raise PlaidAccessTokenWouldLeak(
+            f"PLAID_ENV is {plaid_env()!r}, so Plaid access tokens are real credentials — but "
+            "envelope encryption is not active, so plaid_items.access_token would be stored in "
+            "plaintext. KMS must be live and the token stored as ciphertext before a non-sandbox "
+            "boot (architecture.md [7.2]). Refusing to start rather than persist a credential that "
+            "can drain a household in the clear. A non-null dek_id is NOT sufficient: it has no "
+            "key behind it yet."
+        )
+
+
 def database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:

@@ -35,6 +35,13 @@ DISTRIBUTION_OF = {
     "anthropic": "anthropic",
     "sqlalchemy": "sqlalchemy",
     "psycopg": "psycopg",
+    # Plaid transport rung (0034-0038). Register every new import root here — an unknown root is
+    # silently skipped by `test_every_module_..._in_the_deploy_manifest`, which is exactly the
+    # PR #50 hole where a real import escaped the check. `jwt` is PyJWT; `google` is the namespace
+    # package `google-cloud-tasks` ships under.
+    "plaid": "plaid-python",
+    "google": "google-cloud-tasks",
+    "jwt": "pyjwt",
 }
 
 # Modules the service imports at runtime. `alembic` is deliberately absent: migrations are an admin

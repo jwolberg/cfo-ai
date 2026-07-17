@@ -13,6 +13,11 @@ import pytest
 from sqlalchemy import text
 
 from backend.db.models import HOUSEHOLD_SCOPED
+from backend.db.session import (
+    PlaidAccessTokenWouldLeak,
+    assert_plaid_tokens_safe_at_rest,
+    plaid_env,
+)
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -318,6 +323,216 @@ class TestTheTenantIsTheHousehold:
             .all()
         )
         assert rows == [], f"speculative tables exist: {rows}"
+
+
+class TestPlaidItems:
+    """The Plaid transport rung's first table (ticket 0034).
+
+    RLS is covered for free: `plaid_items` is in `HOUSEHOLD_SCOPED`, so the parametrized policy and
+    FORCE tests above and `tests/test_idor.py`'s leak test already exercise it. These are the
+    column-level claims that parametrization does not make.
+    """
+
+    def _item(self, conn, hid: str, row_id: str, item_id: str, token: str = "access-sandbox-x"):
+        conn.execute(
+            text(
+                "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token)"
+                " VALUES (:id, :h, :pid, :tok)"
+            ),
+            {"id": row_id, "h": hid, "pid": item_id, "tok": token},
+        )
+
+    def test_an_item_defaults_to_healthy_with_no_cursor_and_no_sync(self, db) -> None:
+        """Ships `healthy`; the cursor and `last_successful_sync_at` are absent, not sentinels —
+        "sync from the beginning" is the missing cursor, and freshness is unknown before a sync."""
+        with db.begin():
+            _household(db, "h1")
+            self._item(db, "h1", "pi-1", "item-1")
+            row = db.execute(
+                text("SELECT status, cursor, last_successful_sync_at FROM plaid_items")
+            ).one()
+        assert row.status == "healthy"
+        assert row.cursor is None
+        assert row.last_successful_sync_at is None
+
+    def test_plaid_item_id_is_unique_across_households(self, db) -> None:
+        """It is Plaid's key, not ours, and the doorbell resolves `item_id → household` before any
+        scope is set (ADR-0005). Two households sharing one would make that lookup ambiguous."""
+        with pytest.raises(Exception, match="uq_plaid_items_plaid_item_id"), db.begin():
+            _household(db, "h1")
+            _household(db, "h2")
+            self._item(db, "h1", "pi-1", "shared-item")
+            self._item(db, "h2", "pi-2", "shared-item")
+
+    def test_an_unknown_status_is_rejected(self, db) -> None:
+        """`status` is engine.models.ConnectionState — healthy | login_required | disconnected —
+        and the CHECK says so where the data lives, so no path can write a fourth value."""
+        with pytest.raises(Exception, match="ck_plaid_items_status"), db.begin():
+            _household(db, "h1")
+            db.execute(
+                text(
+                    "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token,"
+                    " status) VALUES ('pi-x', 'h1', 'item-x', 'tok', 'expired')"
+                )
+            )
+
+
+class TestPlaidTokenStartGuard:
+    """`assert_plaid_tokens_safe_at_rest` — the tripwire on the day `PLAID_ENV` flips to production
+    before KMS makes `access_token` ciphertext. Same shape and same spirit as the `assert_rls_binds`
+    tests: the failure is silent (a plaintext credential), so the guard is a startup refusal.
+    """
+
+    def test_sandbox_boots(self, db, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PLAID_ENV", "sandbox")
+        assert_plaid_tokens_safe_at_rest(db)  # does not raise
+
+    def test_unset_defaults_to_sandbox_and_boots(self, db, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The safe default: no Plaid configured means nothing to protect."""
+        monkeypatch.delenv("PLAID_ENV", raising=False)
+        assert plaid_env() == "sandbox"
+        assert_plaid_tokens_safe_at_rest(db)  # does not raise
+
+    def test_production_is_refused_while_encryption_is_not_active(
+        self, db, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PLAID_ENV", "production")
+        with pytest.raises(PlaidAccessTokenWouldLeak, match="plaintext"):
+            assert_plaid_tokens_safe_at_rest(db)
+
+    def test_a_non_null_dek_id_does_not_satisfy_the_guard(
+        self, db, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The false "looks protected". A `dek_id` with no key behind it — every synthetic
+        household today — must not let production boot. The guard keys on the encryption
+        *capability*, never on `dek_id` presence, or a stray placeholder would satisfy a check
+        while the token stayed clear.
+        """
+        monkeypatch.setenv("PLAID_ENV", "production")
+        with db.begin():
+            db.execute(
+                text(
+                    "INSERT INTO households (id, archetype, dek_id)"
+                    " VALUES ('h1', 'test', 'dek-123')"
+                )
+            )
+        with pytest.raises(PlaidAccessTokenWouldLeak):
+            assert_plaid_tokens_safe_at_rest(db)
+
+
+class TestPlaidTransactions:
+    """The append-only landing table (ticket 0036). Every sync outcome is an INSERT; corrections are
+    new rows. RLS rides the `HOUSEHOLD_SCOPED` parametrization and the IDOR suite — these are the
+    append-only and Plaid-shape claims those do not make."""
+
+    def _txn(
+        self,
+        conn,
+        hid: str,
+        row_id: str,
+        txn_id: str = "ptx-1",
+        change_type: str = "added",
+        amount: str | None = "12.34",
+    ) -> None:
+        conn.execute(
+            text(
+                "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                " plaid_account_id, plaid_transaction_id, amount, date, name, change_type)"
+                " VALUES (:id, :h, 'item-1', 'acct-1', :ptx, :amt, '2026-03-01', 'Coffee', :ct)"
+            ),
+            {
+                "id": row_id,
+                "h": hid,
+                "ptx": txn_id,
+                "amt": Decimal(amount) if amount is not None else None,
+                "ct": change_type,
+            },
+        )
+
+    def _removed(self, conn, hid: str, row_id: str, txn_id: str = "ptx-1") -> None:
+        """A Plaid-shaped `removed`: only the two ids, no amount/date/name/merchant_name."""
+        conn.execute(
+            text(
+                "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                " plaid_account_id, plaid_transaction_id, change_type)"
+                " VALUES (:id, :h, 'item-1', 'acct-1', :ptx, 'removed')"
+            ),
+            {"id": row_id, "h": hid, "ptx": txn_id},
+        )
+
+    def test_modified_and_removed_are_new_rows_not_in_place_edits(self, db) -> None:
+        """The same `plaid_transaction_id` appears as added, then modified, then removed — three
+        rows, nothing updated or deleted in place. A UNIQUE on that column would reject the very
+        corrections append-only exists to keep."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1", txn_id="ptx-9", change_type="added", amount="10.00")
+            self._txn(db, "h1", "r2", txn_id="ptx-9", change_type="modified", amount="12.00")
+            self._removed(db, "h1", "r3", txn_id="ptx-9")
+            rows = db.execute(
+                text(
+                    "SELECT change_type, amount FROM plaid_transactions"
+                    " WHERE plaid_transaction_id='ptx-9' ORDER BY id"
+                )
+            ).all()
+        assert [r.change_type for r in rows] == ["added", "modified", "removed"]
+        assert [r.amount for r in rows] == [Decimal("10.00"), Decimal("12.00"), None]
+
+    def test_a_plaid_shaped_removed_payload_inserts_with_nulls(self, db) -> None:
+        """`removed` carries only `transaction_id`/`account_id`. The value columns are NULL — the
+        honest absence, not a fabricated full row."""
+        with db.begin():
+            _household(db, "h1")
+            self._removed(db, "h1", "r1")
+            row = db.execute(
+                text(
+                    "SELECT amount, date, name, merchant_name FROM plaid_transactions WHERE id='r1'"
+                )
+            ).one()
+        assert (row.amount, row.date, row.name, row.merchant_name) == (None, None, None, None)
+
+    def test_a_numeric_amount_round_trips_a_decimal_exactly(self, db) -> None:
+        """NUMERIC, never float (ADR-0002 [2.2]) — the same rule the money columns hold."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1", amount="1234.56")
+            got = db.execute(text("SELECT amount FROM plaid_transactions WHERE id='r1'")).scalar()
+        assert got == Decimal("1234.56")
+        assert isinstance(got, Decimal), f"got {type(got).__name__} — a float reached the money"
+
+    def test_an_unknown_change_type_is_rejected(self, db) -> None:
+        with pytest.raises(Exception, match="ck_plaid_transactions_change_type"), db.begin():
+            _household(db, "h1")
+            db.execute(
+                text(
+                    "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                    " plaid_account_id, plaid_transaction_id, change_type)"
+                    " VALUES ('r1', 'h1', 'item-1', 'acct-1', 'ptx-1', 'deleted')"
+                )
+            )
+
+    def test_the_app_role_cannot_update_or_delete_an_append_only_row(self, db, as_app) -> None:
+        """Append-only is a **grant**, not a convention: `cfo_app` holds SELECT and INSERT and
+        nothing else, so no application path can rewrite or erase history even by mistake. Proven by
+        trying both as the app role and being refused at the privilege layer."""
+        with db.begin():
+            _household(db, "h1")
+            self._txn(db, "h1", "r1")
+
+        with pytest.raises(Exception, match="permission denied"):
+            as_app(
+                "h1",
+                lambda c: c.execute(text("UPDATE plaid_transactions SET name='x' WHERE id='r1'")),
+            )
+        with pytest.raises(Exception, match="permission denied"):
+            as_app(
+                "h1",
+                lambda c: c.execute(text("DELETE FROM plaid_transactions WHERE id='r1'")),
+            )
+
+        with db.begin():
+            still = db.execute(text("SELECT name FROM plaid_transactions WHERE id='r1'")).scalar()
+        assert still == "Coffee", "the row was rewritten despite the grant"
 
 
 def test_deleted_at_records_the_shred_not_a_soft_delete(db) -> None:

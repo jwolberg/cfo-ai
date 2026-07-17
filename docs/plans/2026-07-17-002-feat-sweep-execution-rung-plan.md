@@ -56,7 +56,7 @@ first draft:
 ## Build Progress
 
 *Not started. Six units, six tickets (`0039`–`0044`), one ADR (`0006`). No code yet.*
-*Ticket/ADR numbering assumes `main`'s baseline (tickets through `0038`, ADRs through `0005`); confirm after the `main` merge (Prerequisites).*
+*Numbering confirmed against `main` (merged into this branch 2026-07-17): tickets run through `0038`, ADRs through `0005`, migrations through `0007` — so this rung's migrations are `0008`/`0009`.*
 
 | Unit | Ticket | Status |
 |------|--------|--------|
@@ -269,10 +269,9 @@ ShadowProvider implements the same interface: every method logs and advances the
 
 ## Prerequisites / Dependencies
 
-- **Merge `main` into this branch (or branch the implementation off `main`).** `backend/plaid/`,
-  tickets `0034`–`0038`, and ADR-0005 are on `main` and absent from this tree. U1/U3 depend on the
-  merged `plaid_items` schema and the transport patterns. This mirrors the `0031` rebase incident in
-  `docs/implementation-notes.md` — do not build against a stale baseline.
+- **~~Merge `main` into this branch.~~ DONE 2026-07-17.** `backend/plaid/`, tickets `0034`–`0038`, and
+  ADR-0005 are now in the tree (merged; two `docs/` conflicts resolved). U1/U3 can build against the
+  merged `plaid_items` schema and the transport patterns.
 - **`0016` attestation.** No backend write-path exists. Shadow mode against an unattested population
   measures nothing (every unattested household is silently refused). This plan's default: **attest
   pilot households by fixture/seed** (U5/U6), and name the real attestation write-path as a follow-up.
@@ -296,7 +295,7 @@ slot, added to `HOUSEHOLD_SCOPED` (8→9), with the IDOR fixture seeded so the l
 **Dependencies.** The `main` merge (Prerequisites). No plan-local predecessors.
 
 **Files.**
-- `alembic/versions/0008_transfers.py` (new — confirm next revision number after the `main` merge)
+- `alembic/versions/0008_transfers.py` (new — next revision after `0007`, confirmed post-merge)
 - `backend/db/models.py` (add the `transfers` `Table`; add `"transfers"` to `HOUSEHOLD_SCOPED`)
 - `backend/db/repository.py` (add `add_transfer(...)` and non-terminal-transfer queries, mirroring `add_plaid_transaction`)
 - `tests/test_idor.py` (extend the `two_households` fixture to insert a real `transfers` row per household)

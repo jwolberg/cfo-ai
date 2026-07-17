@@ -65,8 +65,9 @@ from backend import assistant, readpath
 from backend.artifact import DayRecord, Summary
 from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
-from backend.db.session import assert_rls_binds, make_engine
+from backend.db.session import assert_plaid_tokens_safe_at_rest, assert_rls_binds, make_engine
 from backend.db.snapshots import PostgresSnapshotStore
+from backend.plaid import link, sync, webhook
 from backend.spend import CardObligations, SpendProjection
 from engine.explain import explain, render
 
@@ -98,6 +99,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with app.state.db.connect() as conn:
         assert_rls_binds(conn)
         _assert_migrated(conn)
+        # A plaintext Plaid access_token is harmless in Sandbox and a drainable credential in
+        # production. This refuses a non-sandbox boot until KMS makes it ciphertext — the quiet
+        # trigger (`PLAID_ENV` flips) made loud. No-op when PLAID_ENV is unset (defaults sandbox).
+        assert_plaid_tokens_safe_at_rest(conn)
 
     # Built once, at startup, so a deploy without the Anthropic secret fails here rather
     # than the first time a user opens the modal and asks a question.
@@ -140,6 +145,14 @@ app.add_middleware(
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
+
+# The Plaid transport rung (tickets 0034-0038). Two routes under `/plaid`: the webhook doorbell
+# (public, authenticated by Plaid's signature — it does NOT carry our API key) and the Link exchange
+# (internal, `Depends(require_api_key)` like everything else). Registered as routers so the route
+# logic lives in `backend/plaid/`, not here.
+app.include_router(webhook.router)
+app.include_router(link.router)
+app.include_router(sync.router)
 
 
 # The household id travels in the path and is bound to both scoping layers in one place

@@ -22,6 +22,13 @@ api = [
     "sqlalchemy>=2.0,<2.1",
     "alembic>=1.13,<2.0",
     "psycopg[binary]>=3.1,<4.0",
+    # Plaid transport rung (tickets 0034-0038). The SDK for the API client, `/transactions/sync`,
+    # and the Sandbox endpoints; Cloud Tasks for the webhook doorbell's fan-out; PyJWT[crypto] to
+    # verify the ES256-signed `Plaid-Verification` webhook JWT. All three also live in
+    # `backend/requirements.txt` — `tests/test_requirements.py` fails if the two disagree.
+    "plaid-python>=39,<40",
+    "google-cloud-tasks>=2.16,<3",
+    "PyJWT[crypto]>=2.8,<3",
 ]
 dev = [
     "pytest>=8",

@@ -93,6 +93,33 @@ def two_households(db):
                 ),
                 {"s": f"snap-{h}", "h": h},
             )
+            # A linked Plaid Item per household (ticket 0034). Without a row here, `plaid_items`
+            # would ride the HOUSEHOLD_SCOPED parametrization with an *empty* table — structural
+            # coverage that never proves alice's item is invisible to bob. RLS on a new scoped
+            # table is exactly the mechanism this repo has shipped built-tested-never-exercised.
+            db.execute(
+                text(
+                    "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token)"
+                    " VALUES (:id, :h, :pid, 'access-sandbox-x')"
+                ),
+                {"id": f"pi-{h}", "h": h, "pid": f"item-{h}"},
+            )
+            # And one transaction each (ticket 0036), for the same reason: without a row, the
+            # append-only table would ride the leak test empty and prove nothing about isolation.
+            db.execute(
+                text(
+                    "INSERT INTO plaid_transactions (id, household_id, plaid_item_id,"
+                    " plaid_account_id, plaid_transaction_id, amount, change_type)"
+                    " VALUES (:id, :h, :item, :acct, :ptx, '10.00', 'added')"
+                ),
+                {
+                    "id": f"ptx-{h}",
+                    "h": h,
+                    "item": f"item-{h}",
+                    "acct": f"acct-{h}",
+                    "ptx": f"txn-{h}",
+                },
+            )
     return db
 
 
@@ -264,6 +291,47 @@ class TestTheScopeDoesNotSurviveTheConnection:
                 text("SELECT count(*) FROM information_schema.tables WHERE table_name='households'")
             ).scalar()
         assert still_there == 1, "households was dropped — the scope was interpolated, not bound"
+
+
+class TestTheWebhookWorkerCanResolveAHouseholdBeforeScoping:
+    """ADR-0005's whole reason for existing, and the P0 the plan's doc review caught.
+
+    The webhook worker must map `plaid_item_id → household_id` *before* it can set a scope — but
+    `plaid_items` is FORCE'd, so a `cfo_app` session with no scope sees nothing in it. Granting the
+    app role BYPASSRLS would unscope every query it makes. The `SECURITY DEFINER`
+    `plaid_household_for_item()` is the narrow alternative: it runs as its owner and bypasses RLS
+    for this one lookup, returning a single `household_id` and nothing else. This is the test that
+    the design can actually execute — without it, the worker could not read the mapping it needs.
+    """
+
+    def test_a_direct_read_of_plaid_items_without_a_scope_sees_nothing(
+        self, two_households, app_engine
+    ) -> None:
+        """The FORCE'd table, as the worker's own role would see it before scoping: empty."""
+        with app_engine.connect() as conn:
+            seen = conn.execute(text("SELECT count(*) FROM plaid_items")).scalar()
+        assert seen == 0, "an unscoped app session read plaid_items directly — RLS did not bind"
+
+    def test_the_definer_function_resolves_the_household_anyway(
+        self, two_households, app_engine
+    ) -> None:
+        """Same unscoped session, through the sanctioned function: it resolves the household."""
+        with app_engine.connect() as conn:
+            resolved = conn.execute(
+                text("SELECT plaid_household_for_item(:item)"), {"item": f"item-{ALICE}"}
+            ).scalar()
+        assert resolved == ALICE
+
+    def test_the_function_returns_only_the_household_not_the_token(
+        self, two_households, app_engine
+    ) -> None:
+        """It returns a scalar household id — never the access_token or any other column."""
+        with app_engine.connect() as conn:
+            result = conn.execute(
+                text("SELECT plaid_household_for_item(:item) AS h"), {"item": f"item-{BOB}"}
+            ).one()
+        assert result.h == BOB
+        assert not hasattr(result, "access_token")
 
 
 def test_an_unscoped_connection_reads_nothing(two_households, db_engine, as_app) -> None:

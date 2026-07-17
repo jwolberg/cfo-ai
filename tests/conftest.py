@@ -67,13 +67,15 @@ def db(db_engine: Engine) -> Iterator[Connection]:
     """
     with db_engine.connect() as conn:
         with conn.begin():
-            # `decisions` is named explicitly and must stay that way. It has **no foreign key** to
-            # `households` — a partitioned table's FKs constrain partition maintenance, so
-            # `architecture.md` [4]'s "repository layer AND row-level security" is what scopes it
-            # instead. The cost lands right here: `TRUNCATE households CASCADE` does not reach it,
-            # and a fixture that assumed otherwise leaves rows behind and fails the *next* test
-            # with a duplicate key from a household it never created.
-            conn.execute(text("TRUNCATE households, decisions CASCADE"))
+            # `decisions` and `plaid_webhooks` are named explicitly and must stay that way. Neither
+            # has a foreign key to `households` — `decisions` because a partitioned table's FKs
+            # constrain partition maintenance, `plaid_webhooks` because a webhook names an item, not
+            # a household (ADR-0005, it is deliberately unscoped). So `architecture.md` [4]'s
+            # "repository layer AND row-level security" (or, for the webhook store, retention) is
+            # what governs them instead. The cost lands right here: `TRUNCATE households CASCADE`
+            # does not reach either, and a fixture that assumed otherwise leaves rows behind and
+            # fails the *next* test with a count from a webhook it never sent.
+            conn.execute(text("TRUNCATE households, decisions, plaid_webhooks CASCADE"))
         yield conn
 
 
