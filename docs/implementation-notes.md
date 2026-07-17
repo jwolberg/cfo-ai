@@ -1903,11 +1903,22 @@ That is the whole of `0026`'s and `0033`'s risk, retired in one boot.
 ### The frontend deploy is not a documentation task
 
 The plan was "deploy, then update the READMEs". The READMEs were the least urgent thing in it.
-The live API served `/decisions`; `main` serves `/households/{id}/decisions`. **The only route the
-two builds share is `/assistant/message`** — so the deployed web bundle (zero occurrences of
-`households`, measured) breaks completely the moment API traffic flips. Deploying the web first
-inverts the failure rather than avoiding it: the new bundle calls `/households`, which the old API
-does not serve.
+The live API served `/decisions`; `main` serves `/households/{id}/decisions`. The deployed web
+bundle (zero occurrences of `households`, measured) therefore breaks completely the moment API
+traffic flips. Deploying the web first inverts the failure rather than avoiding it: the new bundle
+calls `/households`, which the old API does not serve.
+
+> **Correction, same day.** I wrote here that "the only route the two builds share is
+> `/assistant/message`", and every source I had said so — the `0031` banner in `DEPLOY.local.md`
+> says it too. It is wrong in the way that matters. `AssistantRequest` now **requires
+> `household_id` in the body** (`backend/main.py:506`), so the old client's assistant call 422s.
+> The *path* is shared; the *contract* is not. Nothing about the pre-`0024` client works against
+> this service, and the overlap is zero, not one. Caught only because rewriting `§7` meant running
+> its curl — which had the same omission and would have failed for anyone who followed it.
+>
+> This is the fourth time in two sessions that a confidently-written claim about state turned out
+> false, and the first one I wrote myself. The tell was identical every time: **it described what
+> the code was designed to be rather than what a request returns.**
 
 There is no ordering that avoids a broken window. There is only making it short: **pre-build the
 web export, deploy the API, push the prebuilt bundle immediately.** That turns the gap into a
