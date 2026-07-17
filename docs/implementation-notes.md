@@ -1794,3 +1794,95 @@ Two things nobody had noticed and neither ticket listed:
   the database was provisioned and migrated at `0020` and no household was ever written to it.
 - **Neon predates migration `0004`.** `spend_projections` takes the scoped-table count from five to
   six, so the deployed code refuses to start against it until `deploy.md` `[2]` runs.
+
+---
+
+## 2026-07-16 — the Neon credentials went in, and four runbook claims turned out to be false
+
+Not a ticket. The keychain entries (`cfoai-NEON-OWNER`, `cfoai-NEON-RUNTIME`) were written, and
+verifying them end to end surfaced more about the *runbooks* than about the credentials. Neon is
+now at `0004 (head)`, seeded, and RLS provably binds through the pooler. **The deploy itself is
+still the one unproven claim.**
+
+### The two entries were both wrong, and the defaults explain why
+
+Neither was a slip. Neon's console hands you `postgresql://…` against the **direct** host — the
+pooler is behind a toggle and the driver prefix is not mentioned at all. Paste what you are given
+and you get a runtime string that is wrong twice, silently:
+
+- **`postgresql://` needs to be `postgresql+psycopg://`.** `pyproject.toml` pins psycopg **3**;
+  a bare scheme makes SQLAlchemy reach for psycopg2 and fail at *import*, as
+  `ModuleNotFoundError: No module named 'psycopg2'` — which reads like a packaging bug.
+- **The runtime entry pointed at the direct host.** Not pooled, under a service that scales.
+
+`docs/runbooks/neon-provisioning.md` sketched the hosts as `ep-*.<region>.aws.neon.tech`, which
+**omits the `.c-11.` compute segment** real Neon hosts carry. Anyone constructing a pooler name
+from that pattern gets it wrong. That is the likeliest proximate cause of the direct-host paste,
+and it is now fixed in both runbooks along with the `-pooler`-goes-in-the-endpoint-id-segment rule.
+
+**DNS is not evidence, and this nearly fooled me.** Both host names resolve to the same Neon
+gateway IPs — Neon routes by **SNI** — so `dig`ging the pooler name and getting an answer proves
+nothing. Only connecting does. Written into the runbook.
+
+### What was *right*: the provisioning
+
+`cfo_runtime` existed and was exactly the shape the design demands — `LOGIN`, not `SUPERUSER`, not
+`BYPASSRLS` — and `neondb_owner` carried `BYPASSRLS` precisely as documented. Only the stored
+password was wrong (reset in the Neon console). The design held; the transcription did not.
+
+### Four runbook claims that were false
+
+Each of these was written confidently and none survived being checked. Recording them because the
+pattern is the point: **every one was a claim about state, written from intent rather than
+measurement.**
+
+1. **"`DEPLOY.local.md` sets both in one command"** (`deploy.md` `[5]`, committed in `1b94b7f` —
+   the commit whose *subject* is the CORS drop). It did not. §5 ended
+   `--set-env-vars="PYTHONUNBUFFERED=1"`, and `--set-env-vars` **replaces** the whole env block,
+   so running §5 as a redeploy silently deleted the `RESFI_ALLOWED_ORIGINS` that §6 had set on the
+   live revision. Every curl in §7 still passes; only the browser client dies. The runbook fixed
+   its own copy of the command and then described the *other* file from memory. Now fixed there.
+2. **"Neon predates migration `0004`"** — true, but it was at **`0001`**: three migrations behind,
+   not one. And `0003` is a primary-key restructure (`accounts`/`cards` re-keyed on
+   `(household_id, id)`), not an additive step. It was safe only because every table was empty —
+   verified, 0 rows, not assumed. The runbook now says *measure it, do not predict it*.
+3. **"if it is not already covered by the project-level binding the other two secrets use"**
+   (`deploy.md` `[4]`). There is no project-level `secretAccessor` binding in this project; the
+   other two secrets carry per-secret bindings. The false premise plus the conditional framing is
+   why `resfi-database-url` had **no binding at all** — a boot failure whose error names the mount,
+   not the permission. Now stated as required, with a verification loop.
+4. **`gcloud secrets create`** — the secret already existed, so `create` fails with a conflict and
+   changes nothing. `versions add` is the spelling that works. Both runbooks now carry both.
+
+### `households` has no RLS, and that is correct
+
+Testing isolation, an unscoped `SELECT count(*) FROM households` as `cfo_runtime` returned **4**,
+which looks exactly like a leak. It is not: `models.py`'s `HOUSEHOLD_SCOPED` covers the six tables
+"whose rows belong to exactly one household", and `households` is the directory `/households`
+enumerates — it *cannot* be scoped by the id you need it to hand you. Six tables carry RLS +
+`FORCE`, matching the tuple exactly. Written into `DEPLOY.local.md` because it will look like a
+finding to the next person too.
+
+The real isolation checks, as `cfo_runtime` through the pooler, against the value **read back out
+of Secret Manager** rather than a hand-typed string: unscoped `decisions` → 0 rows; scoped to
+`hh_demo_biweekly` → 90 decisions, 1 spend_projection, that household only; scoped to A reading
+B's rows → 0; scope after the transaction → `None`, so it does not survive a pooled checkout.
+
+### Tradeoff accepted
+
+The keychain-fix commands put connection strings in shell history and briefly in `ps`. Chosen over
+printing the corrected strings for copy-paste, which would have put live credentials into an agent
+transcript. Local, single-user, and the lesser exposure — but it is an exposure, and the honest
+alternative (view, then paste at a bare `-w` prompt) is noted in the runbook.
+
+### Still open
+
+- **The deploy has never been run.** `0033` proved `backend/requirements.txt` imports on a GitHub
+  runner; "the manifest imports" and "a buildpack produces a container that starts" remain
+  different claims, and only the deploy settles the second.
+- **Version 1 of `resfi-database-url` is stale** (direct host, no `+psycopg`, since-rotated
+  password). Inert, because `:latest` is what the service resolves — but worth disabling so nobody
+  pins it by hand.
+- **`DEPLOY.local.md` and `docs/runbooks/deploy.md` duplicate most of their content**, and drifted
+  within a day of the runbook being written (claim 1 above). The duplication, not the graduation,
+  is now the risk. Steps whose only content is reasoning are the ones worth collapsing.

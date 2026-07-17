@@ -65,25 +65,41 @@ pgbouncer's transaction pooling does not carry:
 
 | | Host | Used by |
 |---|---|---|
-| **Direct** | `ep-*.<region>.aws.neon.tech` | steps `[2]`, `[3]` — Alembic and the seeder |
-| **Pooler** | `ep-*-pooler.<region>.aws.neon.tech` | step `[4]` — the running service |
+| **Direct** | `ep-<id>.<compute>.<region>.aws.neon.tech` | steps `[2]`, `[3]` — Alembic and the seeder |
+| **Pooler** | `ep-<id>-pooler.<compute>.<region>.aws.neon.tech` | step `[4]` — the running service |
+
+`-pooler` is appended to the **endpoint-id segment only**; everything from `<compute>` (`c-2`,
+`c-11`, …) rightward is identical. Neon's console defaults to the *direct* host and to a bare
+`postgresql://` scheme — both wrong here, and both silent. `neon-provisioning.md` has the full
+list of ways the obvious string misleads.
 
 ---
 
 ## [2] Migrate Neon to head, as the **owner**, against the **direct** host
 
-The Neon project was provisioned and migrated during `0020`. It predates migration `0004`
-(`spend_projections`, ticket `0031`), so **the deployed code will not run against it as it
-stands** — `_assert_migrated()` refuses to start when a table the read path reads is missing, which
-is the guard working.
+The Neon project was provisioned during `0020` — which created migration `0001` **and stopped
+there**. It was still at `0001` when measured on 2026-07-16: `0002` (`cards.apr_source`), `0003`
+(re-keying `accounts` and `cards` on `(household_id, id)`) and `0004` (`spend_projections`) were
+all outstanding. So the deployed code would not have run against it — `_assert_migrated()` refuses
+to start when a table the read path reads is missing, which is the guard working.
 
-Check first rather than assume:
+An earlier draft of this section said "predates migration `0004`" and expected `0003`. Both were
+true-but-misleading: it was **three** migrations behind, not one, and `0003` is a primary-key
+restructure rather than an additive step. Hence: check, do not assume.
 
 ```bash
 export DATABASE_URL='postgresql+psycopg://<owner>:<pw>@<direct-host>/<db>?sslmode=require'
-.venv/bin/python -m alembic current      # expect 0003 or earlier
+.venv/bin/python -m alembic current      # measure it; do not predict it
 .venv/bin/python -m alembic upgrade head # -> 0004
 ```
+
+> **Before running `0003` against a database with rows in it, stop.** It drops and recreates the
+> primary keys on `accounts` and `cards`. It was safe here only because every table was empty (0
+> rows — verified, not assumed), so there was no data to move. That emptiness is a fact about
+> 2026-07-16, not a property of the migration: re-check it rather than inherit this conclusion.
+
+**Applied 2026-07-16.** Neon is now at `0004 (head)` and seeded (`[3]`); Postgres is 18.4. The
+remaining unproven step is the deploy itself.
 
 The owner *should* own the schema — that is the one thing Neon's `BYPASSRLS` default role is right
 for. It is a **migration credential and nothing else**; it never reaches the service.
@@ -124,16 +140,27 @@ role that bypasses RLS, and Neon's default role does. Under it every household-s
 being slow about.
 
 ```bash
+# First time only. If the secret already exists, `create` fails with "already exists" and
+# changes nothing — use `versions add` instead; the deploy pins :latest either way.
 printf %s 'postgresql+psycopg://cfo_runtime:<pw>@<pooler-host>/<db>?sslmode=require' \
   | gcloud secrets create "$SECRET_DATABASE_URL" --data-file=- --project "$PROJECT_ID"
+
+# Rotating, or correcting a bad value:
+printf %s 'postgresql+psycopg://cfo_runtime:<pw>@<pooler-host>/<db>?sslmode=require' \
+  | gcloud secrets versions add "$SECRET_DATABASE_URL" --data-file=- --project "$PROJECT_ID"
 ```
 
 > **The `printf %s` is load-bearing, not style.** `--data-file=-` stores stdin *verbatim*, and a
 > trailing newline inside a connection string fails at connect time in a way that reads like a bad
 > password rather than a bad newline. `DEPLOY.local.md` §3 hit exactly this with the Anthropic key.
 
-Grant the runtime service account access if it is not already covered by the project-level binding
-the other two secrets use:
+**Grant the runtime service account access. This is required, not conditional.** There is **no**
+project-level `secretmanager.secretAccessor` binding in this project — verified 2026-07-16 — so
+every secret carries its own. An earlier draft of this section said the other two secrets were
+covered by a project-level binding and framed this step as "if it is not already covered"; that
+was false, and the step got skipped on the strength of it. A secret the service account cannot
+read is indistinguishable at boot from a secret that does not exist: the instance dies with an
+error naming the **mount**, not the IAM binding.
 
 ```bash
 gcloud secrets add-iam-policy-binding "$SECRET_DATABASE_URL" \
@@ -142,6 +169,44 @@ gcloud secrets add-iam-policy-binding "$SECRET_DATABASE_URL" \
   --role=roles/secretmanager.secretAccessor \
   --project "$PROJECT_ID"
 ```
+
+Confirm all three, rather than trusting the grant landed:
+
+```bash
+SA="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" \
+      --format='value(spec.template.spec.serviceAccountName)')"
+for S in "$SECRET_API_KEY" "$SECRET_ANTHROPIC" "$SECRET_DATABASE_URL"; do
+  gcloud secrets get-iam-policy "$S" --project "$PROJECT_ID" --format=json | grep -q "$SA" \
+    && echo "  $S: readable" || echo "  $S: NOT READABLE — boot will fail"
+done
+```
+
+### Verify the value **you stored**, not one you retype
+
+Every check that matters reads the secret back out of Secret Manager, because the string in your
+shell and the string in the secret are different objects and only one of them boots the service.
+Echoes no secret:
+
+```bash
+gcloud secrets versions access latest --secret="$SECRET_DATABASE_URL" --project "$PROJECT_ID" \
+  | grep -q '^postgresql+psycopg://cfo_runtime:' && echo 'shape ok' || echo 'WRONG — do not deploy'
+
+DATABASE_URL="$(gcloud secrets versions access latest --secret="$SECRET_DATABASE_URL" \
+  --project "$PROJECT_ID")" .venv/bin/python -c "
+from sqlalchemy import create_engine, text
+from backend.db.session import assert_rls_binds, database_url
+with create_engine(database_url()).connect() as c:
+    assert_rls_binds(c)
+    print('connected as', c.execute(text('SELECT current_user')).scalar(), '| RLS binds')"
+```
+
+Expect `connected as cfo_runtime | RLS binds`. `RlsWouldNotBind` means you stored the owner
+string; `ModuleNotFoundError: psycopg2` means the `+psycopg` prefix is missing.
+
+**Done 2026-07-16**, against version 2 of the secret — version 1 held the pre-correction string
+(direct host, no `+psycopg`, since-rotated password) and is stale. RLS was confirmed to bind
+through the pooler, an unscoped read of `decisions` returned 0 rows, a scoped read returned only
+its own household, and the scope did not survive the transaction.
 
 ## [5] Deploy
 

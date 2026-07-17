@@ -40,8 +40,45 @@ Neon gives you both. Use each for one thing:
 
 | | Host | Used by |
 |---|---|---|
-| **Direct** | `ep-*.<region>.aws.neon.tech` | **Migrations.** Alembic takes session-level locks that pgbouncer's transaction pooling does not carry. |
-| **Pooler** | `ep-*-pooler.<region>.aws.neon.tech` | **The running service.** Cloud Run scales; connections must be pooled. |
+| **Direct** | `ep-<id>.<compute>.<region>.aws.neon.tech` | **Migrations.** Alembic takes session-level locks that pgbouncer's transaction pooling does not carry. |
+| **Pooler** | `ep-<id>-pooler.<compute>.<region>.aws.neon.tech` | **The running service.** Cloud Run scales; connections must be pooled. |
+
+**`-pooler` is appended to the endpoint-id segment only**; everything from `<compute>` rightward
+is identical between the two. Do not drop the `<compute>` label (`c-2`, `c-11`, …) — a Neon host
+is *not* `ep-<id>.<region>.aws.neon.tech`, and an earlier draft of this table said it was.
+
+> ⚠️ **Both defaults are the wrong one, and they compound.** Neon's console hands you
+> `postgresql://…` against the **direct** host; the pooler is behind a toggle and the driver
+> prefix is not mentioned at all. Paste that string as-is and you get a runtime credential that
+> is unpooled *and* unusable — see "Two more ways the obvious string is wrong" below. This is not
+> hypothetical: it is how this project's own runtime entry was first stored.
+
+> **DNS is not evidence.** Both names resolve to the same Neon gateway addresses — Neon routes by
+> **SNI**, not by IP — so `dig`ging the pooler name and getting an answer tells you nothing about
+> whether you have the right host. Only connecting does.
+
+---
+
+## Two more ways the obvious string is wrong
+
+Distinct from the `BYPASSRLS` trap above, and cheaper to hit:
+
+1. **`postgresql://` must be `postgresql+psycopg://`.** `pyproject.toml` pins psycopg **3**, and
+   `database_url()` hands the string straight to `create_engine`. A bare `postgresql://` makes
+   SQLAlchemy reach for psycopg2, which is not installed — so this fails at **import**, as
+   `ModuleNotFoundError: No module named 'psycopg2'`, which reads like a packaging bug rather
+   than a connection-string typo.
+
+2. **Passwords must be URL-safe or percent-encoded.** Any of `@ : / ? #` in a generated password
+   breaks URL parsing and surfaces as an authentication failure — sending you off to rotate a
+   credential that was fine. Generate alphanumeric (`_` and `-` are safe) and the question never
+   comes up.
+
+Both are catchable in one line, before a deploy ever reads the value:
+
+```bash
+<the-string> | grep -q '^postgresql+psycopg://cfo_runtime:' || echo 'WRONG — do not deploy'
+```
 
 The pooler is also *why* `household_scope()` uses `set_config(..., is_local => true)` rather than
 `SET`: a plain `SET` persists for the life of the connection, and under transaction pooling the
