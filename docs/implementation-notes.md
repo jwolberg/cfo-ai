@@ -2207,3 +2207,29 @@ The worker that lands real rows. Decisions worth a human's eye:
   is what proves it against Plaid itself, and it is the one unit blocked on a credential.
 
 Full suite: 571 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U5 (`0038`): the Sandbox harness — written, NOT yet run
+
+The hard gate, and the one unit I could not finish honestly.
+
+- **The harness is complete and it has never touched Plaid.** No Sandbox credentials in this
+  environment, so `tests/test_plaid_sandbox.py` skips loudly (like the DB suites without
+  TEST_DATABASE_URL). It lints and collects; that is all I can verify. The plan is explicit that a
+  green fake-client suite is NOT evidence here, and I am not going to pretend otherwise: **the hard
+  gate is not crossed.** Ticket 0038 is `status: blocked`, one credential away.
+- **What I verified instead:** every seam is proven against a fake client — JWT verification, dedup,
+  the definer-function bypass, the cursor loop, resumability, the FOR UPDATE race (real threads), the
+  login-required halt, RLS scoping. What remains unproven is precisely what only Plaid can prove:
+  that Sandbox's real responses flow through all of it. That is the harness's job.
+- **The `removed`-row assertion is an explicit un-green skip, not a fabricated pass.** Forcing a
+  `removed` in Sandbox is not deterministic from the sync flow alone (it needs a custom Sandbox user
+  or the /sandbox/transactions endpoints). Left as a marked TODO to wire on first real run. U3 already
+  proves the NULL-column insert at the schema layer, so the risk is "does Sandbox emit this shape",
+  not "does our code handle it".
+- **What the whole rung still owes before a *serving* rung** (all out of scope, all named): GCP
+  provisioning (queue, OIDC, scheduler, retention purge), the Neon migration + deploy, and every
+  deferred piece in the plan's Scope Boundaries (the recurring-event detector, Link UI, KMS,
+  normalization, 0029).
+
+Net: U1-U4 built, tested against a real Postgres and a fake Plaid client, and committed. U5's code is
+written and waiting on a credential to become the real proof it is meant to be.
