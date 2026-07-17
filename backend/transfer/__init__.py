@@ -13,6 +13,9 @@ package deliberately imports nothing from `engine/` — the only coupling to the
 
 from __future__ import annotations
 
+from backend.transfer.funding import FundingAccount, funding_account
+from backend.transfer.increase import AuthNumbers, IncreaseProvider
+from backend.transfer.method import MethodDestination, MethodProvider
 from backend.transfer.provider import (
     Auth,
     Direction,
@@ -28,14 +31,20 @@ from backend.transfer.shadow import ShadowProvider, run_shadow_sweep
 
 __all__ = [
     "Auth",
+    "AuthNumbers",
     "Direction",
+    "FundingAccount",
+    "IncreaseProvider",
     "Leg",
     "LedgerState",
+    "MethodDestination",
+    "MethodProvider",
     "Provider",
     "ProviderRef",
     "Return",
     "ShadowProvider",
     "TransferIntent",
     "TransferProvider",
+    "funding_account",
     "run_shadow_sweep",
 ]
