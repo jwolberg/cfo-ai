@@ -28,6 +28,7 @@ beforeEach(() => {
       targeted_debt_id: 'card_demo',
       targeted_debt_balance: '3451.64',
       starting_debt_balance: '13652.42',
+      current_debt_balance: '3451.64',
       sweep_count: 35,
       refuse_count: 55,
       paid_off: false,

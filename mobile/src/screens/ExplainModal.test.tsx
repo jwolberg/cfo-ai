@@ -32,8 +32,10 @@ const SWEEP: Decision = {
   checking_balance: '3847.41',
   savings_balance: '2400.00',
   buffer_floor: '800.00',
+  debts: [
+    { debt_id: 'card_demo', balance: '3451.64', apr: '0.2399', apr_source: 'reported' },
+  ],
   debt_balance: '3451.64',
-  debt_id: 'card_demo',
 };
 
 const NARRATION = {

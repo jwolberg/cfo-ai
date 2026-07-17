@@ -25,6 +25,20 @@ export interface Reason {
   text: string;
 }
 
+/** Where a rate came from. A 23% estimate and a reported 23% are the same number, and only this
+ *  tells them apart — so it travels with every APR the client is given. `engine/interest.py`
+ *  refuses to price an `estimated` rate, and any UI that renders one as a fact undoes that. */
+export type AprSource = 'reported' | 'user_entered' | 'estimated';
+
+/** One card, as the engine saw it on that day. */
+export interface Debt {
+  debt_id: string;
+  balance: Money;
+  /** Null when the engine was given no rate at all. `estimated` means we guessed it at 23%. */
+  apr: string | null;
+  apr_source: AprSource;
+}
+
 export interface Decision {
   date: IsoDate;
   action: Action;
@@ -38,20 +52,29 @@ export interface Decision {
   checking_balance: Money;
   savings_balance: Money;
   buffer_floor: Money;
+  /** Every card, each with its own rate. A household at 27.99% and 17.99% does not have "a
+   *  debt", and the single `debt_balance` this replaced hid which was which. */
+  debts: Debt[];
+  /** The portfolio total, derived server-side so this and `debts` cannot disagree. */
   debt_balance: Money;
-  debt_id: string;
 }
 
 export interface Summary {
   interest_avoided_total: Money;
   total_swept: Money;
   current_buffer: Money;
+  /** The card the engine most recently aimed at — read from its decisions, never re-derived
+   *  from the rates: a transactor can hold the highest APR and still never be a target. */
   targeted_debt_id: string | null;
   targeted_debt_balance: Money;
-  /** What the card owed on the first served day — the denominator for "how far down is it".
-   *  It measures the *card's* progress, which includes the household's own payments as well
+  /** Portfolio totals on the first and last served day — the denominator and numerator for
+   *  "how far down is it". Pair these two, never `starting` against `targeted`: on a portfolio
+   *  that compares a total against one card and shows progress that did not happen.
+   *
+   *  They measure the *cards'* progress, which includes the household's own payments as well
    *  as our sweeps. The copy must not claim we did all of it. */
   starting_debt_balance: Money;
+  current_debt_balance: Money;
   sweep_count: number;
   refuse_count: number;
   paid_off: boolean;

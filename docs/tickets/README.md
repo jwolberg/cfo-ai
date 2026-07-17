@@ -150,6 +150,7 @@ defects instead — see below.
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
 | [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
+| [0030](0030-dayrecord-carries-a-portfolio.md) | `DayRecord` carries a portfolio *(the decision 0027 deferred)* | backend-python-agent | 0023, 0027, 0028 | **done** |
 
 ## Three things to know before picking one of these up
 

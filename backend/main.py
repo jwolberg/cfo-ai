@@ -123,8 +123,26 @@ def decision_json(record: art.DayRecord) -> dict[str, Any]:
         "checking_balance": usd(record.checking_balance),
         "savings_balance": usd(record.savings_balance),
         "buffer_floor": usd(record.buffer_floor),
+        # Every card, with its own rate and where that rate came from — ticket 0030. A portfolio at
+        # 27.99% and 17.99% does not have "a debt", and `debt_balance` alone answered a question
+        # nobody asked while hiding the one that matters.
+        #
+        # `apr_source` crosses the wire with the rate because the client cannot tell a 23% estimate
+        # from a reported 23% otherwise, and `0028` decided we would act on the estimate and never
+        # claim from it. A UI that renders a guessed rate as a fact is that decision undone at the
+        # last possible moment.
+        "debts": [
+            {
+                "debt_id": d.debt_id,
+                "balance": usd(d.balance),
+                "apr": None if d.apr is None else str(d.apr),
+                "apr_source": d.apr_source.value,
+            }
+            for d in record.debts
+        ],
+        # The portfolio total. Derived in one place (`DayRecord.debt_balance`) so the client and the
+        # summary cannot disagree about what "your debt" is.
         "debt_balance": usd(record.debt_balance),
-        "debt_id": record.debt_id,
     }
 
 
@@ -142,10 +160,15 @@ def summary_json(summary: art.Summary) -> dict[str, Any]:
         "current_buffer": usd(summary.current_buffer),
         "targeted_debt_id": summary.targeted_debt_id,
         "targeted_debt_balance": usd(summary.targeted_debt_balance),
-        # The denominator for "how far down is the card". Sent as a figure, never as a
-        # percentage: the UI can divide, and a percentage computed here would be a second
-        # place the number lives.
+        # The denominator and numerator for "how far down is it", both portfolio totals. Sent as
+        # figures, never as a percentage: the UI can divide, and a percentage computed here would
+        # be a second place the number lives.
+        #
+        # `current_debt_balance` rather than pairing `starting -> targeted`, which reads correctly
+        # only while a household has one card. On a portfolio it compares a total against a single
+        # card and renders progress that did not happen (ticket 0030).
         "starting_debt_balance": usd(summary.starting_debt_balance),
+        "current_debt_balance": usd(summary.current_debt_balance),
         "sweep_count": summary.sweep_count,
         "refuse_count": summary.refuse_count,
         "paid_off": summary.paid_off,

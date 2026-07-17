@@ -47,6 +47,7 @@ from backend.artifact import (
     SCHEMA_VERSION,
     Artifact,
     DayRecord,
+    DebtRecord,
     SpendSnapshot,
     dump,
     summarize,
@@ -1063,19 +1064,12 @@ def build(
     A thin wrapper over `walk()`. Everything below the `for` is artifact assembly — the shape
     the dashboard reads — and nothing in it decides anything.
 
-    **Single-card, and it refuses rather than pretends.** `DayRecord` carries one `debt_balance`,
-    one `debt_apr`, one `debt_id`, because the artifact schema has exactly one debt and the demo
-    household has exactly one card. `walk()` carries a whole portfolio (ticket 0027); this does
-    not. Silently reporting `cards[0]` of a portfolio is the same class of bug 0027 fixed one
-    function up, so a multi-card spec raises here instead.
+    **It serves a portfolio now.** This raised on a multi-card spec from ticket `0027` until `0030`,
+    and the guard was right for as long as it stood: `DayRecord` carried one `debt_balance`, one
+    `debt_apr`, one `debt_id`, so the only ways to serve a portfolio were to report `cards[0]` — the
+    bug `0027` fixed one function up — or to refuse. It refused. `0030` gave `DayRecord` the tuple
+    the walk has carried since `0027`, so the guard has nothing left to protect.
     """
-    if len(spec.cards) != 1:
-        raise ValueError(
-            f"build() serves the demo artifact, whose schema holds exactly one card — got "
-            f"{len(spec.cards)}. `walk()` carries a portfolio; `DayRecord` does not, and reporting "
-            f"only cards[0] is the bug ticket 0027 exists to have fixed."
-        )
-
     total_days = warmup_days + served_days
     history = generate(spec, start=start, days=total_days, seed=seed)
 
@@ -1096,12 +1090,7 @@ def build(
                 checking_balance=money(w.checking),
                 savings_balance=SAVINGS_BALANCE,
                 buffer_floor=policy.buffer_floor,
-                # The one card, by name — guarded above. `debt_balances` is keyed by `card_id`,
-                # so this reads the demo card's own ledger rather than whichever happened to be
-                # first.
-                debt_balance=w.debt_balances[spec.card.card_id],
-                debt_apr=spec.card.apr,
-                debt_id=CARD_ID,
+                debts=_debts_of(w),
                 history_days=w.snapshot.history_days,
             )
         )
@@ -1119,6 +1108,33 @@ def build(
         days=days,
         summary=summarize(days),
         spend=derive_spend_snapshot(history, *final),
+    )
+
+
+def _debts_of(w: WalkDay) -> tuple[DebtRecord, ...]:
+    """The portfolio, as the engine saw it, on one day. Ticket 0030.
+
+    **The APR comes from `w.snapshot`, not from `spec`**, and that is the whole reason this is a
+    function rather than a comprehension inline. Its predecessor read `debt_apr=spec.card.apr` —
+    `sim/` is the answer key, and the engine is not allowed to see it. On a card whose issuer does
+    not report a rate the engine decides against an estimated 23% while the spec knows the true
+    23.99%, and the artifact recorded the truth: `0028` inverted, a guess quietly upgraded to a fact
+    on the way to the dashboard.
+
+    It was invisible because `DEMO_SPEC` reports its rate, so the two agreed. Every household where
+    they disagree was a household `build()` refused to serve.
+
+    The balance is the card's own ledger (`debt_balances`, keyed by `card_id`) — not
+    `statement_balance`, which is only the closed part, and not `cards[0]`'s, which was `0027`.
+    """
+    return tuple(
+        DebtRecord(
+            debt_id=card.card_id,
+            balance=w.debt_balances[card.card_id],
+            apr=card.apr,
+            apr_source=card.apr_source,
+        )
+        for card in w.snapshot.portfolio.cards
     )
 
 

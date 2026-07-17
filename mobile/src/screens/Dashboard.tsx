@@ -157,8 +157,11 @@ export function Dashboard({ onExplain }: Props) {
  * about that. It is the right place to refuse to draw it.
  */
 function paidDownFraction(summary: DecisionsResponse['summary']): number {
+  // `current`, not `targeted`. Both are the same figure for a one-card household, which is why
+  // pairing `starting -> targeted` survived this long — but on a portfolio it measures a total
+  // against a single card and draws progress nobody made.
   const start = Number(summary.starting_debt_balance);
-  const now = Number(summary.targeted_debt_balance);
+  const now = Number(summary.current_debt_balance);
   if (!Number.isFinite(start) || start <= 0) return 0;
   return Math.min(1, Math.max(0, (start - now) / start));
 }
@@ -205,7 +208,7 @@ function Paydown({
       </View>
       <Text style={styles.progressFoot}>
         {formatMoneyRounded(summary.starting_debt_balance)} when we started →{' '}
-        {formatMoneyRounded(summary.targeted_debt_balance)} now
+        {formatMoneyRounded(summary.current_debt_balance)} now
       </Text>
     </View>
   );
