@@ -187,10 +187,14 @@ fixed schema, and never let LLM output touch control flow.
 
 ### [3.6] The backend — built
 
-[`backend/`](../backend) is a FastAPI service that serves **one demo household from a committed
-artifact**. Python ≥3.10 and the `anthropic` SDK. SQLAlchemy **Core** (never the ORM), Alembic, and
-`psycopg` are an optional `[api]` extra rather than a base dependency — which is not a packaging
-detail, see below.
+[`backend/`](../backend) is a FastAPI service that serves **four households from Postgres, scoped by
+`household_id`**. Python ≥3.10 and the `anthropic` SDK, SQLAlchemy **Core** (never the ORM), Alembic
+and `psycopg`.
+
+> **This section described a file-backed service until tickets `0024` and `0031`.** ADR-0004
+> superseded ADR-0002; `0024` moved the feed and the explanations, and `0031` moved `/spend`, which
+> was the last route reading [`data/decisions.json`](../backend/data). The file is still in the tree
+> and is now **only a test fixture** — see below.
 
 | Module | What it does |
 | --- | --- |
@@ -198,33 +202,59 @@ detail, see below.
 | [`replay.py`](../backend/replay.py) | Drives the walk and grades every day it can honestly grade, against realized history rather than the engine's own sweep-adjusted path. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast. |
 | [`calibrate.py`](../backend/calibrate.py) | Grades a **population** — 60 synthetic households, 3 shapes × 20 seeds — at every setting of the spend dial. [`prd.md`](./prd.md) §5.2: a guardrail measured on one household is not measured. |
 | [`codec.py`](../backend/codec.py) | Tagged-scalar JSON. JSON has no decimal type, and a cent through a float is not the cent the engine decided on. Type-driven, so it **cannot drift from the dataclass**. |
-| [`artifact.py`](../backend/artifact.py) | The committed decision history, and a `validate()` that runs on every decode. |
+| [`artifact.py`](../backend/artifact.py) | The wire shapes (`DayRecord`, `Summary`), and the schema of the committed fixture. Nothing serves the file — see below. |
+| [`readpath.py`](../backend/readpath.py) | The served window, rebuilt from `decisions` + `snapshots` rows. Two queries, not ninety `get()`s. Ticket `0024`. |
+| [`spend.py`](../backend/spend.py) | The spend surface, per card. Obligations derived live from the `Snapshot`; only the History-derived half is stored. Ticket `0031`. |
+| [`seed.py`](../backend/seed.py) | Walks each archetype and writes it — through the repository, not around it. The walk's third consumer. |
 | [`assistant.py`](../backend/assistant.py) | The only path that costs money ([3.5]). |
 | [`auth.py`](../backend/auth.py) | The API-key gate. Guards every route but `/health`. |
-| [`db/`](../backend/db) | Postgres — schema, repository, `SnapshotStore`. **Not in the serving path.** |
+| [`db/`](../backend/db) | Postgres — schema, repository, `SnapshotStore`. **The read path.** |
 
-**The API.** Five routes, all in `main.py`; everything but `/health` requires `X-API-Key`. All
+**The API.** Six routes, all in `main.py`; everything but `/health` requires `X-API-Key`. All
 money is serialized as **strings**, never JSON numbers — the same reason `codec.py` exists.
 
 | | |
 | --- | --- |
 | `GET /health` | liveness |
-| `GET /decisions` | the feed: window, summary, decisions newest-first |
-| `GET /spend` | this cycle, last cycle, and what normal looks like |
-| `GET /decisions/{day}/explain` | one day, plus narration from `engine/explain.py`. An unknown day is `404 no_record` |
+| `GET /households` | the switcher's list. **The one query that is not scoped**, because it is the one you ask before you have a household to scope to. Ids and labels, nothing an id alone should not buy |
+| `GET /households/{id}/decisions` | the feed: window, summary, decisions newest-first |
+| `GET /households/{id}/spend` | per card: this cycle, last cycle, and what normal looks like |
+| `GET /households/{id}/decisions/{day}/explain` | one day, plus narration from `engine/explain.py`. An unknown day is `404 no_record` |
 | `POST /assistant/message` | the LLM turn. The only endpoint that costs money |
 
-**Households come from Postgres** as of ticket `0024`. The feed, the explanations and the assistant
-are rebuilt from the `decisions` and `snapshots` rows the seeder wrote — scoped by the repository
-and again by RLS — in two queries: the decisions for a window, then every snapshot they point at
-through `0022`'s seam. `backend/readpath.py`, and `ServedWindow` rather than `Artifact`: nothing
-versions a query.
+**Households come from Postgres** as of ticket `0024`, and **every** route as of `0031`. The feed,
+the explanations and the assistant are rebuilt from the `decisions` and `snapshots` rows the seeder
+wrote — scoped by the repository and again by RLS — in two queries: the decisions for a window, then
+every snapshot they point at through `0022`'s seam. `backend/readpath.py`, and `ServedWindow` rather
+than `Artifact`: nothing versions a query.
 
-**One route still reads the file, and it is named rather than hidden.** `/spend` serves the demo
-household's committed artifact. Its figures — every overlapping 30-day total by channel, what the
-card took last cycle — come from the whole transaction `History`, and **there is no `transactions`
-table** to rebuild them from ([3.1], not built). See `0031`, and [3.6.1] below: that is now a
-decision rather than a gap.
+**The JSON file is a test fixture, and that is all it is.** `python -m backend.precompute` builds
+[`data/decisions.json`](../backend/data) on a developer's machine and it is committed — but no route
+opens it and `app.state` does not hold it. What it buys is the **oracle**: archetype A's seeded
+decisions are checked against it day for day, so a refactor that changes what the engine decides
+cannot pass quietly (`0019`, `0023`, `0030`). ADR-0004 [3] calls it a test input rather than
+persistence, and since `0031` that is literally true.
+
+> This paragraph said the opposite for one ticket, and the history is worth keeping. `0031` was first
+> closed as **blocked** (PR #50) — *"`/spend` waits for the `transactions` table"* — which made
+> ADR-0004's one-system-of-record untrue **indefinitely**, and that PR said so plainly rather than
+> hiding it. The premise was under-scoped: it counted the four `History`-derived figures as the
+> surface, and `SpendSnapshot` has nine. The other five come off the frozen `Snapshot`. See `0031`.
+
+**`/spend` is the one route whose data has two sources, and the split is the design.** Each card's
+statement, unbilled balance and reserve are derived **live** from the frozen `Snapshot` —
+`untouchable()`'s own per-card terms, so the figures add up to the number the engine actually
+withheld. What only the full transaction `History` can answer (the rolling 30-day series; what each
+card took last cycle) is a **stored projection**, because there is no `transactions` table until
+ingest lands ([3.1]) — and ingest deletes it. Storing the first half too would duplicate what
+`snapshots.payload` already holds and let the two disagree about what the engine saw, which is
+[4.1]'s own warning. See [`spend.py`](../backend/spend.py).
+
+**No `transactions` table was faked to get there**, and that is #50's argument surviving intact: [4]
+designs it with `pending_transaction_id`, `reconciled_with` and `internal_transfer_pair`, and [3.2]
+calls pending→posted reconciliation and internal-transfer detection *"the two hard problems, each of
+which corrupts the forecast silently if wrong."* `sim`'s `Txn` has none of them. A table with the
+designed name and none of the hard parts would leave ingest reconciling with a fake.
 
 **The deploy nearly did not survive this.** `backend/requirements.txt` — what the buildpack
 installs — listed `fastapi`, `uvicorn`, `anthropic`, and `0024` made `main.py` import SQLAlchemy.
@@ -233,6 +263,10 @@ venv and CI both install `pyproject.toml`'s `[api]` extra, which is a superset, 
 environment that could see it was production**. Fixed, and `tests/test_requirements.py` now asserts
 the manifest and the imports agree. The same shape as everything else in this section, with the
 twist that the unexercised mechanism was the deploy.
+
+**It is still not deployed.** The manifest imports; `DATABASE_URL` has never reached the container,
+Neon predates migration `0004`, and nothing has ever seeded it — `0026`'s unfinished half, with the
+procedure in [`runbooks/deploy.md`](./runbooks/deploy.md), which nothing has run.
 
 ### [3.6.1] The schema was built ahead of its caller, and here is what that cost
 

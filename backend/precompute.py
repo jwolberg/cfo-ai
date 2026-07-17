@@ -48,11 +48,11 @@ from backend.artifact import (
     Artifact,
     DayRecord,
     DebtRecord,
-    SpendSnapshot,
     dump,
     summarize,
 )
-from engine.decide import decide, untouchable
+from backend.spend import CardCycleTotals, SpendProjection
+from engine.decide import decide
 from engine.models import (
     MIN_GRACE_DAYS,
     ZERO,
@@ -1064,24 +1064,26 @@ def build(
     A thin wrapper over `walk()`. Everything below the `for` is artifact assembly — the shape
     the dashboard reads — and nothing in it decides anything.
 
-    **Still single-card — but for one honest reason now instead of two.** `0027` refused a
-    multi-card spec here because `DayRecord` carried one `debt_balance`, one `debt_apr`, one
-    `debt_id`. `0030` gave it the tuple the walk has carried all along, and that half is fixed: the
-    days come out right, each card with its own balance and its own rate.
+    **It serves a portfolio, and refuses nothing.** The history here is worth keeping because it is
+    three tickets long. `0027` refused a multi-card spec because `DayRecord` carried one
+    `debt_balance`, one `debt_apr`, one `debt_id`. `0030` gave it the tuple the walk has carried all
+    along and lifted that guard — and, as #50 found and measured, **silently disarmed the thing
+    protecting `derive_spend_snapshot`'s `cards[0]`**: a portfolio built cleanly and its `spend`
+    surface described one arbitrary card. #50's answer was to move the refusal down onto the field
+    that was still single-card, which was right for a single-card surface.
 
-    What `0030` also did, and did not notice, was disarm the guard that was protecting
-    `derive_spend_snapshot`'s `cards[0]` — so a portfolio built cleanly and its `spend` surface
-    quietly described one arbitrary card. The refusal now lives down there, on the field that is
-    actually still single-card, and this raises through it. Ticket `0031`.
+    `0031` removed the field instead. `Artifact.spend` is gone (schema 5) — nothing served it once
+    `/spend` moved to Postgres per card — so this function assembles decisions and nothing else, and
+    there is no `cards[0]` anywhere for a guard to protect.
 
-    The demo builds fine, which is the only thing this function exists for: the seeder walks
-    portfolios through `walk()` and writes them to Postgres, and it never comes here.
+    The seeder is the path that matters now: it walks portfolios through `walk()` and writes them to
+    Postgres, and it never comes here. This exists to build the golden fixture archetype A's
+    decisions are checked against.
     """
     total_days = warmup_days + served_days
     history = generate(spec, start=start, days=total_days, seed=seed)
 
     served: list[DayRecord] = []
-    final: tuple[date, CardPortfolio, Decimal] | None = None
 
     for w in walk(history, spec, start, total_days, policy, spend_quantile):
         # The warm-up is walked so the ledger and the cadence are real by the time the window
@@ -1101,12 +1103,9 @@ def build(
                 history_days=w.snapshot.history_days,
             )
         )
-        # The last served day's view of the card is the one the Spending screen renders.
-        final = (w.day, w.snapshot.portfolio, untouchable(w.snapshot)[1])
 
     days = tuple(served)
     _assert_demo_is_worth_showing(days)
-    assert final is not None  # `_assert_demo_is_worth_showing` has already refused an empty window
 
     return Artifact(
         version=SCHEMA_VERSION,
@@ -1114,7 +1113,6 @@ def build(
         window_end=days[-1].day,
         days=days,
         summary=summarize(days),
-        spend=derive_spend_snapshot(history, *final),
     )
 
 
@@ -1145,57 +1143,59 @@ def _debts_of(w: WalkDay) -> tuple[DebtRecord, ...]:
     )
 
 
-def derive_spend_snapshot(
-    history: History, today: date, portfolio: CardPortfolio, reserved: Decimal
-) -> SpendSnapshot:
-    """What the Spending screen renders. Comprehension, not a decision.
+def derive_spend_projection(
+    history: History, today: date, portfolio: CardPortfolio
+) -> SpendProjection:
+    """The half of the spend surface that only the transaction `History` can answer. Ticket `0031`.
 
-    Every figure here is *reported*. None of it feeds `forecast.py` — swapping the forecast onto
-    `worst_30d_cash` would **loosen** the reserve, and loosening needs the measured breach rate
-    `engine/outcome.py` cannot yet produce (U8). The panel ships a release *before* it is trusted
-    with a decision, deliberately: it earns its way into the forecast having already been looked
-    at by real households.
+    **This is everything the surface needs and the database cannot derive.** The obligations — the
+    statement, the unbilled balance, what the engine held back for each — come off the stored
+    `Snapshot` on every request (`backend/spend.py`), so they are deliberately not here. What is
+    left needs every transaction, and there is no `transactions` table until ingest lands
+    (`architecture.md` [3.1]), so the seeder derives this once from the `History` it walked and
+    writes it as a projection ingest will delete.
 
-    **Single-card, and it refuses rather than pretends.** `SpendSnapshot` describes one statement,
-    one unbilled balance, and one cycle's charges against payments. A portfolio has several of
-    each, and this function's own `cards[0]` would report an arbitrary one of them as "your card" —
-    which is `0027`'s bug exactly, in the last place it still lives (ticket `0031`).
+    **No `cards[0]`.** Its predecessor read one card and called it "your card" — `0027`'s defect in
+    its last home. Each card gets its own cycle window, which matters for more than tidiness:
+    `_cycle_bounds` keys on the card's **own** close day, and a portfolio's cards do not close
+    together. Reporting card B's charges against card A's cycle would have been wrong even after
+    summing.
 
-    **This guard is a replacement, not an addition.** `build()` refused every multi-card spec until
-    `0030`, and that refusal was quietly protecting this line too. `0030` gave `DayRecord` the
-    portfolio it needed and lifted the guard — and `build(archetype_b)` then produced an artifact
-    whose `debts` listed three cards correctly and whose `spend` silently described `cards[0]`. So
-    the guard comes back one function lower, where the actual limitation is, and says what it
-    actually is.
+    **This replaces #50's guard rather than contradicting it, and #50's finding was right.** That
+    PR established the defect precisely: `0027` refused a multi-card spec at `build()` because
+    `DayRecord` held one debt, and that refusal was *also*, silently, protecting this function's
+    `cards[0]`. `0030` fixed `DayRecord` and lifted the guard — so `build(archetype_b)` produced an
+    artifact whose `debts` listed three cards correctly and whose `spend` described one of them.
+    Measured, not theorised, and it is why that PR put a `raise` here.
+
+    A guard is the right answer while the surface is single-card. This makes it multi-card, so
+    there is nothing left to guard: the function describes every card, `Artifact.spend` is gone
+    (schema 5), and `build()` refuses nothing. The `raise` is not removed because it was wrong — it
+    is removed because its subject is.
+
+    An empty portfolio needs no special case either: no cards, no per-card totals, and the rolling
+    series is a household fact that stands on its own.
+
+    Comprehension, not a decision — nothing here feeds `forecast.py`. See `backend/spend.py`.
     """
-    if len(portfolio.cards) > 1:
-        raise ValueError(
-            f"the spend surface describes one card and this household has {len(portfolio.cards)}. "
-            f"Reporting cards[0] as 'your card' is ticket 0027's bug in its last home — see 0031, "
-            f"which waits for the transactions table ingest will build (architecture.md [3.1]) "
-            f"rather than storing a guess of this surface now."
-        )
-
     profile = derive_spend_profile(history, today)
-    card = portfolio.cards[0] if portfolio.cards else None
-
-    if card is None:
-        return SpendSnapshot(
-            statement_balance=ZERO,
-            statement_due=today,
-            unbilled_balance=ZERO,
-            unbilled_due=today,
-            reserved=reserved,
-            rolling_30d_cash=profile.rolling_30d_cash,
-            rolling_30d_card=profile.rolling_30d_card,
-            charged_last_cycle=ZERO,
-            paid_last_cycle=ZERO,
-        )
-
-    # The cycle just gone — what they put on the card against what they took off it. If the
-    # first number is bigger, the card grew, and a sweep is not what fixes that.
-    window_start, close = _cycle_bounds(today, card.cycle.close_day_of_month)
     seen = history.as_of(today)
+
+    return SpendProjection(
+        as_of=today,
+        rolling_30d_cash=profile.rolling_30d_cash,
+        rolling_30d_card=profile.rolling_30d_card,
+        last_cycle=tuple(_last_cycle_totals(seen, card, today) for card in portfolio.cards),
+    )
+
+
+def _last_cycle_totals(seen: History, card: Card, today: date) -> CardCycleTotals:
+    """The cycle just gone, for one card — what they put on it against what they took off it.
+
+    If the first number is bigger the card grew, and a sweep is not what fixes that.
+    """
+    window_start, close = _cycle_bounds(today, card.cycle.close_day_of_month)
+
     charged = seen.card_charged_between(card.card_id, window_start, close)
     paid = -sum(
         (
@@ -1208,14 +1208,8 @@ def derive_spend_snapshot(
         ZERO,
     )
 
-    return SpendSnapshot(
-        statement_balance=card.statement_balance,
-        statement_due=card.statement_due_date,
-        unbilled_balance=card.unbilled_balance,
-        unbilled_due=card.cycle.due_for(card.next_close_date),
-        reserved=reserved,
-        rolling_30d_cash=profile.rolling_30d_cash,
-        rolling_30d_card=profile.rolling_30d_card,
+    return CardCycleTotals(
+        card_id=card.card_id,
         charged_last_cycle=charged,
         paid_last_cycle=paid,
     )

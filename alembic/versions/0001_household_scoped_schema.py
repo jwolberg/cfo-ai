@@ -19,13 +19,26 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-from backend.db.models import HOUSEHOLD_SCOPED, RLS_VAR
+from backend.db.models import RLS_VAR
 from backend.db.session import APP_ROLE
 
 revision = "0001"
 down_revision = None
 branch_labels = None
 depends_on = None
+
+# **Frozen, not imported.** This was `from backend.db.models import HOUSEHOLD_SCOPED`, and that is a
+# migration describing whatever the constant says *today* rather than what this revision did when it
+# ran. Ticket `0031` is the first thing to move that constant — it adds `spend_projections` — and
+# under the import a fresh `alembic upgrade head` would have run `GRANT ... ON spend_projections` at
+# revision 0001, three revisions before the table exists, and failed on an empty database while
+# every already-migrated database stayed green.
+#
+# So the list is a literal: these are the tables that existed *at this revision*. `0004` scopes its
+# own, and every later one does the same. The application constant stays the single source of truth
+# for what must be scoped **now** — which is what `tests/test_schema.py` and `tests/test_idor.py`
+# parametrize over, and that is the check that catches a new table with no policy.
+_SCOPED_AT_0001 = ("accounts", "cards", "policies", "decisions", "snapshots")
 
 # The window the demo seeds (`backend/precompute.py`: WINDOW_START, WARMUP_DAYS + SERVED_DAYS),
 # with room either side. Monthly, from the first migration: free at zero rows, a migration
@@ -207,7 +220,7 @@ def upgrade() -> None:
     #    alembic_version" — so the downgrade aborts halfway and the schema is left standing. A
     #    migration that cannot be reversed is not a migration, it is a one-way door with a
     #    `downgrade()` shaped decoration on it.
-    for table in ("households", *HOUSEHOLD_SCOPED):
+    for table in ("households", *_SCOPED_AT_0001):
         op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON {table} TO {APP_ROLE};")
 
     # --- row-level security ----------------------------------------------------------
@@ -219,7 +232,7 @@ def upgrade() -> None:
     # `current_setting(RLS_VAR, true)` — the `true` makes it return NULL instead of raising when
     # unset. NULL never equals household_id, so an unscoped query sees zero rows: RLS fails
     # closed, matching `architecture.md` [1.1]'s second principle.
-    for table in HOUSEHOLD_SCOPED:
+    for table in _SCOPED_AT_0001:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
         op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY;")
         op.execute(
@@ -232,7 +245,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for table in HOUSEHOLD_SCOPED:
+    for table in _SCOPED_AT_0001:
         op.execute(f"DROP POLICY IF EXISTS {table}_household_isolation ON {table};")
 
     op.execute("DROP TABLE IF EXISTS decisions CASCADE;")  # takes its partitions with it

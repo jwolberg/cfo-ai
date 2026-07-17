@@ -212,6 +212,39 @@ snapshots = Table(
     Column("payload", JSONB, nullable=False),
 )
 
+# **The one table here that ingest deletes.** Ticket 0031.
+#
+# It holds the half of the spend surface that only the full transaction `History` can answer — the
+# rolling 30-day series by channel, and what each card took last cycle against what came off it.
+# There is no `transactions` table (`architecture.md` [3.1], ingest, not built), so the seeder
+# derives this from the history it walked and writes it once.
+#
+# **It is deliberately the smallest thing that cannot be derived.** The other half of the surface —
+# each card's statement, its unbilled balance, and the reserve held against it — is *not* here, and
+# must not be: `backend/spend.py` derives it from the stored `Snapshot` on every request. Storing it
+# would be a second copy of what the snapshot already holds, free to disagree about what the engine
+# saw, which is the argument `backend/readpath.py` makes against denormalizing display fields onto
+# `decisions` and which [4.1] is a whole section about.
+#
+# JSONB rather than typed columns, unlike every other table in this file: the payload is one shape
+# with one consumer, and it is **temporary**. Designing columns for data whose whole purpose is to
+# be deleted by the next feature is work that would be thrown away with it. `snapshots` sets the
+# precedent, and the tagged codec keeps the Decimals exact.
+spend_projections = Table(
+    "spend_projections",
+    metadata,
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    # The day the projection describes. `backend/spend.py:assemble` refuses to serve it beside a
+    # snapshot from a different day rather than render two months side by side unlabelled.
+    Column("as_of", Date, nullable=False),
+    Column("payload", JSONB, nullable=False),
+)
+
 
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
 # each, and ticket 0021's IDOR suite proves both — independently.
@@ -221,6 +254,7 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "policies",
     "decisions",
     "snapshots",
+    "spend_projections",
 )
 
 __all__ = [
@@ -235,4 +269,5 @@ __all__ = [
     "metadata",
     "policies",
     "snapshots",
+    "spend_projections",
 ]

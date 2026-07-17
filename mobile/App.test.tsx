@@ -110,10 +110,38 @@ describe('switching household', () => {
     await waitFor(() => expect(decisions).toHaveBeenCalledWith('hh_monthly_thin'));
   });
 
-  it('the spending tab does not keep showing the household you left', async () => {
-    /** The tab 0025 warns about by name. `/spend` has no household in it (ticket 0031), so the
-     *  honest answer for the other three is to say so — never to keep rendering the demo's
-     *  figures under someone else's label, which would look perfect and be false. */
+  it('the spending tab follows the switch, and asks for the household you picked', async () => {
+    /**
+     * The tab 0025 warns about by name — "the easiest thing to leave pointing at a stale
+     * household, a bug that looks like working software."
+     *
+     * 0025 could only close this halfway: `/spend` had no household in it, so the honest answer
+     * for the other three was a panel saying so. Ticket 0031 scoped the route, and this is the
+     * AC closing for real — the tab asks for the selected household, and there is no refusal
+     * panel left to render.
+     */
+    spend.mockResolvedValue({
+      as_of: '2026-05-30',
+      cards: [
+        {
+          card_id: 'card_thin',
+          this_cycle: {
+            statement: { amount: '100.00', due: '2026-06-14', reserved: true },
+            unbilled: { amount: '50.00', due: '2026-07-14', reserved: false },
+            held_back: '100.00',
+          },
+          last_cycle: { charged: '50.00', paid: '80.00', grew_by: '-30.00' },
+        },
+      ],
+      totals: { statement: '100.00', unbilled: '50.00', held_back: '100.00' },
+      normal: {
+        rolling_30d_cash: ['400.00'],
+        rolling_30d_card: ['50.00'],
+        worst_30d_cash: '400.00',
+        worst_30d_card: '50.00',
+      },
+    });
+
     await render(<App />);
     await waitFor(() => expect(screen.getByTestId('tab-spending')).toBeTruthy());
 
@@ -121,7 +149,8 @@ describe('switching household', () => {
     await fireEvent.press(screen.getByTestId('household-option-hh_monthly_thin'));
     await fireEvent.press(screen.getByTestId('tab-spending'));
 
-    await waitFor(() => expect(screen.getByTestId('spending-unavailable')).toBeTruthy());
+    await waitFor(() => expect(spend).toHaveBeenLastCalledWith('hh_monthly_thin'));
+    expect(screen.getByTestId('this-cycle-card_thin')).toBeTruthy();
   });
 
   it('the selection survives a tab change', async () => {

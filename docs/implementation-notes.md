@@ -1584,3 +1584,134 @@ demo *is* the product surface.
 - **`ENGINE_VERSION = "0-unversioned"`.** `decisions.engine_version` is NOT NULL and
   `architecture.md` [3.3] rests weight on it, but nothing in `engine/` defines a version. The day
   `decide.py` changes without this moving, [3.3]'s backtest guarantee is a story.
+
+---
+
+## 2026-07-16 — Ticket `0031`, the spend surface per household
+
+### The ticket's first problem was a false choice, and the code said so
+
+`0031` framed it as: store the derived surface as a projection, or wait for the `transactions`
+table ingest has not built — noting the second "is architecturally cleaner and blocks the
+switcher's Spending tab for three of four households in the meantime."
+
+**The surface splits**, and the line falls exactly where the system of record already ends:
+
+| | source | needs ingest? |
+|---|---|---|
+| statement, unbilled, `held_back` | the stored `Snapshot` | **no** |
+| charged/paid last cycle, the rolling 30-day series | the transaction `History` | **yes** |
+
+`untouchable()` is a pure function of the `Snapshot`, and `0022` has been storing the whole frozen
+snapshot since it landed. So the *entire* "this cycle" panel — for every household, per card — was
+already derivable from rows, on every request, with no projection at all. Only the History-derived
+half needed a decision.
+
+So: **the obligations are derived live and never stored twice; only the projection is stored**, in
+`spend_projections`, which ingest deletes. Storing the obligations too would have duplicated what
+`snapshots.payload` already holds and let the two disagree about what the engine saw — the argument
+`readpath.py` already makes against denormalizing display fields onto `decisions`, and what [4.1] is
+a whole section about. The trade the ticket asked to be made deliberately got smaller rather than
+harder.
+
+### `held_back` is per card, and it is exact — the "shape question" answers itself
+
+`0031` calls the reserve "a portfolio-level fact, because `untouchable()` reserves against every
+card at once", and says deciding per-card-vs-aggregate is most of the ticket. But:
+
+    reserved = sum(obligation_in_horizon(card, horizon_end) for card in portfolio.cards)
+
+A sum **decomposes into its terms**. Each card's `held_back` is its own `obligation_in_horizon` —
+an attribution, not an allocation, and not a guess. So the response is per card *and* carries a
+portfolio total, both true, and `test_the_per_card_reserve_sums_to_the_portfolio_reserve` pins them
+together across all three portfolio archetypes. There is deliberately **no `totals.due`**: cards do
+not close together, so a single due date would be a fiction — which is the month-apart argument
+getting stronger with three cards, exactly as the ticket predicted.
+
+### The near-miss worth writing down
+
+`cards.observed_monthly_charges` / `observed_monthly_payment` are already columns, and look like
+they would spare us the projection entirely. **They are a different number wearing the right
+label**: trailing engine inputs averaged over a window, against `charged_last_cycle`'s exact
+`[close, close]` cycle. Serving them would have been wrong and would never have shown a symptom —
+the shape of every defect this ticket set has found. Recorded in `backend/spend.py`.
+
+### Decisions
+
+- **`Artifact.spend` removed; schema 4 → 5.** Nothing served it once `/spend` moved, and keeping it
+  would have kept its `cards[0]` derivation alive in a field nobody read. The file is the golden
+  fixture for the *decisions* (ADR-0004 [3] already said so).
+- **The evidence procedure, again (`0019`/`0030`).** The decisions were hashed **before** the schema
+  moved (`sha256 987ddbce…`) and the v5 file checked against it: **90/90 days identical field for
+  field**, summary and window unchanged, `spend` the only key removed. The in-repo byte-identical
+  test cannot prove this — regenerating moves both sides of it.
+- **The demo's `/spend` response is pinned by a fixture captured before the change**
+  (`tests/fixtures/spend_v4_oracle.json`), not regenerated after it. All four assertions pass:
+  obligations, the reserve, last cycle, and all 121 rolling windows — rebuilt from an entirely
+  different source, identical to the cent.
+- **`last_cycle` is nullable, not zeroed.** "No transactions for this card" and "nothing was
+  charged" are different claims, and only one is safe to print next to "your card grew by $0.00".
+- **`NoSpendProjection` is its own 404, distinct from `no_household`.** A household with decisions
+  and no projection is a *seeding* fault; reporting it as "no such household" would send whoever
+  debugs it looking for rows that are right there.
+- **`spend_projections` is JSONB, unlike every other table.** One shape, one consumer, and
+  temporary. Designing typed columns for data whose purpose is to be deleted by the next feature is
+  work thrown away with it. `snapshots` sets the precedent.
+- **`assemble()` refuses a projection whose `as_of` disagrees with the snapshot** rather than
+  rendering this month's statement beside last month's spending unlabelled.
+
+### Caught before it shipped — a migration that was not a migration
+
+**`alembic/versions/0001` imported `HOUSEHOLD_SCOPED` from live application code and iterated it.**
+Adding `spend_projections` to that constant retroactively changed what revision 0001 *does*: a
+fresh `alembic upgrade head` would run `GRANT ... ON spend_projections` at 0001, three revisions
+before the table exists.
+
+Verified by mutation, not by reading: with the import restored, a fresh database dies at 0001 with
+`relation "spend_projections" does not exist`; with the list frozen to a literal, it reaches 0004.
+Every already-migrated database would have stayed green — including CI, which never migrates from
+zero against a used database.
+
+It is the same shape as everything else this plan has turned up: **a mechanism that was built,
+tested, and never actually exercised.** `HOUSEHOLD_SCOPED` had never changed since 0001 was written.
+The fix is one literal and a comment; the rule is that a migration states what *it* did, and the
+application constant states what must be scoped *now* (which is what `test_schema.py` and
+`test_idor.py` parametrize over — and they now cover the new table).
+
+### Open
+
+- **`0029`** — the income bucket. Untouched, and still sequenced behind the forecast.
+- **`ENGINE_VERSION = "0-unversioned"`.** Unchanged by this ticket and still true.
+- **Ingest deletes `spend_projections`.** When the `transactions` table lands, the projection, its
+  table, its migration's `downgrade`, and `_assert_migrated`'s mention of it all go — and
+  `derive_spend_projection` becomes a query. That is the whole of the debt this ticket took on.
+
+### Caught before it shipped — the deploy has been broken for eleven tickets
+
+Found while updating `architecture.md`, which described the symptom accurately and drew the opposite
+conclusion from it.
+
+`backend/requirements.txt` is what Cloud Run's buildpack installs, and it carried `fastapi`,
+`uvicorn`, `anthropic` and **no database driver**. `backend/main.py` has imported SQLAlchemy at
+module load since `0024`. The container `ImportError`s on boot — not a 500 on a route, the process
+does not start.
+
+**Two dependency lists, and nothing compares them.** CI runs `pip install -e ".[dev]"`, which pulls
+`pyproject.toml`'s `[api]` extra — correct since `0020`. The list that is wrong is only exercised by
+a manual `gcloud run deploy`, and `0026` (the deploy path) is half done, so nothing has deployed
+since the driver became necessary. `git log` on the file: last touched by ticket **`0004`**.
+
+`architecture.md` said *"the deployed image contains no database driver at all"* and called it
+**deliberate and safe**. It was — exactly as long as `db/` had a writer and no reader. `0024` made
+it fatal and the sentence stayed true, which is a hard thing to notice in a doc that reads as though
+it still applies.
+
+Fixed the manifest here, because `main.py`'s imports are a fact about this module graph regardless
+of who owns the deploy. **That makes the container import; it does not make the deploy work** —
+`DATABASE_URL` still has to reach it. Filed as [`0033`](tickets/0033-the-deployed-image-cannot-start.md)
+with the check that would have caught it (make `requirements.txt` derive from the extra, so there is
+one list — or a CI job that installs it alone and imports `backend.main`, which would have failed
+the day `0024` merged, in the four seconds an import takes).
+
+`USERS.md` says the deployed demo **is** the product surface, so this is worth being blunt about:
+`main` is not deployable, and it has not been for eleven tickets.

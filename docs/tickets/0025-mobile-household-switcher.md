@@ -56,19 +56,20 @@ console. If it starts to look like a dashboard-of-dashboards, it has gone wrong.
       `householdId` is a dependency of the load callback, so the effect re-runs; the screen returns
       to `loading` first rather than holding the previous household's feed on screen while the next
       is in flight.
-- [~] **The Spending screen follows the switch — as far as it can, which is not all the way, and
-      the gap is stated rather than papered over.** `GET /spend` has no household in it: it is the
-      one route `0024` could not move to Postgres, because its figures come from the whole
-      transaction `History` and there is no `transactions` table yet (ticket `0031`).
+- [x] **The Spending screen follows the switch.** ✅ **Closed by `0031` (2026-07-16).**
 
-      So for any household but the demo's it says so, plainly, in the product's own voice. What it
-      does **not** do is keep rendering the demo's spending under another household's label — which
-      is precisely the failure this ticket named in advance ("a bug that looks like working
-      software"), and which would have looked perfect. Pinned by
-      `App.test.tsx::the spending tab does not keep showing the household you left`, and
-      **mutation-tested**: reintroduce `servable = true` and it fails.
+      It shipped at `[~]`: `GET /spend` had no household in it — the one route `0024` could not
+      move to Postgres — so the screen refused for three of the four households, in the product's
+      own voice, rather than render the demo's spending under someone else's label. That refusal
+      was the honest half of this AC, and it was pinned and mutation-tested.
 
-      This AC closes properly when `0031` lands.
+      `0031` scoped the route and made it per-card, so the tab now follows the switch like every
+      other screen and the refusal panel is deleted. The risk that remains is the *opposite* one —
+      holding the previous household's figures on screen while the next request is in flight, which
+      is the same "bug that looks like working software" this ticket named. The screen returns to
+      `loading` on every switch, matching the feed's behaviour two ACs up, and it is pinned:
+      `Spending.test.tsx::a switch clears the previous household before the new one arrives` and
+      `App.test.tsx::the spending tab follows the switch, and asks for the household you picked`.
 - [x] The explain modal and the assistant follow the switch. The household travels with both the
       narration fetch and every assistant turn, so the backend loads *that* household's window and
       hands the model nothing else — it cannot cite another household's figure rather than being

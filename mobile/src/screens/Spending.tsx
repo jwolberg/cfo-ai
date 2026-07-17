@@ -1,10 +1,18 @@
 /**
- * What normal looks like, and what the card is about to take.
+ * What normal looks like, and what the cards are about to take.
  *
  * Comprehension, not a decision. Nothing this screen renders feeds the engine — and the strip
  * chart at the bottom is the exact data structure that will eventually replace
  * `daily_discretionary_high` in the forecast, shown a release *before* it is trusted with a
  * decision. It earns its way in having already been looked at by real households.
+ *
+ * ## It follows the switcher now, and that is ticket 0031
+ *
+ * This screen used to refuse for three of the four households: `GET /spend` had no household in
+ * it, served the demo's figures, and reported one arbitrary card as "your card". 0025 called that
+ * tab out by name — "the easiest thing to leave pointing at a stale household, a bug that looks
+ * like working software" — and the honest stopgap was a panel saying so. The route is scoped and
+ * per-card now, so the panel is gone and the tab follows the switch like every other screen.
  *
  * ## Why the two obligations are separated
  *
@@ -12,6 +20,10 @@
  * 30-day horizon and the engine is already holding cash back for it. The unbilled balance is
  * next month's bill, forming now, and nothing is reserved against it yet. Collapse them into
  * one "what you owe" figure and you hide the single thing this screen exists to show.
+ *
+ * With three cards that argument gets stronger, not weaker — they do not close together — which
+ * is why each card carries its own panel and its own dates, and the portfolio total is a sum of
+ * money only. There is no combined due date to print, because there is no such date.
  *
  * ## The card that grew is not an error
  *
@@ -23,8 +35,8 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ApiError, DEMO_HOUSEHOLD, getSpend } from '../api/client';
-import type { SpendResponse } from '../api/types';
+import { ApiError, getSpend } from '../api/client';
+import type { CardSpend, SpendResponse } from '../api/types';
 import { formatDateLong, formatMoney, formatMoneyRounded } from '../format';
 import { COLUMN_WIDTH, colors, radius, shadow, space, type } from '../theme';
 
@@ -45,13 +57,16 @@ function isPositive(amount: string): boolean {
 
 export function Spending({ householdId }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
-  const servable = householdId === DEMO_HOUSEHOLD;
 
   useEffect(() => {
-    if (!servable) return;
-
     let live = true;
-    getSpend()
+
+    // Back to loading on every switch. Without this the previous household's figures stay on
+    // screen under the new household's name while the request is in flight — which is 0025's
+    // "bug that looks like working software" in its other form, and this screen's whole history.
+    setState({ status: 'loading' });
+
+    getSpend(householdId)
       .then((data) => {
         if (live) setState({ status: 'ready', data });
       })
@@ -63,27 +78,7 @@ export function Spending({ householdId }: Props) {
     return () => {
       live = false;
     };
-  }, [servable]);
-
-  // The tab ticket 0025 warns about by name: "the easiest thing to leave pointing at a stale
-  // household — a bug that looks like working software."
-  //
-  // `GET /spend` has no household in it. It is the one route the backend has not moved to
-  // Postgres, because its figures come from the whole transaction history and there is no
-  // transactions table yet (ticket 0031). So for any household but the demo's, the honest thing
-  // is to say so. Rendering the demo's spending under another household's name would be exactly
-  // the bug the ticket names, and it would look perfect.
-  if (!servable) {
-    return (
-      <View style={styles.centered} testID="spending-unavailable">
-        <Text style={styles.unavailableTitle}>We can't show spending for this household yet</Text>
-        <Text style={styles.unavailableBody}>
-          The decision feed works for all four. Spending is still wired to the demo household
-          only — it reads a transaction history the other three don't have stored yet.
-        </Text>
-      </View>
-    );
-  }
+  }, [householdId]);
 
   if (state.status === 'loading') {
     return (
@@ -102,50 +97,34 @@ export function Spending({ householdId }: Props) {
     );
   }
 
-  const { this_cycle: cycle, last_cycle: last, normal } = state.data;
+  const { cards, totals, normal } = state.data;
+  const many = cards.length > 1;
 
   return (
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.column}>
-        {/* --- This cycle ------------------------------------------------------------- */}
-        <View style={styles.card} testID="this-cycle">
-          <Text style={styles.label}>THIS CYCLE</Text>
-          <Text style={styles.stat}>{formatMoney(cycle.unbilled.amount)} charged</Text>
-          <Text style={styles.body}>Due {formatDateLong(cycle.unbilled.due)}.</Text>
-
-          <View style={styles.rule} />
-
-          <Row
-            label="Statement — already closed"
-            note={`Due ${formatDateLong(cycle.statement.due)} · reserved`}
-            amount={cycle.statement.amount}
-            testID="row-statement"
-          />
-          <Row
-            label="Unbilled — since it closed"
-            note={`Due ${formatDateLong(cycle.unbilled.due)} · not yet reserved`}
-            amount={cycle.unbilled.amount}
-            testID="row-unbilled"
-          />
-
-          {/* The line that stops the reserve looking arbitrary. */}
-          <Text style={styles.reserve} testID="held-back">
-            We&apos;re holding back {formatMoney(cycle.held_back)} of your cash for this.
-          </Text>
-        </View>
-
-        {/* --- When the sweep is not the answer --------------------------------------- */}
-        {isPositive(last.grew_by) && (
-          <View style={[styles.card, styles.grew]} testID="card-grew">
-            <Text style={styles.heading}>
-              Your card grew {formatMoney(last.grew_by)} last cycle.
-            </Text>
+        {/* --- The portfolio, when there is one ---------------------------------------- */}
+        {/* Only for more than one card: with a single card these totals are that card's own
+            figures repeated, which is a summary of nothing. */}
+        {many && (
+          <View style={styles.card} testID="portfolio-totals">
+            <Text style={styles.label}>ACROSS YOUR {cards.length} CARDS</Text>
+            <Text style={styles.stat}>{formatMoney(totals.statement)} due</Text>
             <Text style={styles.body}>
-              You charged {formatMoney(last.charged)} and paid {formatMoney(last.paid)}. A sweep
-              will not catch that up — the spending is the thing to change.
+              Plus {formatMoney(totals.unbilled)} still forming. They come due on different days —
+              each card is below.
+            </Text>
+
+            <Text style={styles.reserve} testID="held-back-total">
+              We&apos;re holding back {formatMoney(totals.held_back)} of your cash in total.
             </Text>
           </View>
         )}
+
+        {/* --- Each card ---------------------------------------------------------------- */}
+        {cards.map((card) => (
+          <CardPanel key={card.card_id} card={card} showName={many} />
+        ))}
 
         {/* --- The biggest month: the reserve, made legible ----------------------------- */}
         {/* "Worst" is the engine's word for this number and it stays the engine's word — the
@@ -167,6 +146,65 @@ export function Spending({ householdId }: Props) {
         </View>
       </View>
     </ScrollView>
+  );
+}
+
+/**
+ * One card: what it owes, what is forming behind that, and whether it grew.
+ *
+ * `showName` is off for a single-card household — naming "card_demo" when there is only one card
+ * is noise, and the id is ours, not something the user calls it. With a portfolio the panels have
+ * to be tellable apart, and the id is the only handle the API gives us. A real display name is a
+ * Plaid field this product does not have yet.
+ */
+function CardPanel({ card, showName }: { card: CardSpend; showName: boolean }) {
+  const { this_cycle: cycle, last_cycle: last } = card;
+
+  return (
+    <>
+      <View style={styles.card} testID={`this-cycle-${card.card_id}`}>
+        <Text style={styles.label}>{showName ? card.card_id.toUpperCase() : 'THIS CYCLE'}</Text>
+        <Text style={styles.stat}>{formatMoney(cycle.unbilled.amount)} charged</Text>
+        <Text style={styles.body}>Due {formatDateLong(cycle.unbilled.due)}.</Text>
+
+        <View style={styles.rule} />
+
+        <Row
+          label="Statement — already closed"
+          note={`Due ${formatDateLong(cycle.statement.due)} · reserved`}
+          amount={cycle.statement.amount}
+          testID={`row-statement-${card.card_id}`}
+        />
+        <Row
+          label="Unbilled — since it closed"
+          note={`Due ${formatDateLong(cycle.unbilled.due)} · not yet reserved`}
+          amount={cycle.unbilled.amount}
+          testID={`row-unbilled-${card.card_id}`}
+        />
+
+        {/* The line that stops the reserve looking arbitrary. This card's own share of it —
+            `obligation_in_horizon` per card, not the portfolio total apportioned. */}
+        <Text style={styles.reserve} testID={`held-back-${card.card_id}`}>
+          We&apos;re holding back {formatMoney(cycle.held_back)} of your cash for this.
+        </Text>
+      </View>
+
+      {/* --- When the sweep is not the answer --------------------------------------- */}
+      {/* `last === null` means we have no transaction history for this card, which is not the
+          same as "nothing was charged" — so there is nothing to say, and we say nothing. */}
+      {last !== null && isPositive(last.grew_by) && (
+        <View style={[styles.card, styles.grew]} testID={`card-grew-${card.card_id}`}>
+          <Text style={styles.heading}>
+            {showName ? `${card.card_id} grew` : 'Your card grew'} {formatMoney(last.grew_by)} last
+            cycle.
+          </Text>
+          <Text style={styles.body}>
+            You charged {formatMoney(last.charged)} and paid {formatMoney(last.paid)}. A sweep will
+            not catch that up — the spending is the thing to change.
+          </Text>
+        </View>
+      )}
+    </>
   );
 }
 
@@ -241,16 +279,6 @@ const styles = StyleSheet.create({
   // Not a warning colour. See the header note: there is no red in this product, and a
   // household whose card is growing is being told the truth, not shown a fault.
   grew: { borderLeftWidth: 4, borderLeftColor: colors.deepGreen },
-  // Not red either, and not an error: nothing failed. This is the product being straight about
-  // what it has not built yet, which is the same voice as a refusal.
-  unavailableTitle: { ...type.body, color: colors.ink, textAlign: 'center' },
-  unavailableBody: {
-    ...type.label,
-    color: colors.muted,
-    textAlign: 'center',
-    marginTop: space.sm,
-    maxWidth: COLUMN_WIDTH,
-  },
   label: { ...type.label },
   stat: { ...type.stat, marginTop: space.xs },
   heading: { ...type.heading },
