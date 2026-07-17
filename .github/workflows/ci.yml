@@ -17,6 +17,10 @@
 #     the guard is broken, the product will confidently tell a household something untrue about
 #     their own money.
 #
+# `deployable` is the gate `quality` structurally cannot be — see its own comment. It exists
+# because `quality` installs a **different dependency list** than the deploy does, and the two
+# disagreed for eleven tickets without a single red build (ticket `0033`).
+#
 # `mobile` is a typecheck and the component suite. Nothing here builds a native binary or
 # touches a device — that is not what this gate is for.
 name: CI
@@ -82,6 +86,44 @@ jobs:
           # while proving nothing. `tests/test_ci_runs_the_db_suite.py` fails the build if this
           # is ever unset here, so the skip cannot go quiet.
           TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cfo_ai_test
+
+  # The deployed image can actually start. Ticket 0033.
+  #
+  # **This must be its own job, and that is the whole point.** There are two dependency lists:
+  # `pyproject.toml`'s `[api]` extra (what `quality` and every developer install) and
+  # `backend/requirements.txt` (what Cloud Run's buildpack installs). Nothing compared them, and
+  # they disagreed from ticket `0020` to `0031` — the deploy manifest listed no database driver
+  # while `backend/main.py` imported SQLAlchemy at module load. The container could not boot.
+  #
+  # Every test stayed green the entire time, because CI installs the list that was correct. Adding
+  # this as a *step* in `quality` would reproduce that exact bug: the extra is already installed
+  # there, so the import would succeed no matter what this file says. A clean environment is the
+  # only thing that tests the claim.
+  #
+  # It is an import, not a request: `import backend.main` executes every module-level import in the
+  # serving path, which is where a missing runtime dependency actually bites. It does not run the
+  # lifespan — that needs a database, which is `quality`'s job and the deploy's problem.
+  #
+  # Mutation-tested when it was written: with the driver removed from the manifest this fails with
+  # `ModuleNotFoundError: No module named 'sqlalchemy'` — the same error Cloud Run would hit — and
+  # with it present it passes. It would have caught `0033` the day `0024` merged, in four seconds.
+  deployable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Deliberately NOT `pip install -e ".[dev]"`. See above — that is the other list.
+      - name: Install only what Cloud Run installs
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: The serving path imports
+        run: python -c "import backend.main"
 
   mobile:
     runs-on: ubuntu-latest

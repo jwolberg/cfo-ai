@@ -65,17 +65,51 @@ is already spent.
 
 ## Acceptance criteria
 
-- [ ] Neon project provisioned; connection string in Secret Manager; nothing secret in the deploy
-      command or the repo.
-- [ ] Migrations run in the deploy path; the step is documented in `DEPLOY.local.md`.
-- [ ] A service started against an unmigrated or unreachable database **fails fast** rather than
-      serving.
+- [~] Neon project provisioned; connection string in Secret Manager; nothing secret in the deploy
+      command or the repo. — *Neon provisioned and `cfo_runtime` created (`0020`);
+      [`neon-provisioning.md`](../runbooks/neon-provisioning.md) carries it. Secret Manager not
+      done: `docs/runbooks/deploy.md` `[4]` is the exact command, and it needs your gcloud auth.*
+- [x] Migrations run in the deploy path; the step is documented. — **Decided: by hand, before the
+      deploy, not in the entrypoint** (`deploy.md` `[2]`). An entrypoint that migrates has every
+      cold start racing for a schema lock on a service that scales, and `--max-instances=1` is a
+      policy rather than a guarantee. The manual step is safe *because* of the AC below: a
+      forgotten migration is a failed deploy, not a service answering 500s. Documented in
+      `docs/runbooks/deploy.md` rather than `DEPLOY.local.md` — the latter is gitignored, and a
+      procedure nobody but its author can read is not documentation. That file's own §12 asked for
+      this graduation, and it was `0009`'s last piece.
+- [x] A service started against an unmigrated or unreachable database **fails fast** rather than
+      serving. — *`main.py`'s lifespan: `assert_rls_binds()` + `_assert_migrated()`. Both are
+      startup-fatal and both are tested (`TestStartup`), including the one a ping would miss — a
+      role that reaches the database and bypasses RLS.*
 - [ ] **Cold-start measured, not assumed:** scale to zero, hit `/households/{id}/decisions`, record
       the wall-clock in the PR. Compare it against `REQUEST_TIMEOUT_MS` (8s), not against the ~500ms
-      brochure figure.
+      brochure figure. — *`deploy.md` `[6a]` is the measurement. Needs a real deploy.*
 - [ ] `docs/RUNBOOK.md` covers: rotating the connection string, what a cold start looks like, and
-      what to do when the database is unreachable.
-- [ ] The deployed demo serves the four archetypes.
+      what to do when the database is unreachable. — *`RUNBOOK.md` now covers local Postgres and
+      seeding (`0031`). Rotation lives in `neon-provisioning.md`; the unreachable-database symptom
+      table is `deploy.md` `[5]`. What is missing is the cold-start section, which cannot be written
+      before it is measured.*
+- [ ] The deployed demo serves the four archetypes. — **The blocker, and it is not code.** Nothing
+      has ever seeded Neon; `deploy.md` `[3]` is the step. The live revision still serves the
+      pre-`0024` build.
+
+## Prepped by `0031` (2026-07-16) — everything short of touching live infrastructure
+
+`0031` made the database non-optional for every route, so it inherited this ticket's blast radius.
+What it did, and deliberately did not do:
+
+- **`backend/requirements.txt` now has the driver.** It never did, so `main` could not deploy at
+  all — see [`0033`](0033-the-deployed-image-cannot-start.md). CI's new `deployable` job installs
+  that manifest **alone** and imports `backend.main`, mutation-tested both ways.
+- **[`docs/runbooks/deploy.md`](../runbooks/deploy.md) is written** — `0009`'s graduation plus this
+  ticket's database steps, placeholders only, no secrets.
+- **Not done, by choice:** no gcloud auth used, no secret created, no Neon write, no deploy. The
+  runbook's `last-verified` says `never` and steps `[2]`–`[5]` are written from the code rather
+  than from a run. **Do not trust them until one of them has failed and been fixed.**
+
+⚠️ **Neon predates migration `0004`.** It was migrated at `0020`; `0031` added `spend_projections`
+(five scoped tables → six). The deployed code will refuse to start against it until `deploy.md`
+`[2]` runs. That refusal is `_assert_migrated()` working, not a bug.
 
 ## If the cold start misses
 

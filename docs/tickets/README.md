@@ -256,9 +256,18 @@ fixed in #46:
   household that **sweeps and says nothing about what it saved** — better than the refusal it
   replaces.
 
-**`0026` is half done.** Neon is provisioned and migrated (37 partitions, RLS forced on all five
-scoped tables, `cfo_runtime` created), and `docs/runbooks/neon-provisioning.md` carries the
+**`0026` is half done.** Neon is provisioned and migrated (37 partitions, RLS forced on every
+scoped table, `cfo_runtime` created), and `docs/runbooks/neon-provisioning.md` carries the
 procedure. Cloud Run wiring and Secret Manager are not done.
+
+**It was migrated at `0020`, so it predates `0004`** — `0031` added `spend_projections`, which takes
+the scoped-table count from five to six. The deployed code will refuse to start against Neon as it
+stands, which is `_assert_migrated()` doing its job. `docs/runbooks/deploy.md` `[2]` is the step.
+
+`0031` also wrote the rest of that runbook: it is `0009`'s owed graduation of `DEPLOY.local.md`
+plus `0026`'s database steps, prepped as far as they go without touching live infrastructure.
+**Nothing in it has been run** — `last-verified: never`, and steps `[2]`–`[5]` are written from the
+code rather than from a deploy.
 
 ## The thing worth reading before picking any of these up
 

@@ -1715,3 +1715,75 @@ the day `0024` merged, in the four seconds an import takes).
 
 `USERS.md` says the deployed demo **is** the product surface, so this is worth being blunt about:
 `main` is not deployable, and it has not been for eleven tickets.
+
+---
+
+## 2026-07-16 — Ticket `0033`, the deploy: the check, and the prep
+
+Follow-on from `0031`. Two decisions taken, one deliberately not.
+
+### The prevention check: a CI job, not one list
+
+CI now has a **`deployable`** job that installs `backend/requirements.txt` **alone** into a clean
+environment and runs `python -c "import backend.main"`.
+
+**It has to be its own job.** `quality` has already installed `pyproject.toml`'s `[api]` extra, so
+the same two lines as a *step* there would pass regardless of what the deploy manifest says — which
+is exactly the bug (`0033`: the two lists disagreed from `0020` to `0031` and CI was green
+throughout). A clean environment is the only thing that tests the claim.
+
+Mutation-tested in a throwaway venv before it was written:
+
+```
+old manifest (fastapi, uvicorn):   ModuleNotFoundError: No module named 'sqlalchemy'
+fixed manifest:                    OK: backend.main imported
+```
+
+**The stronger fix was considered and declined.** Collapsing to one list (`requirements.txt` →
+`.[api]`) removes the class rather than detecting it. But it changes how Cloud Run's buildpack
+installs the app, and that is untestable anywhere but a real deploy — so it would mean changing the
+install semantics of the one thing already known to be broken and finding out at the worst moment.
+Worth doing once a deploy has succeeded and there is a known-good baseline. The `deployable` job
+makes that attempt safe when it happens, which is a reason to have it either way.
+
+### The deploy: prepped to the edge of live infrastructure, and stopped there
+
+`docs/runbooks/deploy.md` is written — `0009`'s owed graduation of `DEPLOY.local.md` (§12 asked for
+it; the file has been "run and live" since 2026-07-14 and never graduated) **plus** `0026`'s
+database steps. Placeholders only, no secrets.
+
+**Nothing live was touched**: no gcloud auth, no secret created, no Neon write, no deploy. So
+`last-verified: never`, and the runbook says in its own header that steps `[2]`–`[5]` are written
+from the code rather than from a run. A runbook nobody has executed is a hypothesis, and labelling
+it as one is the difference between a runbook and a wish.
+
+Decided while writing it: **migrations run by hand, before the deploy, not in the entrypoint.** An
+entrypoint that migrates has every cold start racing for a schema lock on a service that scales, and
+`--max-instances=1` is a policy rather than a guarantee. The manual step is safe *because*
+`_assert_migrated()` is startup-fatal: a forgotten migration is a failed deploy rather than a
+service answering 500s. Recorded on `0026`'s AC.
+
+### What the live service actually is — I had this wrong
+
+`0031`'s notes said "`main` is not deployable" and let that imply urgency. Checked against the live
+service's own OpenAPI schema rather than inferred:
+
+```
+/decisions   /decisions/{day}/explain   /spend   /assistant/message
+```
+
+No `/households`. The demo is **up**, serving the pre-`0024` build — one household, from the JSON
+file, with the `cards[0]` `/spend` bug still in it. It predates the `/health` rename, so Cloud Run's
+probe has never had a route to hit, which `DEPLOY.local.md` §11 already said.
+
+So the accurate claim is narrower and worse in a different way: not an outage, but **nothing from
+`0019`–`0031` is visible to anyone looking at the deployed product**, and `USERS.md` says the
+deployed demo *is* the product surface. The next deploy is what fails, and it is not a redeploy —
+`/assistant/message` is the only route the two builds share.
+
+Two things nobody had noticed and neither ticket listed:
+
+- **Neon has never been seeded.** `0026`'s AC says "the deployed demo serves the four archetypes";
+  the database was provisioned and migrated at `0020` and no household was ever written to it.
+- **Neon predates migration `0004`.** `spend_projections` takes the scoped-table count from five to
+  six, so the deployed code refuses to start against it until `deploy.md` `[2]` runs.
