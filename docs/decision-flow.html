@@ -432,7 +432,7 @@
   <ol class="lede-list">
     <li>The thesis underneath that promise</li>
     <li>Working software that decides when it is safe to move a household&rsquo;s money and
-        refuses when it isn&rsquo;t. It runs against a made-up household, because no real money moves
+        refuses when it isn&rsquo;t. It runs against made-up households, because no real money moves
         yet.</li>
     <li>Open distribution questions.</li>
   </ol>
@@ -507,10 +507,17 @@
 <h3 class="subhead">What I built</h3>
 
 <p class="lede" style="margin-bottom:1.25rem">
-  <strong>Status: two screens of the customer app, built and deployed at
-  <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>. No mechanism for moving real funds is in
+  <strong>Status: two screens of the customer app, built. No mechanism for moving real funds is in
   place</strong> &mdash; no Plaid link, no payment rail. Everything below the API is real and runs;
   everything that would touch an actual bank account is not built.
+</p>
+
+<p class="lede" style="margin-bottom:1.25rem">
+  A build of it is deployed at <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>, and
+  <strong>it is an old one</strong>: it serves a single household from a committed JSON file, which
+  is what this was before the persistence work. The current build serves <b>four</b> households from
+  Postgres, scoped, with a switcher &mdash; none of which is on that link yet. Saying so is cheaper
+  than the alternative, which is a reviewer discovering it.
 </p>
 
 <p class="lede" style="margin-bottom:1.25rem">
@@ -524,7 +531,7 @@
 
 
 <p class="lede" style="margin-bottom:1.25rem">
-  Below is an outline of the deployed tech stack:
+  Below is an outline of the tech stack as it stands in the repository:
 </p>
 
 <div class="rules">
@@ -538,18 +545,21 @@
     </tr>
     <tr>
       <td><b>API</b><br><code>backend/</code></td>
-      <td><b>FastAPI + Uvicorn.</b> Serves the decision history and the spend view. Refuses to
-          start without its secrets, or under a database role that could bypass row-level
-          security &mdash; a service holding bad data should not serve wrong numbers one request
-          at a time.</td>
+      <td><b>FastAPI + Uvicorn.</b> Serves each household&rsquo;s decision history and spend view,
+          scoped by <code>household_id</code> in the path and again by row-level security. Every
+          figure comes from a row; nothing reads a file. Refuses to start without its secrets, or
+          under a database role that <em>could</em> bypass row-level security &mdash; a service
+          holding bad data should not serve wrong numbers one request at a time.</td>
     </tr>
     
     <tr>
       <td><b>Client</b><br><code>mobile/</code></td>
       <td><b>Expo / React Native</b> in TypeScript, with <code>react-native-web</code> so the same two
-          screens &mdash; the dashboard and the spending view &mdash; and the explain modal run in a
-          browser. That browser build is what&rsquo;s deployed above; the same source targets iOS and
-          Android unchanged.</td>
+          screens &mdash; the dashboard and the spending view &mdash; the explain modal, and the
+          household switcher run in a browser. The same source targets iOS and Android unchanged. No
+          router, no state library, no data-fetching library: two screens and a
+          <code>useState</code>, and when a third screen earns the router the router earns its
+          dependency.</td>
     </tr>
     <tr>
       <td><b>Persistence</b><br><code>backend/db/</code></td>

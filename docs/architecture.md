@@ -198,7 +198,7 @@ and `psycopg`.
 
 | Module | What it does |
 | --- | --- |
-| [`precompute.py`](../backend/precompute.py) | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One `walk()`, three consumers: the artifact builder, the replay driver, and (next) the seeder. There were 2.5 copies and they had drifted — ticket `0019`. |
+| [`precompute.py`](../backend/precompute.py) | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One `walk()`, three consumers: the artifact builder, the replay driver, and the seeder — all three now real. There were 2.5 copies and they had drifted — ticket `0019`. |
 | [`replay.py`](../backend/replay.py) | Drives the walk and grades every day it can honestly grade, against realized history rather than the engine's own sweep-adjusted path. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast. |
 | [`calibrate.py`](../backend/calibrate.py) | Grades a **population** — 60 synthetic households, 3 shapes × 20 seeds — at every setting of the spend dial. [`prd.md`](./prd.md) §5.2: a guardrail measured on one household is not measured. |
 | [`codec.py`](../backend/codec.py) | Tagged-scalar JSON. JSON has no decimal type, and a cent through a float is not the cent the engine decided on. Type-driven, so it **cannot drift from the dataclass**. |
@@ -312,12 +312,27 @@ the public API key leaks. A second worker is a second counter and a doubled ceil
 `react-native-web` so one source runs on a phone and in a browser. Two screens and a modal:
 [`Dashboard.tsx`](../mobile/src/screens/Dashboard.tsx) (the decision feed),
 [`Spending.tsx`](../mobile/src/screens/Spending.tsx), and
-[`ExplainModal.tsx`](../mobile/src/screens/ExplainModal.tsx) (the narration and the assistant).
+[`ExplainModal.tsx`](../mobile/src/screens/ExplainModal.tsx) (the narration and the assistant) —
+plus the household switcher (`0025`).
 
 **It carries no navigation, state-management, or data-fetching library.** The tabs are a `useState`
 over two values; both screens stay mounted and are toggled with `display: none`, so switching does
 not refetch or lose scroll. `App.tsx` argues the case: two screens, no nesting, no deep links — when
 a third screen or a shareable link earns the router, the router earns its dependency.
+
+**The household is owned by `App.tsx`, and every screen follows it.** `0025` named the hazard in
+advance — *"the easiest thing to leave pointing at a stale household: a bug that looks like working
+software"* — so each screen returns to `loading` on a switch rather than holding the previous
+household's figures on screen while the next request is in flight. Switching also closes an open
+modal, which is open against a decision belonging to a household you have left.
+
+**The Spending screen describes every card.** Each card carries its own panel and its own dates,
+and the portfolio total is a sum of money only — there is no combined due date, because the cards do
+not close together and inventing one would have to be wrong about two of them. The card's `card_id`
+appears on a portfolio, quietly, as a **reference rather than a name**: it is our primary key, a
+real display name is a Plaid field this product does not have, and inventing one would be a name we
+made up presented as theirs. That distinction was shipped wrong once — `CARD_B_HIGH` as the panel's
+title, past 66 green tests, because they all assert on `testID`s and a testID does not read.
 
 **Every request goes through one function.** `api/client.ts`'s `request<T>()` is the only `fetch`
 in the app. It carries a closed error taxonomy — `timeout · network · unauthorized · no_record ·

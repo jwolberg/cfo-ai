@@ -35,7 +35,7 @@ itself has not. See **Status**, below.
 | `engine/` | The decision — and usually the refusal. Pure, deterministic, zero dependencies. |
 | `sim/` | The answer key: synthetic households whose true daily balance we know. |
 | `backend/` | The walk, the grader, the population calibration, the API, Postgres. |
-| `mobile/` | The surface: the decision feed, the spending view, the explanation. |
+| `mobile/` | The surface: the decision feed, the spending view, the explanation, the switcher. |
 | *the rail* | **Deliberately unbuilt** — see above. |
 
 ```bash
@@ -215,12 +215,15 @@ artifact and moves every measured number in three documents, so it needs its own
 
 | File | What it does |
 | --- | --- |
-| `precompute.py` | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One walk, three consumers — the artifact builder, the replay driver, and (next) the seeder. There were 2.5 copies of it and they had already drifted; see Status. |
+| `precompute.py` | **The walk.** Steps a household day by day, builds each `Snapshot`, calls `decide()`. One walk, three consumers — the artifact builder, the replay driver, and the seeder. There were 2.5 copies of it and they had already drifted; see Status. |
 | `replay.py` | Drives the walk and grades every day it can honestly grade. A blocking refusal never ran a forecast, so it is **not** graded — scoring it zero would look like a perfect forecast and pull the whole error distribution toward the origin. |
 | `calibrate.py` | Grades a **population** at every setting of the spend dial. `prd.md` §5.2's lesson, learned the hard way: *a guardrail measured on one household is not measured.* |
+| `seed.py` | Walks each archetype and writes it — **through the repository, not around it**, so the seeder exercises the path a live daily job would rather than a bulk-insert shortcut that would prove nothing. |
+| `readpath.py` | The served window, rebuilt from rows. `DayRecord` and `Summary` survive the move from the file unchanged — the client cannot tell where they came from. |
+| `spend.py` | The spend surface, per card. Each card's reserve is its own term of `untouchable()`'s sum, derived live; only what the transaction history alone can answer is stored. |
 | `db/` | Postgres, scoped by `household_id`. Schema, a repository, and the `SnapshotStore` seam. |
 | `codec.py` | Tagged-scalar JSON. JSON has no decimal type, and a cent that round-trips through a float is no longer the cent the engine decided on. Generic and type-driven, so it **cannot drift from the dataclass**. |
-| `artifact.py` | The demo's committed decision history. Being superseded by `db/` — see [ADR-0004](docs/decisions/0004-postgres-scoped-by-household.md). |
+| `artifact.py` | The wire shapes, and the schema of the committed fixture. **Nothing serves that file** — ADR-0002 is superseded by [ADR-0004](docs/decisions/0004-postgres-scoped-by-household.md), and it is now the oracle archetype A's decisions are checked against, day for day. |
 | `assistant.py` | The only path that costs money. The LLM looks up decisions the engine already made and puts them in English; it never makes one. |
 
 **The data layer is scoped by household, twice, on purpose.** Every query goes through a
@@ -237,9 +240,17 @@ one forgotten `WHERE` clause is not an acceptable single point of failure."*
 ## `mobile/` — the surface
 
 Expo / React Native in TypeScript, with `react-native-web` so the same source runs in a browser and
-on a phone. Two screens and a modal: the decision feed, the spending view, and the explanation.
+on a phone. Two screens and a modal: the decision feed, the spending view, and the explanation —
+plus a switcher, because there are four households now: the demo, and three this engine had never
+seen until someone tried to serve them.
 
-Deployed at [cfo-ai-1.web.app](https://cfo-ai-1.web.app).
+Both screens follow the switch. The spending view describes **every** card a household holds, each
+with its own dates, because the cards do not close together and a single "what you owe" figure
+hides the month between them.
+
+> ⚠️ **[cfo-ai-1.web.app](https://cfo-ai-1.web.app) is not this.** The deployed build **predates
+> the persistence work entirely**: one household, served from the JSON file, no switcher, and a
+> spending view that reports one arbitrary card. See **Status**.
 
 ---
 
@@ -287,11 +298,23 @@ reversed.
 ## Status
 
 **Built and running.** `engine/`, `sim/`, `backend/` (the walk, the grader, the population
-calibration, the API, Postgres), and `mobile/`. 448 Python tests, 51 mobile tests.
+calibration, the API, Postgres), and `mobile/`. 531 Python tests, 69 mobile tests.
+
+**Four households, served from Postgres, scoped twice.** Every route reads rows; the committed
+JSON file serves nobody and is now the oracle that proves the engine's decisions never moved. That
+is ADR-0004 landing — one system of record — and it took `0019`–`0031` to get there.
 
 **Not built.** Plaid — no link, no live balances, nothing has touched a real household. No payment
 rail, and deliberately so: `prd.md` §6.1 says no rail is chosen and *"nothing in the codebase
 assumes one — keep it that way,"* because §7.1's distribution question forecloses it. No real auth.
+
+**Not deployed, and that is the gap worth naming.** The live revision is from **before `0020`** —
+it predates the persistence work rather than lagging it — so **none of the multi-tenant work is
+visible on the thing the link points at**, and `USERS.md` says that demo *is* the product surface.
+It is not an outage: it serves one household from the committed file and does it correctly. It is
+eleven tickets of drift. Shipping it needs a connection string the container has never been given
+and a database that has never been seeded — [`docs/runbooks/deploy.md`](docs/runbooks/deploy.md),
+which nothing has run.
 
 ### The loop is closed, and the first thing it did was say no
 
@@ -324,8 +347,21 @@ about itself.
 - **The walk gave a whole portfolio one ledger.** A $3,000 card reported the $14,000 card's
   balance. `_select_target`'s ranking and the obligation reserve had never once seen two real
   cards.
+- **The deploy manifest never listed the database driver.** `backend/requirements.txt` is what Cloud
+  Run installs; the venv and CI install a *superset*. The container could not start, 496 tests
+  passed, and **the only environment that could see it was production**.
+- **A migration imported a live constant and iterated it.** `alembic/versions/0001` read
+  `HOUSEHOLD_SCOPED` — so adding a scoped table retroactively changed what revision 0001 *does*.
+  Every already-migrated database stays green forever; **only a migration from zero breaks**, which
+  is nobody's CI and everybody's first day.
 - **A `render()` that everyone awaits except one suite** — a race that blocked three PRs, one of
   them documentation-only.
+
+The pattern has a sharper corollary now: **the quietest defects are the ones that only fire from
+zero, or only in production** — the two environments no test runs in. And one that does not fit the
+shape at all: a database primary key rendered as the name of the user's card, shipped past 66 green
+tests because every one of them asserts on `testID`s and **a testID does not care what the words
+say**. Some things only looking finds.
 
 ### Still open, and named rather than solved
 
