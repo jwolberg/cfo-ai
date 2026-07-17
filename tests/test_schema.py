@@ -535,6 +535,133 @@ class TestPlaidTransactions:
         assert still == "Coffee", "the row was rewritten despite the grant"
 
 
+class TestTransfers:
+    """The append-only money-movement ledger (ticket 0039, the sweep-execution rung). Every state
+    transition is an INSERT; corrections and supersessions are new rows. RLS rides the
+    `HOUSEHOLD_SCOPED` parametrization and the IDOR suite — these are the append-only, CHECK, and
+    money-shape claims those do not make."""
+
+    def _transfer(
+        self,
+        conn,
+        hid: str,
+        row_id: str,
+        *,
+        leg: str = "debit",
+        state: str = "submitted",
+        direction: str = "debit",
+        amount: str = "50.00",
+        provider: str = "increase",
+        decision_id: str = "dec-1",
+        decision_date: str = "2026-03-02",
+        provider_transfer_id: str | None = None,
+    ) -> None:
+        conn.execute(
+            text(
+                "INSERT INTO transfers (id, household_id, target_card_id, decision_id,"
+                " decision_date, leg, state, direction, amount, provider, provider_transfer_id,"
+                " idempotency_key) VALUES (:id, :h, 'card-1', :dec, :dd, :leg, :state, :dir, :amt,"
+                " :prov, :ptid, :idem)"
+            ),
+            {
+                "id": row_id,
+                "h": hid,
+                "dec": decision_id,
+                "dd": decision_date,
+                "leg": leg,
+                "state": state,
+                "dir": direction,
+                "amt": Decimal(amount),
+                "prov": provider,
+                "ptid": provider_transfer_id,
+                "idem": f"{hid}-{decision_date}-{leg}-submit",
+            },
+        )
+
+    def test_a_state_transition_is_a_new_row_not_an_in_place_edit(self, db) -> None:
+        """One leg advancing submitted → settled is two rows sharing a `provider_transfer_id`, not
+        an UPDATE. A UNIQUE there would reject the transition append-only exists to record."""
+        with db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", state="submitted", provider_transfer_id="inc-9")
+            self._transfer(db, "h1", "t2", state="settled", provider_transfer_id="inc-9")
+            rows = (
+                db.execute(
+                    text(
+                        "SELECT state FROM transfers WHERE provider_transfer_id='inc-9'"
+                        " ORDER BY created_at, id"
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        assert rows == ["submitted", "settled"]
+
+    def test_a_superseding_transfer_shares_the_slot_without_a_unique_rejection(self, db) -> None:
+        """A same-day re-decision mints a new `decision_id` against the same `(household,
+        decision_date)` slot. Both rows insert — the at-most-one-submitted invariant is the saga's
+        slot lock (U4), not a UNIQUE that would reject this legitimate supersession (KTD-2)."""
+        with db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", decision_id="dec-1")
+            self._transfer(db, "h1", "t2", decision_id="dec-2")  # same slot, new decision
+            n = db.execute(
+                text("SELECT count(*) FROM transfers WHERE decision_date='2026-03-02'")
+            ).scalar()
+        assert n == 2
+
+    def test_a_numeric_amount_round_trips_a_decimal_exactly(self, db) -> None:
+        """NUMERIC, never float (ADR-0002 [2.2]) — the row is a debit, so the cent must be exact."""
+        with db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", amount="1234.56")
+            got = db.execute(text("SELECT amount FROM transfers WHERE id='t1'")).scalar()
+        assert got == Decimal("1234.56")
+        assert isinstance(got, Decimal), f"got {type(got).__name__} — a float reached the money"
+
+    @pytest.mark.parametrize(
+        ("column", "value", "constraint"),
+        [
+            ("state", "posted", "ck_transfers_state"),  # a vendor's word, not our ledger's
+            ("leg", "reserve", "ck_transfers_leg"),
+            ("direction", "sideways", "ck_transfers_direction"),
+            ("provider", "dwolla", "ck_transfers_provider"),  # not the chosen debit provider
+        ],
+    )
+    def test_an_out_of_enum_value_is_rejected(self, db, column, value, constraint) -> None:
+        """Each enumerated column states its valid set where the data lives; nothing writes past."""
+        with pytest.raises(Exception, match=constraint), db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", **{column: value})
+
+    def test_a_nonpositive_amount_is_rejected(self, db) -> None:
+        """A transfer moves money; zero or negative is a bug the schema refuses."""
+        with pytest.raises(Exception, match="ck_transfers_amount_positive"), db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", amount="0.00")
+
+    def test_the_app_role_cannot_update_or_delete_an_append_only_row(self, db, as_app) -> None:
+        """Append-only is a **grant**, not a convention: `cfo_app` holds SELECT and INSERT and
+        nothing else, so no application path rewrites a debit's history even by mistake. Proven by
+        trying both as the app role and being refused at the privilege layer — the highest-stakes
+        instance of this guarantee in the schema, because the row is money that already moved."""
+        with db.begin():
+            _household(db, "h1")
+            self._transfer(db, "h1", "t1", state="submitted")
+
+        with pytest.raises(Exception, match="permission denied"):
+            as_app(
+                "h1",
+                lambda c: c.execute(text("UPDATE transfers SET state='settled' WHERE id='t1'")),
+            )
+        with pytest.raises(Exception, match="permission denied"):
+            as_app("h1", lambda c: c.execute(text("DELETE FROM transfers WHERE id='t1'")))
+
+        with db.begin():
+            still = db.execute(text("SELECT state FROM transfers WHERE id='t1'")).scalar()
+        assert still == "submitted", "the row was rewritten despite the grant"
+
+
 def test_deleted_at_records_the_shred_not_a_soft_delete(db) -> None:
     """ADR-0004 C4. `deleted_at` is set when the household's KMS key is destroyed — the bytes are
     genuinely unrecoverable at that point. It is not a filter the repository has to remember, and
