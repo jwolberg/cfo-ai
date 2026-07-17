@@ -1972,3 +1972,104 @@ Status section should not drift toward implying it is.
   branch is ahead again.
 - **`§7`'s acceptance checks are stale**: they curl `/decisions` and `/spend`, which the live
   service no longer serves. The checks that matter now are in `deploy.md` `[4]` and this entry.
+
+---
+
+## 2026-07-16 — a bloat check that found no bloat, and six false runbook claims instead
+
+Audited the backlog and every artifact surface for cruft: tickets nobody will do, suggestions
+copy-pasted into ticket form, reports older than the work they discuss, abandoned session docs.
+
+**The backlog is clean.** 33 tickets, 29 done, 4 not — and all four earn it. `0029` and `0032` are
+measured defect reports blocked on real dependencies; `0026` is genuinely in flight; `0009` is done
+but unmarked (left open deliberately — closing it is the user's call, and its verification text
+names `/healthz` and `/decisions`, neither of which exists). Nothing to icebox. Every prose
+artifact — `reviews/`, `archive/`, `learnings/`, `brainstorms/`, `plans/`, the ADRs — is actively
+cited provenance. `prd.md` names the 2026-07-12 adversarial review as its evidence base; ADR-0002
+records its own supersession. None of it is cruft.
+
+**The cruft was in the runbooks, and it is the third time.** `docs/runbooks/deploy.md` still
+described the pre-deploy world in its frontmatter, its intro, and its `[0]` table — the section
+headed *"Read this or the rest will confuse you"*. Six claims were false: `last-verified: never`,
+`0026` "not yet run", "the database half has never been executed", the live revision serving the
+pre-`0024` build out of the JSON file, "`/health` does not exist on the live revision", and "it has
+still never been built into an image". All six were disproved on 2026-07-16 by the deploy the same
+file documents.
+
+**The mechanism, which is the part worth keeping.** This is not a stale file nobody touched —
+`deploy.md` had been edited four times, most recently by `8535c05`. Someone corrected the *step
+annotations in the body* (`[2]`: "Applied 2026-07-16"; `[4]`: "Done 2026-07-16") and left the
+header alone. So the file contradicted itself across 85 lines: line 16 said the database half had
+never been executed; line 103 said it was applied. **Measurements land where the person is typing.**
+The frontmatter is the one field nobody is looking at while they work, which is exactly why
+`last-verified` is the field most likely to be wrong.
+
+**The audit rule cannot see this class.** `docs/runbooks/README.md` says `/document-audit` flags
+`last-verified` older than 90 days. Every failure here was a *fresh* file with an unbumped field —
+`deploy.md` was four days old and six-ways wrong. Age is not the signal; **an unbumped field on a
+file whose body records a run** is. That check does not exist.
+
+### Fixed here
+
+- `deploy.md`: frontmatter → `2026-07-16`, intro's "not yet run" → "run 2026-07-16", the
+  never-executed paragraph deleted per the file's own instruction ("delete this paragraph the first
+  time it goes through end to end"), `[0]` rewritten to describe the live revision, and two body
+  claims corrected ("the remaining unproven step is the deploy itself"; "`/health` should answer for
+  the first time ever" — it already had).
+- `0026`: two ACs ticked. Secret Manager is **done** (version 2, bind verified as `cfo_runtime`
+  through the pooler using the secret's own value), and "the deployed demo serves the four
+  archetypes" — the ticket's self-declared **blocker** — is **done**. Its prose still told readers
+  not to trust steps `[2]`–`[5]`; that warning was earned and is now marked superseded rather than
+  deleted, because the run disproved four of the runbook's claims exactly as it predicted.
+- `neon-provisioning.md`: frontmatter added, `last-verified: 2026-07-16` — evidenced by its own
+  body ("Measured against this project's own Neon instance on 2026-07-16").
+- `branch-protection.md`: `last-verified: 2026-01-01` → `never`. That date is **six months before
+  this repo's first commit** (2026-07-12) — a placeholder that `/document-audit` would report as
+  merely overdue rather than never-run. `deploy.md` was honest enough to say `never`; this now is
+  too.
+- `0018` was **invisible**: 33 ticket files, 32 index rows, and no prose reference anywhere. Indexed
+  as U9 with its outcome, because the outcome is the point — the measurement refused the swap.
+- Three references called the migration ticket `0032`. It is `0033`, and was authored as `0033` in
+  the same commit whose prose called it `0032`. Dead links until `0032` was filed as
+  `generate() is not prefix-stable`; after that, **live links to the wrong ticket**, which is worse.
+- `docs/RUNBOOK.md` was titled *"reviewing PR #31"* — merged 2026-07-14 — and opened by telling you
+  to check out a branch that no longer exists and install with system `pip`, which
+  `local-development.md` explicitly forbids. Retitled to what it is: the walkthrough for the
+  calibration measurement, which outlived its review because **2.3% / 0 / $544,640.58** is cited in
+  three documents and this is the only place they are derived.
+
+### The test counts, measured 2026-07-17 — two more instances of the same defect
+
+`local-development.md` claimed **"448 passed, 1 skipped"** and `docs/RUNBOOK.md` `[1]` claimed
+**"367 passed"**. Ran both, following `local-development.md` top to bottom:
+
+| | with a database | without |
+|---|---|---|
+| **measured** | **531 passed, 1 skipped** (87s) | **393 passed, 139 skipped** (48s) |
+| was claimed | 448 passed, 1 skipped | ~375 passed, ~73 skipped |
+
+532 collected either way, so the numbers reconcile. `619375e` corrected the README against a real
+run (448 → 532) and left both of these — **the file that teaches people how to run the suite kept
+the number the README had just fixed.** `RUNBOOK.md`'s 367 predates `0020` entirely.
+
+**The skip count was the interesting one.** Without `TEST_DATABASE_URL` you lose **139** tests, not
+the ~73 claimed — the database suites have roughly doubled since that line was written, and nobody
+noticed because a green `393 passed` looks like a pass. That is `prd.md` §5.2's lesson (a skipped
+security test reports green while proving nothing) reappearing in the runbook *about* that lesson.
+
+**The runbook's procedure itself is sound.** `initdb`/`pg_ctl`/`createdb` worked exactly as written,
+`LC_ALL=C` and `-E UTF8` included; the suite migrated the database itself via `conftest.py` as
+documented. `last-verified: 2026-07-17` on that file is a real run, not a stamp. `ruff check` and
+`ruff format --check` are clean (39 files).
+
+### Still open
+
+- **`local-development.md` and `docs/RUNBOOK.md` still say `python3 -m pytest`** in ~9 remaining
+  places, which `local-development.md`'s own body explains silently skips every database test. The
+  two `[1]`/`[0]` entry points are fixed; the rest are inside PR-#31-era review prose that is
+  historical anyway.
+- **No cold-start measurement exists anywhere.** It is `0026`'s last honest `[ ]`.
+- **Gaps, not bloat.** `0018`'s own follow-up — gate the empirical model on *history length*, not a
+  quantile — has no ticket. Neither does a `today`/day-boundary/timezone definition (zero hits in
+  `docs/`), raised by the 2026-07-12 review at [2.4]. Both are the opposite of cruft: work the
+  backlog has forgotten rather than work it should drop.

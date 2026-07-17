@@ -1,3 +1,9 @@
+---
+title: Provisioning the database (Neon, phase 1)
+last-verified: 2026-07-16
+anchor: RB-neon-provisioning
+---
+
 # Provisioning the database (Neon, phase 1)
 
 Ticket `0026`. Decision: [ADR-0004](../decisions/0004-postgres-scoped-by-household.md);

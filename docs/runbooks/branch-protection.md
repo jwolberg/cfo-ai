@@ -1,6 +1,6 @@
 ---
 title: Configure forge branch protection
-last-verified: 2026-01-01
+last-verified: never
 anchor: RB-branch-protection
 ---
 
