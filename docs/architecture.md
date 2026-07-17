@@ -220,10 +220,11 @@ for the process lifetime. There is **no write path**, and the artifact is not ge
 production — it is built on a developer's machine by `python -m backend.precompute` and committed
 to the repo, because the buildpack deploy packages whatever is in the source tree.
 
-**And `db/` is wired to nothing.** `backend.db` is imported by exactly three kinds of caller:
-Alembic, itself, and its own tests. No route, and no walk, has ever opened a connection to it.
-[`backend/requirements.txt`](../backend/requirements.txt) — what Cloud Run actually installs — is
-`fastapi`, `uvicorn`, `anthropic`; **the deployed image contains no database driver at all.**
+**And `db/` is not in the read path.** [`seed.py`](../backend/seed.py) writes to it — ticket `0023`
+— but **no route has ever opened a connection to it.** Every request is still answered from the
+JSON file above. [`backend/requirements.txt`](../backend/requirements.txt), what Cloud Run actually
+installs, is `fastapi`, `uvicorn`, `anthropic`: **the deployed image contains no database driver at
+all**, so the seeded households exist only where a developer can reach them.
 
 **That is deliberate, and it is worth being precise about why**, because it looks exactly like the
 failure this repo keeps finding in itself and is not one.
@@ -237,6 +238,13 @@ This one is **known** to be unwired, and that is the whole of why it is safe. Th
 still real, because RLS is precisely the kind of mechanism that reports green while doing nothing —
 which is not a hypothetical here. It already happened twice on this schema: the IDOR suite ran as
 the superuser that owns the tables, and Neon's default role bypasses RLS outright.
+
+**And a third time, the moment something finally wrote through it.** `0023`'s seeder was the first
+caller `Repository.add_card` ever had, and it found that the method never named `apr_source` in its
+INSERT — so the column's `server_default` recorded a *guessed* 23% rate as **`reported`**, a fact.
+`0021` built the method; `0028` added the column two PRs later; nothing wrote a card in between.
+That is the cost of a schema built ahead of its caller, paid exactly where this section says it
+would be, and it is the argument for `0024` landing sooner rather than later.
 
 **The guard that came out of it.** [`db/session.py`](../backend/db/session.py)'s `assert_rls_binds()`
 refuses to start under a role that is `rolsuper` or `rolbypassrls`. Neon's default `neondb_owner`
