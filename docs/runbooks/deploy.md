@@ -161,8 +161,26 @@ gcloud run deploy "$SERVICE" \
   --memory=512Mi \
   --timeout=120s \
   --set-secrets="RESFI_API_KEY=${SECRET_API_KEY}:latest,ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATABASE_URL=${SECRET_DATABASE_URL}:latest" \
-  --set-env-vars="PYTHONUNBUFFERED=1"
+  --set-env-vars="^|^PYTHONUNBUFFERED=1|RESFI_ALLOWED_ORIGINS=https://cfo-ai-1.web.app,https://cfo-ai-1.firebaseapp.com"
 ```
+
+> ⚠️ **`--set-env-vars` REPLACES the whole set — it does not add to it.** The running service carries
+> `RESFI_ALLOWED_ORIGINS` as well as `PYTHONUNBUFFERED`, and a deploy passing only the latter drops
+> the CORS allowlist. The API keeps working; the **browser client silently stops being able to call
+> it**, which reads as "the deploy broke the app" and is in fact one missing env var.
+>
+> `DEPLOY.local.md` sets both in one command for this reason, and it is why `RESFI_ALLOWED_ORIGINS`
+> is repeated here rather than left to the CORS section — a deploy command that needs a *second*
+> command to be correct is a deploy command that is wrong. (An earlier draft of this runbook copied
+> §5 without it. Caught by diffing the live service's env against the command, not by deploying.)
+>
+> **The `^|^` prefix is load-bearing.** It tells `gcloud` to split on `|` instead of `,` — and
+> `RESFI_ALLOWED_ORIGINS` is *itself* a comma-separated list. Without it, gcloud reads
+> `https://cfo-ai-1.firebaseapp.com` as a second variable, and fails on a value with no `=` in it.
+>
+> Prefer `--update-env-vars` if you ever want to change one and leave the rest alone. This is a
+> `--set` because the deploy should state the container's whole environment, not inherit half of it
+> from whatever the last person ran.
 
 `--max-instances=1` is not a throughput compromise — the assistant's rate cap lives in process
 memory and is the only thing bounding Anthropic spend if the public API key leaks. One process, one

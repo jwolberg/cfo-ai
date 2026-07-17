@@ -17,11 +17,15 @@ built — [3.4], [3.6], [3.7]. **Ingest, normalization, money movement, and auth
 [3.2], [5], and Clerk in [2] are still intent, and should be read as *what we would build and in
 what order*, not as description.
 
-**The decision log ([3.3]) is the hard case, and it is the one to read first.** Its schema is
-built — tables, forced RLS, partitions, a scoping repository, an IDOR suite. Nothing calls it.
-The service serves a **committed JSON artifact** and holds no write path, so [4]'s "system of
-record" is intent while `backend/data/decisions.json` is fact. [3.6] says so plainly rather than
-letting this section carry it alone.
+**The decision log ([3.3]) was the hard case, and as of 2026-07-17 it is fact rather than intent.**
+Its schema — tables, forced RLS, partitions, a scoping repository, an IDOR suite — was built two
+tickets before anything called it, which this section spent that time saying plainly. `0024` and
+`0031` are the callers: every route reads rows, scoped twice, and `backend/data/decisions.json`
+serves nobody. It stays in the tree as the **oracle** that proves archetype A's decisions never
+moved — a test input, which is what ADR-0004 [3] always said it would become.
+
+**What is still intent:** ingest ([3.1]), normalization ([3.2]), money movement ([5]), auth, and
+**the deploy**. The live revision predates all of this — see [3.6].
 
 ---
 
@@ -80,28 +84,36 @@ Plaid ──webhook──> ingest ──> sync (cursored pull) ──> normalize
                                                                     log + explain + notify
 ```
 
-That diagram is the **intended** system. This is the one that runs today:
+That diagram is the **intended** system. This is the one in the repository today:
 
 ```
 sim.generate() ──> History ──> precompute.walk() ──> engine.decide()
-                                                          │
-                                                   decisions.json          ← committed to the repo
-                                                          │
-                                          FastAPI on Cloud Run (read-only, in memory)
-                                                          │
-                                     Expo web export on Firebase Hosting (cfo-ai-1.web.app)
+                                     │                     │
+                                     │              seed.py (per archetype)
+                                     │                     │
+                                     │                  Postgres          ← the system of record
+                                     │                     │
+                                     │      FastAPI (readpath.py, spend.py) — scoped twice
+                                     │                     │
+                                     │            Expo web export
+                                     │
+                              decisions.json  ← committed; the ORACLE, served to nobody
 ```
 
-Postgres sits **beside** that pipeline, not inside it — [3.6]. Nothing to the left of
-`decisions.json` runs in production at all: the artifact is generated on a developer's machine and
-committed, and the service reads it at startup.
+Postgres is **inside** that pipeline now, not beside it — `0024` and `0031`. The same `walk()` feeds
+all three consumers, which is what stops them drifting ([3.6], ticket `0019`).
+
+**What is deployed is the old diagram.** The live revision serves `decisions.json` to one household
+and predates every box above. Nothing has shipped since before `0020`; see [3.6]'s deploy note and
+[`runbooks/deploy.md`](./runbooks/deploy.md), which nothing has run.
 
 Thinnest stack that ships this: **Expo / React Native** with `react-native-web`, exported to
 static web (built) · **FastAPI on Cloud Run** (built; API only — there are no jobs yet) ·
-**Postgres** (built, unwired — [3.6]) · **Cloud Scheduler** (the daily run — **not built**;
-nothing is scheduled, because nothing ingests) · **Clerk** (auth — **not built**; the API takes a
-shared key) · **Secret Manager** (the deploy passes the API keys as `--set-secrets` references;
-Neon's connection string is not yet among them — ticket `0026`) · **Sentry** (**not built**;
+**Postgres** (built and **wired** — [3.6]; Neon, and it has never been seeded) · **Cloud Scheduler**
+(the daily run — **not built**; nothing is scheduled, because nothing ingests) · **Clerk** (auth —
+**not built**; the API takes a shared key) · **Secret Manager** (the deploy passes the API keys as
+`--set-secrets` references; **Neon's connection string is still not among them** — ticket `0026`,
+and it is what stands between the diagram above and the one deployed) · **Sentry** (**not built**;
 it appears nowhere in the tree). Add anything else only when a measured problem demands it.
 
 **The web frontend is an Expo web export, not Next.js.** This line said Next.js from v1 until
