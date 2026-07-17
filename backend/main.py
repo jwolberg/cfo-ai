@@ -67,7 +67,7 @@ from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
 from backend.db.session import assert_plaid_tokens_safe_at_rest, assert_rls_binds, make_engine
 from backend.db.snapshots import PostgresSnapshotStore
-from backend.plaid import link, webhook
+from backend.plaid import link, sync, webhook
 from backend.spend import CardObligations, SpendProjection
 from engine.explain import explain, render
 
@@ -152,6 +152,7 @@ app.add_middleware(
 # logic lives in `backend/plaid/`, not here.
 app.include_router(webhook.router)
 app.include_router(link.router)
+app.include_router(sync.router)
 
 
 # The household id travels in the path and is bound to both scoping layers in one place

@@ -2173,3 +2173,37 @@ The security-critical unit. Decisions and deviations a reviewer should see:
   deploy, if the queue/OIDC are missing — which is why they are named loudly rather than gated.
 
 Full suite: 562 passed, 1 skipped, on Postgres 17.
+
+## 2026-07-17 — U4 (`0037`): the sync worker and the cursored loop
+
+The worker that lands real rows. Decisions worth a human's eye:
+
+- **Failure is atomic; the status flip is a second transaction.** The plan says
+  "last_successful_sync_at untouched on failure" and "status flips". If I flipped status inside the
+  sync transaction, a rollback would undo the flip; if I kept partial inserts, the cursor question
+  gets murky. So the sync transaction is all-or-nothing (a mid-loop error rolls back every insert and
+  leaves the cursor unmoved), and `_flip_status` runs in its own transaction afterward. Clean
+  failure, visible status, no partial page. Verified on the ITEM_LOGIN_REQUIRED path.
+- **The nightly poll enumerates households, not a third definer function.** The poll must reach every
+  item across households, but `plaid_items` is FORCE'd. Rather than add a second SECURITY DEFINER
+  function (ADR-0005 said the two exceptions are the only two), the poll reads the **unscoped
+  `households`** table (it has no RLS — it is the tenant registry, and `GET /households` already
+  reads it unscoped), then lists each household's items under scope. No new tenancy exception.
+- **The FOR UPDATE race guard is proven with real threads, not asserted.** A two-thread test holds
+  the lock through the first sync and shows the second run blocks, then reads the advanced cursor and
+  inserts nothing — 2 rows, not 4. This is the one verification the plan named that a single-threaded
+  test cannot make honestly.
+- **`Decimal(str(amount))`, never `Decimal(float)`.** Plaid's SDK types `amount` as a float; the
+  str-conversion is the only one that keeps the exact cent for the NUMERIC column.
+- **OIDC verification is real but injected.** `verify_google_oidc` validates the Google-issued token
+  against the configured audience and service account; it is a FastAPI dependency so tests stub it,
+  and the no-token path short-circuits to False before any network call.
+- **`response_model=None` on the sync routes.** They return a dict on success and a bare `Response`
+  on 401/400; FastAPI cannot build a response model from `Response | dict`, so the annotation is
+  disabled explicitly.
+- **U5 needs live Plaid Sandbox credentials I do not have.** The hard gate — a real
+  public_token→exchange→sync→fire_webhook→reset_login run — cannot execute without
+  `PLAID_CLIENT_ID`/`PLAID_SECRET`. The transport is proven against a fake client at every seam; U5
+  is what proves it against Plaid itself, and it is the one unit blocked on a credential.
+
+Full suite: 571 passed, 1 skipped, on Postgres 17.

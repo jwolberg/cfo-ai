@@ -11,6 +11,7 @@ from fastapi import Request
 from sqlalchemy.engine import Engine
 
 from backend.plaid.client import plaid_client
+from backend.plaid.oidc import verify_google_oidc
 from backend.plaid.tasks import Enqueuer, enqueue_sync
 
 
@@ -26,3 +27,8 @@ def get_plaid_client():
 def get_enqueuer() -> Enqueuer:
     """The Cloud Tasks enqueuer. Tests override this with a recorder so no queue is touched."""
     return enqueue_sync
+
+
+def get_oidc_verifier():
+    """The Google OIDC verifier gating the sync worker/poll. Tests override it with a stub."""
+    return verify_google_oidc
