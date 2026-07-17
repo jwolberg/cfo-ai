@@ -359,13 +359,13 @@
   <h1>What&rsquo;s built, and what isn&rsquo;t</h1>
   <p class="lede">
     Status as of 17 July 2026. <strong>The core functionality between the bank connection and the
-    payment rail is built and deployed</strong> &mdash; the decision engine, the database, the API,
-    and the app. The harness that measures it &mdash; a grader that scores each decision against what
-    actually happened &mdash; is in place too, though still running only on synthetic data.
+    payment rail is built and deployed</strong>: the decision engine, the database, the API,
+    and the app. The harness that measures it is live as well. This is a grader that scores each decision against what
+    actually happened, though still running only on synthetic data.
     <b>Neither end is built:</b> one is the next problem, the other is deliberately unchosen.
   </p>
   <p class="lede">
-    This is early &mdash; a few days into a large, complex build, and the scope ahead is almost
+    This is a few days into a large, complex build, and the scope ahead is almost
     certainly bigger than what stands today. Read this as real progress on the hard middle, not as a
     finished product.
   </p>
@@ -396,19 +396,21 @@
 <h3 class="subhead">What I built</h3>
 
 <div class="callout go" style="margin-top:0">
-  <p>Built and deployed at <strong></strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
+  <p>Built and deployed at <strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
   Two screens of the customer app and the explain modal, running live against the API and the
-  database. <b>No mechanism for moving real funds is in place</b> &mdash; no Plaid link, no payment
-  rail. Everything below the API is real and runs; everything that would touch an actual bank
+  database. <b>No mechanism for moving real funds is in place</b> ( no Plaid link, no payment
+  rail). Everything below the API is real and runs; everything that would touch an actual bank
   account is not built.</p>
   <p>Codebase: <a href="https://github.com/jwolberg/cfo-ai">github.com/jwolberg/cfo-ai</a>
-  &mdash; private, so the repository links on this page need access.</p>
+  is private, so the repository links on this page need access assigned.</p>
 </div>
 
 <p class="lede" style="margin:1.5rem 0">
-  Seven layers, from the bank connection to the money actually moving. The five in the middle are
-  built and deployed. <b>Both ends are not</b> &mdash; and the reason differs at each end, which is
-  the most important thing on this page.
+  The path from the bank connection to the money actually moving. The core in the middle &mdash;
+  decide, store, serve, and the customer-facing app &mdash; is built and deployed. <b>The ends are
+  not,</b> and the reason differs at each: one is the next problem, the other is deliberately
+  unchosen. Below those, the surfaces a live money-moving service will need &mdash; onboarding and
+  controls, an operator console, and observability &mdash; are scoped here but not yet built.
 </p>
 
 <div class="legend">
@@ -547,6 +549,24 @@
         <p>Decision feed, spending view, explain view, household switcher. A window, not a control
            panel: users read, and cannot change anything.</p>
       </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Onboarding</h3>
+        <p>Sign-up, bank-link flow, and the card-completeness attestation the engine already
+           requires before it will move a dollar.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Settings &amp; controls</h3>
+        <p>The guardrails the engine reads but no screen yet writes: buffer floor, sweep caps,
+           blackout windows, pause, and disconnect.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Native apps</h3>
+        <p>The same source targets iOS and Android; only the web build is deployed. App-store
+           presence and push permissions are their own work.</p>
+      </div>
     </div>
   </div>
 
@@ -571,6 +591,60 @@
         <span class="tag">Not built</span>
         <h3>Notifications</h3>
         <p>Sweep and refusal confirmations.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Admin</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Operator console</h3>
+        <p>Look up a household, read the exact snapshot behind any decision, and pause sweeps for
+           one account or all of them &mdash; a support surface, kept strictly separate from the
+           customer app.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Overrides &amp; the kill switch</h3>
+        <p>A one-switch global halt on all money movement, and per-household caps an operator can
+           tighten &mdash; every action logged to the same append-only record as a decision.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Access &amp; audit</h3>
+        <p>Who may see or touch a household&rsquo;s data, and an immutable log of who did &mdash;
+           the operator half of the identity story the customer side also still needs.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="lane"><div class="arrow"></div></div>
+
+  <div class="lane">
+    <div class="lane-label">Observe</div>
+    <div class="lane-boxes">
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Live calibration</h3>
+        <p>The grader runs offline on synthetic data today. In production it watches every real
+           decision against what actually happened &mdash; the breach rate as a live number, not a
+           batch report.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Alerting &amp; SLOs</h3>
+        <p>Page a human on the things that precede an overdraft: a stale bank connection, a sweep
+           that didn&rsquo;t settle, ingest falling behind, an error-rate spike.</p>
+      </div>
+      <div class="box todo">
+        <span class="tag">Not built</span>
+        <h3>Metrics &amp; tracing</h3>
+        <p>Latency, sync freshness, and per-request traces &mdash; the ordinary operational
+           telemetry a service moving money is expected to keep.</p>
       </div>
     </div>
   </div>
@@ -843,6 +917,9 @@
   <tr><td><b>Ingest</b></td><td><b>Not built.</b> The recurring-event detector is the gating piece.</td></tr>
   <tr><td><b>Identity</b></td><td><b>Not built.</b> Arrives with the bank connection.</td></tr>
   <tr><td><b>Act</b></td><td><b>Not built,</b> and the rail is unchosen on purpose.</td></tr>
+  <tr><td><b>Client (rest)</b></td><td><b>Not built.</b> Onboarding, the bank-link flow, and the settings screens that write the guardrails the engine already reads.</td></tr>
+  <tr><td><b>Admin</b></td><td><b>Not built.</b> An operator console, overrides and a kill switch, access control and audit.</td></tr>
+  <tr><td><b>Observe</b></td><td><b>Not built.</b> Live calibration, alerting on the signals that precede an overdraft, and operational metrics.</td></tr>
 </table>
 </div>
 
