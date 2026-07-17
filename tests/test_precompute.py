@@ -1204,17 +1204,22 @@ class TestTheWalkCarriesAPortfolio:
                 assert b.accrued > ZERO, "card B posted on A's close day"
 
 
-class TestTheArtifactStillCannotServeAPortfolio:
-    """Tickets `0030` and `0031`, and the honest state between them.
+class TestTheArtifactServesAPortfolio:
+    """Tickets `0030`, #50, and `0031` — the same defect through three states.
 
     `0027` refused a multi-card spec at `build()` because `DayRecord` held one debt. `0030` fixed
     that half and lifted the guard — and **that lifted the protection off
     `derive_spend_snapshot`'s `cards[0]` too**, which nobody noticed: a portfolio built cleanly, its
-    `debts` listed every card correctly, and its `spend` surface quietly described one arbitrary
-    one of them.
+    `debts` listed every card correctly, and its `spend` surface quietly described one arbitrary one
+    of them. #50 found that, measured it, and put a `raise` on the field that was still single-card.
+    This class was that guard's test, and it is kept rather than deleted because **the finding is
+    the valuable part** and it is still true of the code's history.
 
-    So the refusal moved down to the field that is actually still single-card, and these tests pin
-    both halves: the days are right, and the artifact as a whole still refuses rather than pretends.
+    `0031` removed the field. `Artifact.spend` is gone (schema 5) — nothing served it once `/spend`
+    moved to Postgres per card — so there is no `cards[0]` left to protect and nothing to refuse.
+    The claim these tests make has to change with it: not *"the artifact refuses to describe a
+    portfolio"* but *"the artifact describes a portfolio, and cannot describe `cards[0]` because it
+    has nowhere to put one."* That is strictly stronger, and it is the assertion below.
     """
 
     def test_the_days_carry_every_card(self) -> None:
@@ -1235,25 +1240,31 @@ class TestTheArtifactStillCannotServeAPortfolio:
                 f"{w.day}: cards share a balance: {w.debt_balances}"
             )
 
-    def test_the_spend_surface_refuses_rather_than_reporting_one_arbitrary_card(self) -> None:
-        """The landmine `0030` armed and `0031` disarms.
+    def test_a_portfolio_builds_and_carries_no_spend_surface_to_get_wrong(self) -> None:
+        """The landmine `0030` armed, #50 measured, and `0031` removed the ground from under.
 
-        Reporting `cards[0]` here would have been `0027`'s bug in its last home — and it would have
-        looked entirely fine: three correct cards in `debts`, one silently wrong surface beside
-        them.
+        This asserted `pytest.raises(ValueError, match="spend surface describes one card")` — #50's
+        guard, correct while the artifact had a single-card `spend` field. The field is gone, so a
+        portfolio builds, its `debts` name every card, and there is no surface to describe
+        `cards[0]` with. A guard is not needed where the hazard has no home.
         """
         spec = TestTheWalkCarriesAPortfolio._two_cards()
 
-        with pytest.raises(ValueError, match="spend surface describes one card"):
-            build(spec=spec)
+        artifact = build(spec=spec)
+
+        assert not hasattr(artifact, "spend"), "schema 5 removed it — see 0031 and readpath.py"
+        assert len(artifact.days) == SERVED_DAYS
+        for record in artifact.days:
+            assert {d.debt_id for d in record.debts} == {c.card_id for c in spec.cards}
 
     def test_the_demo_still_builds(self) -> None:
-        """The only thing `build()` exists for. The seeder walks portfolios into Postgres through
-        `walk()` and never comes here."""
+        """The only thing `build()` exists for now: the golden fixture archetype A's decisions are
+        checked against. The seeder walks portfolios into Postgres through `walk()` and never comes
+        here."""
         artifact = build()
 
         assert len(artifact.days) == SERVED_DAYS
-        assert artifact.spend is not None
+        assert artifact.version == art.SCHEMA_VERSION == 5
 
 
 class TestTheArtifactRecordsWhatTheEngineSaw:

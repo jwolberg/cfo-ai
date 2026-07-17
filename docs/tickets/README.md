@@ -212,12 +212,11 @@ nearly the third, and `0022` is scoped to the smaller claim.
 
 **522 Python tests, 66 mobile tests, ruff clean**, against a real Postgres.
 
-> ⚠️ **`main` is not deployable, and has not been since `0020`.** `0031` found it:
-> `backend/requirements.txt` — the list Cloud Run installs — carried no database driver, while
-> `main.py` has imported SQLAlchemy at module load since `0024`. CI installs a *different* list
-> (`pyproject.toml`'s `[api]` extra) and is green. The manifest is fixed; the deploy still needs
-> `DATABASE_URL` wired, which is `0026`'s unfinished half. See
-> [`0033`](0033-the-deployed-image-cannot-start.md) — **read it before touching the deploy path.**
+> ⚠️ **Nothing has deployed since `0020`, and the live demo is eleven tickets stale.** PR #50 fixed
+> the manifest that made the container unable to start (`tests/test_requirements.py` now guards it).
+> The deploy still needs `DATABASE_URL` wired, Neon migrated to `0004`, and Neon **seeded** — it
+> never has been. That is `0026`'s unfinished half; the procedure is
+> [`runbooks/deploy.md`](../runbooks/deploy.md), and **nothing in it has been run**.
 
 `backend/data/decisions.json` is at **schema 5** and serves nothing: `0031` moved `/spend`, the last
 route reading it, so the file is now purely the golden fixture for archetype A's decisions.

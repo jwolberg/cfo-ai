@@ -89,11 +89,26 @@ _SCOPED_AT_0001 = ("accounts", "cards", "policies", "decisions", "snapshots")
 - [x] `alembic upgrade head` from an empty database reaches `0004`.
 - [x] Mutation-tested: restoring the import reproduces the failure.
 
-## Follow-up worth considering
+## Follow-up worth considering — and there is precedent now
 
 **Nothing enforces this rule.** A future migration can import the constant again and it will pass
-every test, for the same reason this one did — until the constant next moves. A CI job that
-migrates a **fresh** database from zero to head would catch the whole class, and it is the check
-this repo does not have: `tests/test_schema.py` asserts the schema is *right*, never that it is
-*reachable from nothing*. Worth a ticket if a third instance of this shows up; not worth building
-on n=1, which is `architecture.md` [1.2]'s own rule about seams designed from a single case.
+every test, for the same reason this one did — until the constant next moves. A CI job that migrates
+a **fresh** database from zero to head would catch the whole class, and it is the check this repo
+does not have: `tests/test_schema.py` asserts the schema is *right*, never that it is *reachable
+from nothing*.
+
+**This is the second instance of one shape, not the first.** PR #50 found the same thing wearing
+different clothes: `backend/requirements.txt` and `pyproject.toml`'s `[api]` extra are two lists of
+the same fact, nothing compared them, and they disagreed for eleven tickets while CI stayed green.
+Here it is `_SCOPED_AT_0001` and `HOUSEHOLD_SCOPED`. **Two sources of truth, no comparison, green
+tests** — and in both cases the only environment that could see it was the one nobody runs (a fresh
+database; the deploy).
+
+#50 answered its instance with `tests/test_requirements.py` rather than by waiting for a third. That
+is the precedent: an equivalent check here is a CI job that runs `alembic upgrade head` against an
+empty database. `0020` already gives CI a `postgres:16` service container, so the cost is one job
+that creates a database and migrates it — which would also, for free, be the first thing in this
+repo to prove the migrations are runnable from scratch at all.
+
+Not built here: this ticket's fix is one literal, and adding a CI job to a branch that is already
+reopening a merged ticket is scope this does not need. Filed as the follow-up rather than the work.

@@ -1686,65 +1686,72 @@ application constant states what must be scoped *now* (which is what `test_schem
   table, its migration's `downgrade`, and `_assert_migrated`'s mention of it all go — and
   `derive_spend_projection` becomes a query. That is the whole of the debt this ticket took on.
 
-### Caught before it shipped — the deploy has been broken for eleven tickets
 
-Found while updating `architecture.md`, which described the symptom accurately and drew the opposite
-conclusion from it.
+## 2026-07-16 — `0031` rebased: `main` had already answered it, the other way
 
-`backend/requirements.txt` is what Cloud Run's buildpack installs, and it carried `fastapi`,
-`uvicorn`, `anthropic` and **no database driver**. `backend/main.py` has imported SQLAlchemy at
-module load since `0024`. The container `ImportError`s on boot — not a 500 on a route, the process
-does not start.
+**A parallel session shipped `0031` while this one was building it** (PR #50, merged as `cbe6513`),
+with the opposite resolution — `status: blocked`, *"waits for the `transactions` table, and does not
+fake one"*. This branch was rebased onto it and reopens the ticket. `0031` carries the argument; the
+notes worth keeping are about how it was found and what it cost.
 
-**Two dependency lists, and nothing compares them.** CI runs `pip install -e ".[dev]"`, which pulls
-`pyproject.toml`'s `[api]` extra — correct since `0020`. The list that is wrong is only exercised by
-a manual `gcloud run deploy`, and `0026` (the deploy path) is half done, so nothing has deployed
-since the driver became necessary. `git log` on the file: last touched by ticket **`0004`**.
+### The memory was right and I overrode it
 
-`architecture.md` said *"the deployed image contains no database driver at all"* and called it
-**deliberate and safe**. It was — exactly as long as `db/` had a writer and no reader. `0024` made
-it fatal and the sentence stayed true, which is a hard thing to notice in a doc that reads as though
-it still applies.
+Auto-memory said *"`0019` spawned `0032`"* and *"the read path was the first thing to import
+SQLAlchemy into `main.py` and revealed the deploy manifest never listed it."* Neither was at `main`,
+so I concluded the note had drifted and **edited it to say so**. It had not drifted — it was
+describing #50, which had not merged yet. The note has been restored with a warning: **a memory that
+disagrees with `main` may be describing a branch, not an error.** `git fetch` before starting a
+ticket here; work runs in parallel sessions.
 
-Fixed the manifest here, because `main.py`'s imports are a fact about this module graph regardless
-of who owns the deploy. **That makes the container import; it does not make the deploy work** —
-`DATABASE_URL` still has to reach it. Filed as [`0033`](tickets/0033-the-deployed-image-cannot-start.md)
-with the check that would have caught it (make `requirements.txt` derive from the extra, so there is
-one list — or a CI job that installs it alone and imports `backend.main`, which would have failed
-the day `0024` merged, in the four seconds an import takes).
+The cost was a full ticket of duplicated effort, including independently rediscovering the deploy
+manifest defect that the memory had already recorded.
 
-`USERS.md` says the deployed demo **is** the product surface, so this is worth being blunt about:
-`main` is not deployable, and it has not been for eleven tickets.
+### What was taken from #50 rather than kept
 
----
+- **`backend/requirements.txt` and `tests/test_requirements.py`** — theirs, whole. Their test walks
+  the imports from the AST and checks both directions (declared-and-never-imported flagged `uvicorn`
+  and `psycopg`, both kept with reasons). Strictly better than the CI job this branch had written,
+  which was deleted.
+- **And it corrected a mistake here.** This branch's manifest fix added `alembic`, justified by "the
+  deploy migrates from the image". Its own runbook migrates from a *developer's machine*. #50's list
+  — no alembic — is right.
+- **No `transactions` table.** #50's sharpest argument, and untouched: `sim`'s `Txn` has none of
+  [4]'s `pending_transaction_id` / `reconciled_with` / `internal_transfer_pair`, and a table with
+  the designed name and none of the hard parts leaves ingest reconciling with a fake.
 
-## 2026-07-16 — Ticket `0033`, the deploy: the check, and the prep
+### The one thing a silent auto-merge nearly shipped
 
-Follow-on from `0031`. Two decisions taken, one deliberately not.
+`git` merged #50's multi-card `raise` guard **into the body of `derive_spend_projection`** — the
+function written to serve portfolios — with no conflict marker, because it landed in a region this
+branch had not textually touched. It would have rejected every household with more than one card:
+three of the four archetypes, i.e. the entire point of the ticket. Caught by reading the merged
+function rather than by trusting the conflict list, and the tests would have caught it after.
 
-### The prevention check: a CI job, not one list
+Worth remembering that `git merge-tree`'s old two-arg form reported **0 conflicts** for this rebase.
+The `--write-tree` form reported five. The first number was the one I checked first.
 
-CI now has a **`deployable`** job that installs `backend/requirements.txt` **alone** into a clean
-environment and runs `python -c "import backend.main"`.
+## 2026-07-16 — Ticket `0033`, the deploy prep (was `0032`, renumbered)
 
-**It has to be its own job.** `quality` has already installed `pyproject.toml`'s `[api]` extra, so
-the same two lines as a *step* there would pass regardless of what the deploy manifest says — which
-is exactly the bug (`0033`: the two lists disagreed from `0020` to `0031` and CI was green
-throughout). A clean environment is the only thing that tests the claim.
+Renumbered: #50 filed a different `0032` (`generate()` is not prefix-stable) first.
 
-Mutation-tested in a throwaway venv before it was written:
+### The prevention check: #50's, not this branch's
 
-```
-old manifest (fastapi, uvicorn):   ModuleNotFoundError: No module named 'sqlalchemy'
-fixed manifest:                    OK: backend.main imported
-```
+This branch wrote a CI `deployable` job — install `backend/requirements.txt` alone into a clean
+venv, `python -c "import backend.main"` — mutation-tested both ways before it was written. **It was
+deleted on the rebase.** #50's `tests/test_requirements.py` does the job better: it walks the
+imports from the AST rather than a hand-kept list, checks both directions, and names `uvicorn` and
+`psycopg` in `NOT_IMPORTED` with reasons so a future cleanup cannot delete the process that runs the
+app or the driver that reaches the database.
 
-**The stronger fix was considered and declined.** Collapsing to one list (`requirements.txt` →
-`.[api]`) removes the class rather than detecting it. But it changes how Cloud Run's buildpack
-installs the app, and that is untestable anywhere but a real deploy — so it would mean changing the
-install semantics of the one thing already known to be broken and finding out at the worst moment.
-Worth doing once a deploy has succeeded and there is a known-good baseline. The `deployable` job
-makes that attempt safe when it happens, which is a reason to have it either way.
+One claim the deleted job made that the AST test does not: it *installed* the manifest, so it would
+also catch an unsatisfiable pin or a missing transitive dependency. Neither is worth a second CI job
+today; noted on `0033` as a follow-up if a third instance of this class shows up.
+
+**The stronger fix, considered and declined twice** — collapsing to one list (`requirements.txt` →
+`.[api]`) removes the class rather than detecting it. It changes how Cloud Run's buildpack installs
+the app, and that is untestable anywhere but a real deploy: it would mean changing the install
+semantics of the one thing already known to be broken and finding out at the worst moment. Worth
+doing once a deploy has succeeded and there is a known-good baseline.
 
 ### The deploy: prepped to the edge of live infrastructure, and stopped there
 

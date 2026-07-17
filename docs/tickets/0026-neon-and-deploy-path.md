@@ -98,9 +98,12 @@ is already spent.
 `0031` made the database non-optional for every route, so it inherited this ticket's blast radius.
 What it did, and deliberately did not do:
 
-- **`backend/requirements.txt` now has the driver.** It never did, so `main` could not deploy at
-  all — see [`0033`](0033-the-deployed-image-cannot-start.md). CI's new `deployable` job installs
-  that manifest **alone** and imports `backend.main`, mutation-tested both ways.
+- **The manifest is not this branch's fix.** PR #50 found and fixed it — `requirements.txt` had no
+  database driver while `main.py` has imported SQLAlchemy since `0024` — and added
+  `tests/test_requirements.py`, which walks the imports from the AST. This branch takes both
+  unchanged. (An earlier draft of this branch fixed it independently and added `alembic` to the
+  manifest, justified by "the deploy migrates from the image". That was wrong: `[2]` below migrates
+  from a developer's machine. #50's list is correct.)
 - **[`docs/runbooks/deploy.md`](../runbooks/deploy.md) is written** — `0009`'s graduation plus this
   ticket's database steps, placeholders only, no secrets.
 - **Not done, by choice:** no gcloud auth used, no secret created, no Neon write, no deploy. The

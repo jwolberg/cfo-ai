@@ -36,10 +36,12 @@ dependency on Postgres, and the mobile client on `main` calls routes the live re
 have. `/health` does not exist on the live revision either (`DEPLOY.local.md` §11) — this deploy is
 the first one where Cloud Run's probe has something to hit.
 
-`main` could not deploy at all until ticket `0033`: `backend/requirements.txt` carried no database
-driver while `backend/main.py` has imported SQLAlchemy since `0024`. That is fixed, and CI's
-`deployable` job now installs that manifest alone and imports the serving path, so it cannot rot
-again. **It has still never been built into an image.**
+`main` could not deploy at all until PR #50: `backend/requirements.txt` carried no database driver
+while `backend/main.py` has imported SQLAlchemy since `0024`, so the container failed at import
+before the first request while 496 tests passed. That is fixed, and `tests/test_requirements.py`
+now walks the imports from the AST and asserts the manifest agrees, so it cannot rot again.
+**It has still never been built into an image** — that check runs on a GitHub runner, and "the
+manifest imports" and "a buildpack produces a container that starts" are different claims.
 
 ---
 
@@ -185,7 +187,7 @@ gcloud run services logs read "$SERVICE" --project "$PROJECT_ID" --region "$REGI
 |---|---|
 | `RlsWouldNotBind` | you used the owner string in `[4]`, not `cfo_runtime` |
 | `the database has no readable ...` | `[2]` did not run, or ran against the wrong branch |
-| `ModuleNotFoundError` | `backend/requirements.txt` drifted from `[api]` again — ticket `0033` |
+| `ModuleNotFoundError` | `backend/requirements.txt` drifted from the imports — `tests/test_requirements.py` should have caught it |
 | `RESFI_API_KEY` / `ANTHROPIC_API_KEY` | the secret is missing or the binding is not granted |
 
 ## [6] Verify
