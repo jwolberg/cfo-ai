@@ -2,6 +2,17 @@
 #
 # `engine/` and `sim/` have none by design — the decision engine is pure Python and stays
 # that way. Everything here is the web layer around it.
+#
+# **This file is the deploy, and nothing else checks it.** The buildpack installs exactly these;
+# the venv and CI both install `pyproject.toml`'s `[api]` extra instead, which is a superset. So a
+# module the service imports and this file omits is invisible to every test and fatal in
+# production — which is what happened: ticket `0024` moved the read path onto Postgres and
+# `backend/main.py` began importing SQLAlchemy, while this file still listed three packages. The
+# container would have failed at import, before the first request, with `No module named
+# 'sqlalchemy'`.
+#
+# `tests/test_requirements.py` now asserts the two agree. Add a runtime import here or it does not
+# ship.
 fastapi>=0.115,<1.0
 uvicorn[standard]>=0.30,<1.0
 
@@ -9,3 +20,12 @@ uvicorn[standard]>=0.30,<1.0
 # dashboard and the base narration never touch it, so an Anthropic outage cannot take
 # the product's main surface down with it.
 anthropic>=0.40,<1.0
+
+# Postgres. The service reads every household through these (ticket `0024`) — the repository, the
+# RLS-scoped session, and the snapshot store.
+#
+# Core, never the ORM: `backend/db/models.py` is `Table` definitions and the queries are written
+# out. `psycopg` is the driver `DATABASE_URL`'s `postgresql+psycopg://` names, and a missing driver
+# is the same startup failure as a missing library, one layer down.
+sqlalchemy>=2.0,<2.1
+psycopg[binary]>=3.1,<4.0

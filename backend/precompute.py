@@ -1064,11 +1064,18 @@ def build(
     A thin wrapper over `walk()`. Everything below the `for` is artifact assembly — the shape
     the dashboard reads — and nothing in it decides anything.
 
-    **It serves a portfolio now.** This raised on a multi-card spec from ticket `0027` until `0030`,
-    and the guard was right for as long as it stood: `DayRecord` carried one `debt_balance`, one
-    `debt_apr`, one `debt_id`, so the only ways to serve a portfolio were to report `cards[0]` — the
-    bug `0027` fixed one function up — or to refuse. It refused. `0030` gave `DayRecord` the tuple
-    the walk has carried since `0027`, so the guard has nothing left to protect.
+    **Still single-card — but for one honest reason now instead of two.** `0027` refused a
+    multi-card spec here because `DayRecord` carried one `debt_balance`, one `debt_apr`, one
+    `debt_id`. `0030` gave it the tuple the walk has carried all along, and that half is fixed: the
+    days come out right, each card with its own balance and its own rate.
+
+    What `0030` also did, and did not notice, was disarm the guard that was protecting
+    `derive_spend_snapshot`'s `cards[0]` — so a portfolio built cleanly and its `spend` surface
+    quietly described one arbitrary card. The refusal now lives down there, on the field that is
+    actually still single-card, and this raises through it. Ticket `0031`.
+
+    The demo builds fine, which is the only thing this function exists for: the seeder walks
+    portfolios through `walk()` and writes them to Postgres, and it never comes here.
     """
     total_days = warmup_days + served_days
     history = generate(spec, start=start, days=total_days, seed=seed)
@@ -1148,7 +1155,27 @@ def derive_spend_snapshot(
     `engine/outcome.py` cannot yet produce (U8). The panel ships a release *before* it is trusted
     with a decision, deliberately: it earns its way into the forecast having already been looked
     at by real households.
+
+    **Single-card, and it refuses rather than pretends.** `SpendSnapshot` describes one statement,
+    one unbilled balance, and one cycle's charges against payments. A portfolio has several of
+    each, and this function's own `cards[0]` would report an arbitrary one of them as "your card" —
+    which is `0027`'s bug exactly, in the last place it still lives (ticket `0031`).
+
+    **This guard is a replacement, not an addition.** `build()` refused every multi-card spec until
+    `0030`, and that refusal was quietly protecting this line too. `0030` gave `DayRecord` the
+    portfolio it needed and lifted the guard — and `build(archetype_b)` then produced an artifact
+    whose `debts` listed three cards correctly and whose `spend` silently described `cards[0]`. So
+    the guard comes back one function lower, where the actual limitation is, and says what it
+    actually is.
     """
+    if len(portfolio.cards) > 1:
+        raise ValueError(
+            f"the spend surface describes one card and this household has {len(portfolio.cards)}. "
+            f"Reporting cards[0] as 'your card' is ticket 0027's bug in its last home — see 0031, "
+            f"which waits for the transactions table ingest will build (architecture.md [3.1]) "
+            f"rather than storing a guess of this surface now."
+        )
+
     profile = derive_spend_profile(history, today)
     card = portfolio.cards[0] if portfolio.cards else None
 

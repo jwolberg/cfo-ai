@@ -1114,53 +1114,56 @@ class TestTheWalkCarriesAPortfolio:
                 assert b.accrued > ZERO, "card B posted on A's close day"
 
 
-class TestBuildServesAPortfolio:
-    """Ticket `0030`. `build()` raised on a multi-card spec from `0027` until `DayRecord` grew the
-    tuple the walk had carried all along.
+class TestTheArtifactStillCannotServeAPortfolio:
+    """Tickets `0030` and `0031`, and the honest state between them.
 
-    The guard was right for as long as it stood — the only alternatives were reporting `cards[0]`,
-    which is the bug `0027` fixed one function up, or refusing. It refused. These tests are what
-    replaces it, and they check the thing the guard was standing in for: that a portfolio arrives
-    whole, each card with its own balance and its own rate.
+    `0027` refused a multi-card spec at `build()` because `DayRecord` held one debt. `0030` fixed
+    that half and lifted the guard — and **that lifted the protection off
+    `derive_spend_snapshot`'s `cards[0]` too**, which nobody noticed: a portfolio built cleanly, its
+    `debts` listed every card correctly, and its `spend` surface quietly described one arbitrary
+    one of them.
+
+    So the refusal moved down to the field that is actually still single-card, and these tests pin
+    both halves: the days are right, and the artifact as a whole still refuses rather than pretends.
     """
 
-    def test_a_multi_card_spec_is_served_rather_than_refused(self) -> None:
+    def test_the_days_carry_every_card(self) -> None:
+        """`0030`'s half. Proved through `walk()`, because `build()` correctly will not finish.
+
+        Asserted on the walk's own output rather than through `_debts_of`: that helper is what
+        `build()` reads these from, and a test that reached past the public surface to call it
+        would be checking the plumbing instead of the claim.
+        """
         spec = TestTheWalkCarriesAPortfolio._two_cards()
-        artifact = build(spec=spec)
+        total = WARMUP_DAYS + SERVED_DAYS
+        history = generate(spec, start=WINDOW_START, days=total, seed=SEED)
 
-        assert artifact.days
-        for record in artifact.days:
-            assert len(record.debts) == 2, f"{record.day}: a card went missing"
+        for w in walk(history, spec, WINDOW_START, total):
+            cards = {c.card_id for c in w.snapshot.portfolio.cards}
+            assert cards == {c.card_id for c in spec.cards}, f"{w.day}: a card went missing"
+            assert len(set(w.debt_balances.values())) == 2, (
+                f"{w.day}: cards share a balance: {w.debt_balances}"
+            )
 
-    def test_each_card_carries_its_own_balance(self) -> None:
-        """0027 one level up: one ledger for a portfolio reported a $3,000 card's balance as
-        $14,009.20. Two cards reporting one balance is that bug arriving in the artifact."""
+    def test_the_spend_surface_refuses_rather_than_reporting_one_arbitrary_card(self) -> None:
+        """The landmine `0030` armed and `0031` disarms.
+
+        Reporting `cards[0]` here would have been `0027`'s bug in its last home — and it would have
+        looked entirely fine: three correct cards in `debts`, one silently wrong surface beside
+        them.
+        """
         spec = TestTheWalkCarriesAPortfolio._two_cards()
-        artifact = build(spec=spec)
 
-        record = artifact.days[0]
-        balances = {d.debt_id: d.balance for d in record.debts}
-        assert len(set(balances.values())) == 2, f"cards share a balance: {balances}"
+        with pytest.raises(ValueError, match="spend surface describes one card"):
+            build(spec=spec)
 
-    def test_the_portfolio_total_is_the_sum_of_its_cards(self) -> None:
-        spec = TestTheWalkCarriesAPortfolio._two_cards()
-        artifact = build(spec=spec)
+    def test_the_demo_still_builds(self) -> None:
+        """The only thing `build()` exists for. The seeder walks portfolios into Postgres through
+        `walk()` and never comes here."""
+        artifact = build()
 
-        for record in artifact.days:
-            assert record.debt_balance == sum(d.balance for d in record.debts)
-
-    def test_the_summary_targets_a_card_the_engine_actually_chose(self) -> None:
-        """Never `max(apr)`. `_select_target` ranks only among cards it is honest to sweep to, so
-        re-deriving the target from the rates alone would pick a transactor the engine refuses."""
-        spec = TestTheWalkCarriesAPortfolio._two_cards()
-        artifact = build(spec=spec)
-
-        targeted = artifact.summary.targeted_debt_id
-        if targeted is None:
-            pytest.skip("this household never swept, so there is no target to check")
-
-        chosen = {d.decision.target_debt_id for d in artifact.days if d.decision.target_debt_id}
-        assert targeted in chosen, "the summary targets a card no decision ever aimed at"
+        assert len(artifact.days) == SERVED_DAYS
+        assert artifact.spend is not None
 
 
 class TestTheArtifactRecordsWhatTheEngineSaw:

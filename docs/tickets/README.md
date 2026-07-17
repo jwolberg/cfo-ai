@@ -151,7 +151,7 @@ defects instead — see below.
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
 | [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
 | [0030](0030-dayrecord-carries-a-portfolio.md) | `DayRecord` carries a portfolio *(the decision 0027 deferred)* | backend-python-agent | 0023, 0027, 0028 | **done** |
-| [0031](0031-the-spend-surface-per-household.md) | The spend surface, per household — and for a portfolio *(split from 0024)* | backend-python-agent | 0023, 0024, 0030 | open — the last route reading the file |
+| [0031](0031-the-spend-surface-per-household.md) | The spend surface, per household *(split from 0024)* | backend-python-agent | 0023, 0024, 0030 | **blocked on ingest [3.1]** — decided, not deferred |
 
 ## Three things to know before picking one of these up
 
