@@ -44,6 +44,8 @@ type State =
   | { status: 'failed'; kind: ApiError['kind'] };
 
 interface Props {
+  /** Which household's feed. Owned by `App.tsx` — see its note on why this is not local state. */
+  householdId: string;
   onExplain: (decision: Decision) => void;
 }
 
@@ -64,7 +66,7 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
-export function Dashboard({ onExplain }: Props) {
+export function Dashboard({ householdId, onExplain }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
 
@@ -87,9 +89,12 @@ export function Dashboard({ onExplain }: Props) {
   }, []);
 
   const load = useCallback(async () => {
+    // Back to `loading` first, on every household. The alternative is holding the previous
+    // household's feed on screen while the next one is in flight, which is the stale-data bug
+    // 0025 exists to avoid — and it is worse than a spinner precisely because it looks fine.
     setState({ status: 'loading' });
     try {
-      setState({ status: 'ready', data: await getDecisions() });
+      setState({ status: 'ready', data: await getDecisions(householdId) });
     } catch (error) {
       // The timeout lives in the client, not here (`REQUEST_TIMEOUT_MS`), so there is no
       // path to a spinner that spins forever — the request always resolves one way or the
@@ -97,7 +102,7 @@ export function Dashboard({ onExplain }: Props) {
       const kind = error instanceof ApiError ? error.kind : 'network';
       setState({ status: 'failed', kind });
     }
-  }, []);
+  }, [householdId]);
 
   useEffect(() => {
     void load();

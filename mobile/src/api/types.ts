@@ -15,6 +15,26 @@ export type Money = string;
 /** ISO `YYYY-MM-DD`. The demo's dates are calendar facts, not timestamps. */
 export type IsoDate = string;
 
+/**
+ * One household the demo can be switched to.
+ *
+ * **Not a customer-facing concept.** A customer has one household and it is theirs; the switcher
+ * exists for the reviewer `USERS.md` describes, so that the four archetypes can be compared. The
+ * label is written server-side (`backend/readpath.py`) because it is copy, and copy the client
+ * invented would be a second place the product's words live.
+ */
+export interface Household {
+  id: string;
+  /** Null for a real household — synthetic and real must be tellable apart. */
+  archetype: string | null;
+  /** What makes this household different, in words. Never "Household B".  */
+  label: string;
+}
+
+export interface HouseholdsResponse {
+  households: Household[];
+}
+
 /** The engine has exactly two actions. "Paid off" is a refusal carrying `no_debt`. */
 export type Action = 'sweep' | 'refuse';
 

@@ -40,6 +40,13 @@ import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, shadow, space, type } fro
 
 interface Props {
   decision: Decision | null;
+  /** Whose decision this is. Owned by `App.tsx`; the modal never guesses.
+   *
+   *  Ticket 0025's sharpest acceptance criterion: asking "why not last Tuesday?" about household C
+   *  must not answer about household A. Both the narration and the assistant carry this, so the
+   *  backend loads *that* household's window and hands the model nothing else — the model cannot
+   *  cite another household's figure, rather than being asked not to. */
+  householdId: string;
   onClose: () => void;
 }
 
@@ -48,7 +55,7 @@ type Narration =
   | { status: 'ready'; sentences: string[] }
   | { status: 'failed' };
 
-export function ExplainModal({ decision, onClose }: Props) {
+export function ExplainModal({ decision, householdId, onClose }: Props) {
   const [narration, setNarration] = useState<Narration>({ status: 'loading' });
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState('');
@@ -68,14 +75,16 @@ export function ExplainModal({ decision, onClose }: Props) {
     setThinking(false);
 
     let live = true;
-    getExplanation(date)
+    getExplanation(date, householdId)
       .then((body) => live && setNarration({ status: 'ready', sentences: body.narration }))
       .catch(() => live && setNarration({ status: 'failed' }));
 
     return () => {
       live = false;
     };
-  }, [date]);
+    // `householdId` is a dependency and not decoration: the same date exists in every household,
+    // so a stale narration here would be a real, plausible, wrong answer rather than a blank.
+  }, [date, householdId]);
 
   if (!decision) return null;
 
@@ -89,7 +98,7 @@ export function ExplainModal({ decision, onClose }: Props) {
     setThinking(true);
 
     try {
-      const { reply } = await askAssistant(question, history);
+      const { reply } = await askAssistant(question, history, householdId);
       setTurns((current) => [...current, { role: 'assistant', content: reply }]);
     } catch (error) {
       // A failed turn is an inline bubble, not a closed modal and not a fabricated answer.

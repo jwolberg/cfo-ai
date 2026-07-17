@@ -145,7 +145,7 @@ defects instead — see below.
 | [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 | **done** (#44) |
 | [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022, 0027, 0028 | **done** |
 | [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | **done** (`/spend` split to 0031) |
-| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | open |
+| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | **done** (Spending tab awaits 0031) |
 | [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |

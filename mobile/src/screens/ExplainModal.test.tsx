@@ -8,7 +8,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
-import { ApiError } from '../api/client';
+import { DEMO_HOUSEHOLD, ApiError } from '../api/client';
 import type { Decision } from '../api/types';
 import { ExplainModal } from './ExplainModal';
 
@@ -54,7 +54,7 @@ beforeEach(() => {
 
 describe('opening a decision', () => {
   it('shows the engine’s own words and calls no model at all', async () => {
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
     expect(screen.getByText(NARRATION.narration[1])).toBeTruthy();
@@ -62,7 +62,7 @@ describe('opening a decision', () => {
   });
 
   it('renders nothing when no decision is selected', async () => {
-    await render(<ExplainModal decision={null} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={null} onClose={jest.fn()} />);
 
     expect(screen.queryByText(/paid/i)).toBeNull();
     expect(getExplanation).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe('opening a decision', () => {
   it('a failed narration fetch does not strand the user', async () => {
     getExplanation.mockRejectedValue(new ApiError('timeout', 'slow'));
 
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText(/couldn't load the explanation/i)).toBeTruthy());
     expect(screen.getByText(/nothing has happened to your money/i)).toBeTruthy();
@@ -79,7 +79,7 @@ describe('opening a decision', () => {
 
   it('closes back to the dashboard', async () => {
     const onClose = jest.fn();
-    await render(<ExplainModal decision={SWEEP} onClose={onClose} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={onClose} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.press(screen.getByLabelText('Close'));
@@ -92,14 +92,16 @@ describe('a follow-up question', () => {
   it('sends it and renders the reply', async () => {
     askAssistant.mockResolvedValue({ reply: 'We paid $400.00 that day.', outcome: 'answered' });
 
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.changeText(screen.getByLabelText('Ask a follow-up question'), 'why that much?');
     await fireEvent.press(screen.getByLabelText('Send'));
 
     await waitFor(() => expect(screen.getByText('We paid $400.00 that day.')).toBeTruthy());
-    expect(askAssistant).toHaveBeenCalledWith('why that much?', []);
+    // The household travels with every question (ticket 0025): asking about household C must not
+    // be answered from household A's decisions.
+    expect(askAssistant).toHaveBeenCalledWith('why that much?', [], DEMO_HOUSEHOLD);
   });
 
   it('shows a thinking state while the turn is in flight', async () => {
@@ -109,7 +111,7 @@ describe('a follow-up question', () => {
     let finish!: (value: unknown) => void;
     askAssistant.mockReturnValue(new Promise((resolve) => (finish = resolve)));
 
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.changeText(screen.getByLabelText('Ask a follow-up question'), 'why?');
@@ -128,7 +130,7 @@ describe('a follow-up question', () => {
   it('a failed turn is a bubble, not a crash — and the input comes back', async () => {
     askAssistant.mockRejectedValue(new ApiError('network', 'down'));
 
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.changeText(screen.getByLabelText('Ask a follow-up question'), 'why?');
@@ -143,7 +145,7 @@ describe('a follow-up question', () => {
     // There is no server-side session — the client holds the conversation and resends it.
     askAssistant.mockResolvedValue({ reply: 'First answer.', outcome: 'answered' });
 
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.changeText(screen.getByLabelText('Ask a follow-up question'), 'first?');
@@ -155,15 +157,19 @@ describe('a follow-up question', () => {
     await fireEvent.press(screen.getByLabelText('Send'));
 
     await waitFor(() =>
-      expect(askAssistant).toHaveBeenLastCalledWith('second?', [
-        { role: 'user', content: 'first?' },
-        { role: 'assistant', content: 'First answer.' },
-      ]),
+      expect(askAssistant).toHaveBeenLastCalledWith(
+        'second?',
+        [
+          { role: 'user', content: 'first?' },
+          { role: 'assistant', content: 'First answer.' },
+        ],
+        DEMO_HOUSEHOLD,
+      ),
     );
   });
 
   it('an empty question is not sent', async () => {
-    await render(<ExplainModal decision={SWEEP} onClose={jest.fn()} />);
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
     await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
 
     await fireEvent.press(screen.getByLabelText('Send'));

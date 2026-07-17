@@ -27,6 +27,7 @@ import type {
   AssistantResponse,
   DecisionsResponse,
   ExplainResponse,
+  HouseholdsResponse,
   IsoDate,
   SpendResponse,
   Turn,
@@ -129,6 +130,15 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
  * The demo's own household, by the id `backend/seed.py` derives from the archetype name.
  */
 export const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
+
+/**
+ * Every household this demo can show, with a label a human can pick between.
+ *
+ * The only call with no household in it, because it is the one you make before you have one.
+ */
+export function getHouseholds(): Promise<HouseholdsResponse> {
+  return request<HouseholdsResponse>('/households');
+}
 
 /** The served window: the feed (newest first) and the summary stats above it. */
 export function getDecisions(householdId: string = DEMO_HOUSEHOLD): Promise<DecisionsResponse> {

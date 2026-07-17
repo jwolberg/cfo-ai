@@ -1506,3 +1506,81 @@ says **nothing** about what it saved.
 - **`build()` still can't serve a portfolio**, so B/C/D exist only in Postgres. That is fine while
   `0024` is unstarted and the artifact serves the demo, and it is a decision `0024` inherits: the
   read path either serves one card per household or `DayRecord` grows.
+
+---
+
+## 2026-07-17 — `0030`, `0024`, `0025`: the read path, and the answer key in the artifact
+
+`0023` landed (#48). Three tickets since, and the pattern held twice more.
+
+### The artifact was reporting a rate the engine never saw
+
+`build()` read `debt_apr=spec.card.apr`, and `spec` is `sim/` — the ground truth the engine is
+**not allowed to see**. On a card whose issuer does not report a rate the engine decides against an
+estimated 23% while the spec knows the real 23.99%, and the artifact recorded the 23.99%: `0028`
+inverted, a guess quietly upgraded to a fact on its way to the dashboard.
+
+Invisible because `DEMO_SPEC` reports its rate (so the two agreed), `build()` raised on the
+multi-card households where they would not, and neither `debt_apr` nor `targeted_debt_apr` crossed
+the wire. **The user's own request — report balance and APR per card — is what exposed it.** Every
+field in `DayRecord.debts` now comes from `w.snapshot.portfolio.cards`.
+
+### Regenerating the artifact without destroying the evidence
+
+Schema 3 → 4, so `decisions.json` changed bytes, and `0019`'s rule stands: *"regenerating the
+committed artifact to match new output deletes the only evidence the refactor preserved behavior."*
+
+So the evidence moved. The v3 file's decisions were hashed **before** the schema changed
+(`sha256 d6d560c0…`) and the v4 file checked against it: 90/90 days, every action, amount, target
+and reason identical. **The in-repo byte-identical test cannot prove this** — regenerating moves
+both sides of it — which is exactly why the baseline was captured out of the tree. Worth
+remembering the next time a schema moves.
+
+### `/spend` split out rather than rushed (`0031`)
+
+`0024`'s ticket listed `GET /households/{id}/spend`. It has two unsolved problems: its figures come
+from the whole transaction `History` and there is **no `transactions` table** until ingest lands,
+*and* `derive_spend_snapshot` reads `portfolio.cards[0]` — the same defect `0027` and `0030`
+removed from the walk and the artifact, in its last home. Shipping it meant storing a `cards[0]`
+surface into Postgres. Split, on the same reasoning that made `0030` its own ticket.
+
+The consequence lands on `0025`: its AC *"the Spending screen follows the switch"* cannot fully
+close. It follows as far as **refusing to show the household you left** — which is the failure that
+AC actually names ("a bug that looks like working software") — and says so for the other three.
+Mutation-tested: reintroduce `servable = true` and the test fails.
+
+### Decisions
+
+- **`SnapshotStore` grew `get_many()`.** The feed's display fields live in the snapshot, and 90
+  `get()` calls against Neon is ~900ms of round trip to draw one screen against ~10ms for one
+  query. A batch, not a cache. The alternative — denormalizing the display subset onto `decisions`
+  — duplicates what the snapshot holds and invites the two to disagree about what the engine saw,
+  which is the thing `architecture.md` [4.1] warns about restructuring storage on a guess.
+- **`readpath.ServedWindow`, not `Artifact`.** `DayRecord` and `Summary` survive the move
+  unchanged; `Artifact` carries a `version` (a file has a schema that drifts under a reader) and a
+  `spend` surface `0031` owes this path. Nothing versions a query.
+- **`assistant.DecisionHistory` is a `Protocol`.** Where the decisions came from is not the
+  assistant's business, and it would be a worse module if it knew.
+- **Startup now runs `assert_rls_binds()`.** The ticket asked for unreachable-or-unmigrated;
+  reachable and migrated is not the same as **scoped**, and Neon's default role is both while
+  returning every household. That is the connection string a deploy is most likely to be handed.
+- **`Summary._last_targeted` reads the target from the decisions, never `max(debts, key=apr)`.**
+  The shortcut picks archetype B's 27.99% transactor, which `_select_target` deliberately refuses
+  to target. Ranking needs `behavior`; the record does not carry it and should not.
+
+### Caught before it shipped
+
+**The mobile client would have 404'd every load.** `0024` moved the routes; mobile typechecked
+clean and called `GET /decisions`, which no longer exists. Types do not encode URLs. The client
+moved to the new routes with the household as a constant, which `0025` then replaced with the
+picker — but shipping `0024` alone would have broken the deployed demo, and `USERS.md` says the
+demo *is* the product surface.
+
+### Open
+
+- **`0031`** — the last route reading the file, and the last `cards[0]`.
+- **`0029`** — the income bucket. Untouched, and sequenced behind the forecast: the broken gate is
+  currently the only thing standing between a semimonthly household and a 19.7% breach rate.
+- **`ENGINE_VERSION = "0-unversioned"`.** `decisions.engine_version` is NOT NULL and
+  `architecture.md` [3.3] rests weight on it, but nothing in `engine/` defines a version. The day
+  `decide.py` changes without this moving, [3.3]'s backtest guarantee is a story.

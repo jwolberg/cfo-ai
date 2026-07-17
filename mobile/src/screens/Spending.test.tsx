@@ -12,7 +12,7 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react-native';
 
-import { ApiError } from '../api/client';
+import { DEMO_HOUSEHOLD, ApiError } from '../api/client';
 import type { SpendResponse } from '../api/types';
 import { Spending } from './Spending';
 
@@ -63,7 +63,7 @@ beforeEach(() => {
 
 test('the two obligations are shown separately, because they are due a month apart', async () => {
   getSpend.mockResolvedValue(spend());
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('this-cycle')).toBeTruthy());
 
@@ -82,7 +82,7 @@ test('the two obligations are shown separately, because they are due a month apa
 
 test('the reserve is named, so it does not look arbitrary', async () => {
   getSpend.mockResolvedValue(spend());
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('held-back')).toBeTruthy());
   expect(screen.getByText(/holding back \$2,240\.00 of your cash/)).toBeTruthy();
@@ -90,7 +90,7 @@ test('the reserve is named, so it does not look arbitrary', async () => {
 
 test('a household whose card shrank is not shown the warning panel', async () => {
   getSpend.mockResolvedValue(spend());
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('this-cycle')).toBeTruthy());
   expect(screen.queryByTestId('card-grew')).toBeNull();
@@ -100,7 +100,7 @@ test('a card that grew says so, and says a sweep will not fix it', async () => {
   getSpend.mockResolvedValue(
     spend({ last_cycle: { charged: '1760.00', paid: '1450.00', grew_by: '310.00' } }),
   );
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('card-grew')).toBeTruthy());
 
@@ -110,7 +110,7 @@ test('a card that grew says so, and says a sweep will not fix it', async () => {
 
 test('the worst 30-day stretch is the headline of the strip chart', async () => {
   getSpend.mockResolvedValue(spend());
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('worst-month')).toBeTruthy());
 
@@ -120,7 +120,7 @@ test('the worst 30-day stretch is the headline of the strip chart', async () => 
 
 test('an unreachable backend is our failure, not the household having spent nothing', async () => {
   getSpend.mockRejectedValue(new ApiError('network', 'nope'));
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('spending-failed')).toBeTruthy());
 
@@ -140,7 +140,7 @@ test('an empty series does not crash the chart', async () => {
       },
     }),
   );
-  await render(<Spending />);
+  await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('worst-month')).toBeTruthy());
   expect(screen.queryByTestId('strip-chart')).toBeNull();

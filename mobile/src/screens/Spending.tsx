@@ -23,7 +23,7 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { ApiError, getSpend } from '../api/client';
+import { ApiError, DEMO_HOUSEHOLD, getSpend } from '../api/client';
 import type { SpendResponse } from '../api/types';
 import { formatDateLong, formatMoney, formatMoneyRounded } from '../format';
 import { COLUMN_WIDTH, colors, radius, shadow, space, type } from '../theme';
@@ -33,15 +33,23 @@ type State =
   | { status: 'ready'; data: SpendResponse }
   | { status: 'failed'; kind: ApiError['kind'] };
 
+interface Props {
+  /** Which household. Owned by `App.tsx` — see its note on why this is not local state. */
+  householdId: string;
+}
+
 /** Text in, boolean out. The string is never parsed for *display* — only compared. */
 function isPositive(amount: string): boolean {
   return Number.parseFloat(amount) > 0;
 }
 
-export function Spending() {
+export function Spending({ householdId }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
+  const servable = householdId === DEMO_HOUSEHOLD;
 
   useEffect(() => {
+    if (!servable) return;
+
     let live = true;
     getSpend()
       .then((data) => {
@@ -55,7 +63,27 @@ export function Spending() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [servable]);
+
+  // The tab ticket 0025 warns about by name: "the easiest thing to leave pointing at a stale
+  // household — a bug that looks like working software."
+  //
+  // `GET /spend` has no household in it. It is the one route the backend has not moved to
+  // Postgres, because its figures come from the whole transaction history and there is no
+  // transactions table yet (ticket 0031). So for any household but the demo's, the honest thing
+  // is to say so. Rendering the demo's spending under another household's name would be exactly
+  // the bug the ticket names, and it would look perfect.
+  if (!servable) {
+    return (
+      <View style={styles.centered} testID="spending-unavailable">
+        <Text style={styles.unavailableTitle}>We can't show spending for this household yet</Text>
+        <Text style={styles.unavailableBody}>
+          The decision feed works for all four. Spending is still wired to the demo household
+          only — it reads a transaction history the other three don't have stored yet.
+        </Text>
+      </View>
+    );
+  }
 
   if (state.status === 'loading') {
     return (
@@ -213,6 +241,16 @@ const styles = StyleSheet.create({
   // Not a warning colour. See the header note: there is no red in this product, and a
   // household whose card is growing is being told the truth, not shown a fault.
   grew: { borderLeftWidth: 4, borderLeftColor: colors.deepGreen },
+  // Not red either, and not an error: nothing failed. This is the product being straight about
+  // what it has not built yet, which is the same voice as a refusal.
+  unavailableTitle: { ...type.body, color: colors.ink, textAlign: 'center' },
+  unavailableBody: {
+    ...type.label,
+    color: colors.muted,
+    textAlign: 'center',
+    marginTop: space.sm,
+    maxWidth: COLUMN_WIDTH,
+  },
   label: { ...type.label },
   stat: { ...type.stat, marginTop: space.xs },
   heading: { ...type.heading },

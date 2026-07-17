@@ -12,6 +12,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react-nat
 
 import type { Decision, DecisionsResponse } from '../api/types';
 import { Dashboard } from './Dashboard';
+import { DEMO_HOUSEHOLD } from '../api/client';
 
 jest.mock('../api/client', () => ({
   ...jest.requireActual('../api/client'),
@@ -101,7 +102,7 @@ const HERO_HIDDEN_AT = 32 + HERO_Y + HERO_HEIGHT; // 300
 
 async function open(paidOff = false) {
   getDecisions.mockResolvedValue(body(paidOff));
-  await render(<Dashboard onExplain={jest.fn()} />);
+  await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
   await waitFor(() => expect(screen.getByText('Beaten the bank out of')).toBeTruthy());
 
   await act(async () => {
