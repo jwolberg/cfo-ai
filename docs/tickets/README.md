@@ -144,13 +144,14 @@ defects instead — see below.
 | [0021](0021-repository-scoping-and-idor-suite.md) | Repository scoping and the IDOR suite | backend-python-agent | 0020 | **done** (#44) |
 | [0022](0022-snapshot-store-seam.md) | The `SnapshotStore` seam | backend-python-agent | 0020 | **done** (#44) |
 | [0023](0023-archetypes-and-seeder.md) | The archetypes, and the seeder | backend-python-agent | 0019, 0021, 0022, 0027, 0028 | **done** |
-| [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | open |
-| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | open |
+| [0024](0024-read-path-tenancy.md) | The read path — serve from Postgres, scoped by household | backend-python-agent | 0021, 0023 | **done** (`/spend` split to 0031) |
+| [0025](0025-mobile-household-switcher.md) | Mobile — the household switcher | mobile-rn-agent | 0024 | **done** (Spending tab awaits 0031) |
 | [0026](0026-neon-and-deploy-path.md) | Neon, and the deploy path | infra-devops-agent | 0020 | in progress (#44, partial) |
 | [0027](0027-a-ledger-per-card.md) | A ledger per card — the walk cannot simulate a portfolio | backend-python-agent | — | **done** (#46) |
 | [0028](0028-apr-provenance-and-the-23-percent-estimate.md) | APR provenance — estimate at 23%, never claim from a guess | backend-python-agent | 0027 | **done** (#46) |
 | [0029](0029-the-income-bucket-is-biweekly-shaped.md) | The income bucket is biweekly-shaped *(spawned by 0023)* | backend-python-agent | 0023 | open — **read it before §9.3** |
 | [0030](0030-dayrecord-carries-a-portfolio.md) | `DayRecord` carries a portfolio *(the decision 0027 deferred)* | backend-python-agent | 0023, 0027, 0028 | **done** |
+| [0031](0031-the-spend-surface-per-household.md) | The spend surface, per household — and for a portfolio *(split from 0024)* | backend-python-agent | 0023, 0024, 0030 | open — the last route reading the file |
 
 ## Three things to know before picking one of these up
 

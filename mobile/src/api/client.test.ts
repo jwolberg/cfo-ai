@@ -6,7 +6,7 @@
  * answer rather than an error — so those distinctions are pinned here, at the boundary
  * where they are still knowable.
  */
-import { ApiError, getDecisions, getExplanation, askAssistant } from './client';
+import { ApiError, DEMO_HOUSEHOLD, getDecisions, getExplanation, askAssistant } from './client';
 
 const fetchMock = jest.fn();
 globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -96,7 +96,13 @@ describe('the assistant', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain('/assistant/message');
     expect(init.method).toBe('POST');
-    expect(JSON.parse(init.body)).toEqual({ message: 'and last Tuesday?', history });
+    // The household travels with the question (ticket 0024): the backend loads that household's
+    // window and hands the model nothing else, so it cannot cite another household's figure.
+    expect(JSON.parse(init.body)).toEqual({
+      household_id: DEMO_HOUSEHOLD,
+      message: 'and last Tuesday?',
+      history,
+    });
   });
 
   it('gets longer than the dashboard does', async () => {

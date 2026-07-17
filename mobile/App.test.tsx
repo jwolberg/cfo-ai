@@ -4,19 +4,28 @@
  * There was no test here at all until the tabs moved to the top and the active one grew a
  * fill, which are exactly the two things a stray style edit silently reverts.
  */
-import { render, screen, waitFor } from '@testing-library/react-native';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import App from './App';
-import { getDecisions, getSpend } from './src/api/client';
+import { DEMO_HOUSEHOLD, getDecisions, getHouseholds, getSpend } from './src/api/client';
 import { colors } from './src/theme';
 
 jest.mock('./src/api/client');
 
 const decisions = getDecisions as jest.MockedFunction<typeof getDecisions>;
 const spend = getSpend as jest.MockedFunction<typeof getSpend>;
+const households = getHouseholds as jest.MockedFunction<typeof getHouseholds>;
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // `jest.mock` auto-mocks every export, so an unmocked call returns `undefined` rather than a
+  // promise. The picker fetches its labels on mount (ticket 0025).
+  households.mockResolvedValue({
+    households: [
+      { id: DEMO_HOUSEHOLD, archetype: 'demo_biweekly', label: 'Biweekly, one card' },
+      { id: 'hh_monthly_thin', archetype: 'monthly_thin', label: 'Monthly, two cards' },
+    ],
+  });
   // Both screens mount at once (they stay mounted across a tab switch), so both endpoints are
   // hit on first render regardless of which tab is showing.
   decisions.mockResolvedValue({
@@ -82,5 +91,50 @@ describe('the tab bar', () => {
     expect(tabs).toBeGreaterThan(-1);
     expect(content).toBeGreaterThan(-1);
     expect(tabs).toBeLessThan(content);
+  });
+});
+
+describe('switching household', () => {
+  /**
+   * The acceptance criterion 0025 names in advance: *"the easiest thing to leave pointing at a
+   * stale household — a bug that looks like working software."* Nothing here is checking that a
+   * switch is possible; they check that nothing is left behind by one.
+   */
+  it('re-fetches the feed for the household chosen', async () => {
+    await render(<App />);
+    await waitFor(() => expect(decisions).toHaveBeenCalledWith(DEMO_HOUSEHOLD));
+
+    await fireEvent.press(screen.getByTestId('household-picker'));
+    await fireEvent.press(screen.getByTestId('household-option-hh_monthly_thin'));
+
+    await waitFor(() => expect(decisions).toHaveBeenCalledWith('hh_monthly_thin'));
+  });
+
+  it('the spending tab does not keep showing the household you left', async () => {
+    /** The tab 0025 warns about by name. `/spend` has no household in it (ticket 0031), so the
+     *  honest answer for the other three is to say so — never to keep rendering the demo's
+     *  figures under someone else's label, which would look perfect and be false. */
+    await render(<App />);
+    await waitFor(() => expect(screen.getByTestId('tab-spending')).toBeTruthy());
+
+    await fireEvent.press(screen.getByTestId('household-picker'));
+    await fireEvent.press(screen.getByTestId('household-option-hh_monthly_thin'));
+    await fireEvent.press(screen.getByTestId('tab-spending'));
+
+    await waitFor(() => expect(screen.getByTestId('spending-unavailable')).toBeTruthy());
+  });
+
+  it('the selection survives a tab change', async () => {
+    await render(<App />);
+    await waitFor(() => expect(decisions).toHaveBeenCalledWith(DEMO_HOUSEHOLD));
+
+    await fireEvent.press(screen.getByTestId('household-picker'));
+    await fireEvent.press(screen.getByTestId('household-option-hh_monthly_thin'));
+    await fireEvent.press(screen.getByTestId('tab-spending'));
+    await fireEvent.press(screen.getByTestId('tab-decisions'));
+
+    // Still the household we picked, not back to the default.
+    expect(screen.getByText('Monthly, two cards')).toBeTruthy();
+    expect(decisions).not.toHaveBeenLastCalledWith(DEMO_HOUSEHOLD);
   });
 });

@@ -42,9 +42,13 @@ why — narrated from the engine's `Reason` codes, never an invented number.
 
 **What they cannot do, in this MVP** (see the requirements doc's Scope Boundaries,
 [`docs/brainstorms/2026-07-13-decision-engine-frontend-mvp-requirements.md`](docs/brainstorms/2026-07-13-decision-engine-frontend-mvp-requirements.md)):
-connect a real bank account, trigger or approve a real transfer, change the buffer or
-caps, or manage more than one household. This version shows what the engine decided; it
-does not let them do anything the real product's later phases haven't earned yet.
+connect a real bank account, trigger or approve a real transfer, or change the buffer or
+caps. This version shows what the engine decided; it does not let them do anything the real
+product's later phases haven't earned yet.
+
+**And they cannot switch households — but the demo can, and that distinction is the point.**
+Ticket `0024` added a household switcher, and it is emphatically not a customer feature: a
+customer has one household, which is *theirs*. What the switcher exists for is below.
 
 ---
 
@@ -64,3 +68,31 @@ customer would.
 **What they see and can do.** The same dashboard and explain assistant the customer
 persona sees — there is no separate reviewer-facing view. The demonstration *is* the
 product surface; a second, instrumented "admin" view would undercut the point.
+
+**Plus one thing the customer does not get: a household switcher.** Four synthetic households —
+biweekly with one card, semimonthly with three, monthly with two, and one whose issuer reports no
+APR at all (`backend/archetypes.py`). It exists because every household this engine had ever run
+against was biweekly with one card, including all sixty in the calibration population, so
+`decision-engine.md` §9.3's admission that the engine approximates everyone else poorly had never
+been tested against an everyone else. The switcher is how you look at what that costs. It is a
+reviewer's instrument, not a product feature.
+
+---
+
+## ⚠️ The auth posture, stated here rather than buried in a code comment
+
+**Any API key may read any household.** The key is a shared secret, it is inlined into the web
+bundle at build time (`EXPO_PUBLIC_API_KEY`), and every household is selectable by id. There is no
+per-user identity anywhere in this system.
+
+That is a **demo posture and a deliberate one**, not a defect to file: these households are
+synthetic, nobody owns them, and there is no one to authenticate *as*. Real auth (Clerk) arrives
+with Plaid, when there is a real user and a real balance behind the door.
+
+**Say the uncomfortable half out loud.** The scoping mechanism underneath is real and tested —
+every query is bound by the repository *and* by Postgres row-level security, and
+[`tests/test_idor.py`](tests/test_idor.py) proves each layer with the other removed. But
+`backend/auth.py`'s own docstring is the honest summary: the key is *"a lock on a door, not an
+identity system."* **An IDOR suite is reassuring in a way a shared key does not earn**, and a
+reader who saw the one and assumed the other would be wrong in the direction that matters. Ticket
+`0021` asked for this paragraph and `0024` is where it finally got written.

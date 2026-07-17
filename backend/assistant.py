@@ -52,9 +52,9 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
-from backend.artifact import Artifact, DayRecord
+from backend.artifact import DayRecord, Summary
 from engine.explain import explain
 from engine.models import Action, ReasonCode
 
@@ -292,8 +292,33 @@ def _decision_payload(record: DayRecord) -> dict[str, Any]:
     }
 
 
-def run_tool(name: str, args: dict[str, Any], artifact: Artifact, facts: Facts) -> Any:
-    """Execute one tool against the in-memory artifact, recording what it exposed.
+class DecisionHistory(Protocol):
+    """What this module needs to answer a question: some decisions, and the day "today" means.
+
+    A `Protocol` rather than `Artifact`, because as of ticket `0024` the decisions arrive from
+    Postgres scoped to a household (`readpath.ServedWindow`) and only `/spend` still reads the
+    committed file. **Where they came from is not the assistant's business** — it looks up
+    decisions the engine already made and puts them in English, and it would be a strictly worse
+    module if it knew the difference.
+
+    Declared here, next to the code that consumes it, rather than beside either implementation:
+    the interface is the caller's requirement, not the provider's offer.
+    """
+
+    @property
+    def days(self) -> tuple[DayRecord, ...]: ...
+
+    @property
+    def summary(self) -> Summary: ...
+
+    @property
+    def window_end(self) -> date: ...
+
+    def by_day(self, day: date) -> DayRecord | None: ...
+
+
+def run_tool(name: str, args: dict[str, Any], artifact: DecisionHistory, facts: Facts) -> Any:
+    """Execute one tool against the decision history, recording what it exposed.
 
     Every record this returns is added to `facts` — that is what later licenses the model
     to talk about it. A decision the model never fetched is a decision it cannot mention.
@@ -738,7 +763,7 @@ def _text_of(content: Any) -> str:
 
 
 def answer(
-    artifact: Artifact,
+    artifact: DecisionHistory,
     history: list[dict[str, Any]],
     message: str,
     client: Any,

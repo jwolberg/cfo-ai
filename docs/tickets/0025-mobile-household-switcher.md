@@ -2,7 +2,7 @@
 id: "0025"
 title: Mobile — the household switcher
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: mobile-rn-agent
@@ -52,16 +52,36 @@ console. If it starts to look like a dashboard-of-dashboards, it has gone wrong.
 
 ## Acceptance criteria
 
-- [ ] Switching household re-fetches and re-renders the decision feed and the summary numbers.
-- [ ] **The Spending screen follows the switch.** It is a separate tab (`0016`) and is the easiest
-      thing to leave pointing at a stale household — a bug that looks like working software.
-- [ ] The explain modal and the assistant follow the switch. Asking "why not last Tuesday?" about
-      household C must not answer about household A.
-- [ ] Labels distinguish the archetypes by pay cadence and card count.
-- [ ] Selection survives a tab change; it need not survive an app restart.
-- [ ] Loading and error states per household — a slow or missing household must not render as an
-      empty dashboard, which reads as "the engine did nothing" rather than "we failed to load."
-- [ ] `npm test` and the typecheck clean.
+- [x] Switching household re-fetches and re-renders the decision feed and the summary numbers.
+      `householdId` is a dependency of the load callback, so the effect re-runs; the screen returns
+      to `loading` first rather than holding the previous household's feed on screen while the next
+      is in flight.
+- [~] **The Spending screen follows the switch — as far as it can, which is not all the way, and
+      the gap is stated rather than papered over.** `GET /spend` has no household in it: it is the
+      one route `0024` could not move to Postgres, because its figures come from the whole
+      transaction `History` and there is no `transactions` table yet (ticket `0031`).
+
+      So for any household but the demo's it says so, plainly, in the product's own voice. What it
+      does **not** do is keep rendering the demo's spending under another household's label — which
+      is precisely the failure this ticket named in advance ("a bug that looks like working
+      software"), and which would have looked perfect. Pinned by
+      `App.test.tsx::the spending tab does not keep showing the household you left`, and
+      **mutation-tested**: reintroduce `servable = true` and it fails.
+
+      This AC closes properly when `0031` lands.
+- [x] The explain modal and the assistant follow the switch. The household travels with both the
+      narration fetch and every assistant turn, so the backend loads *that* household's window and
+      hands the model nothing else — it cannot cite another household's figure rather than being
+      asked not to. Switching also closes an open modal: it is open against a decision belonging to
+      the household you just left.
+- [x] Labels distinguish the archetypes by pay cadence and card count, and a test asserts they do —
+      including that none of them says "Household B".
+- [x] Selection survives a tab change (it lives in `App.tsx`, and both screens stay mounted); it
+      does not survive a restart, which the ticket allows.
+- [x] Loading and error states per household. The picker's own label fetch fails **quietly** — the
+      list is chrome, and a red banner because a label did not load would be the picker reporting a
+      fault the product does not have.
+- [x] `npm test` (60) and the typecheck clean.
 
 ## Watch for
 

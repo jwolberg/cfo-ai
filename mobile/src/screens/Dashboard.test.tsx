@@ -8,7 +8,7 @@
  */
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
-import { ApiError } from '../api/client';
+import { DEMO_HOUSEHOLD, ApiError } from '../api/client';
 import type { Decision, DecisionsResponse } from '../api/types';
 import { Dashboard } from './Dashboard';
 
@@ -68,7 +68,7 @@ describe('the dashboard', () => {
     // them to sign in to see that would undercut the whole argument.
     getDecisions.mockResolvedValue(body());
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Your money, working.')).toBeTruthy());
     expect(screen.queryByText(/sign in/i)).toBeNull();
@@ -78,7 +78,7 @@ describe('the dashboard', () => {
   it('shows the stats above the feed', async () => {
     getDecisions.mockResolvedValue(body());
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('$6,019.10')).toBeTruthy());
     expect(screen.getByText('Beaten the bank out of')).toBeTruthy();
@@ -90,7 +90,7 @@ describe('the dashboard', () => {
     // celebrate. It is not allowed to promise the money is banked.
     getDecisions.mockResolvedValue(body());
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('$6,019.10')).toBeTruthy());
     expect(
@@ -101,7 +101,7 @@ describe('the dashboard', () => {
   it('shows the streak and how far the card has come down', async () => {
     getDecisions.mockResolvedValue(body());
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('🔥 35-payment streak')).toBeTruthy());
     // $13,652.42 -> $3,451.64 is 74.7% of the way down.
@@ -115,7 +115,7 @@ describe('the dashboard', () => {
       body({ summary: { ...body().summary, sweep_count: 0 } }),
     );
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Beaten the bank out of')).toBeTruthy());
     expect(screen.queryByText(/payment streak/)).toBeNull();
@@ -126,7 +126,7 @@ describe('the dashboard', () => {
       body({ summary: { ...body().summary, paid_off: true } }),
     );
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Beaten the bank out of')).toBeTruthy());
     expect(screen.queryByText('Card paid down')).toBeNull();
@@ -152,7 +152,7 @@ describe('the dashboard', () => {
       }),
     );
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('No payment today')).toBeTruthy());
     expect(screen.getByText(/nothing spare/)).toBeTruthy();
@@ -164,7 +164,7 @@ describe('the dashboard', () => {
     // decisions. This failure is ours, and the copy says so.
     getDecisions.mockRejectedValue(new ApiError('timeout', 'no response'));
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() =>
       expect(screen.getByText(/can't reach your decisions/i)).toBeTruthy(),
@@ -177,7 +177,7 @@ describe('the dashboard', () => {
     getDecisions.mockRejectedValueOnce(new ApiError('network', 'down'));
     getDecisions.mockResolvedValueOnce(body());
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
     await waitFor(() => expect(screen.getByText('Try again')).toBeTruthy());
 
     await fireEvent.press(screen.getByText('Try again'));
@@ -188,7 +188,7 @@ describe('the dashboard', () => {
   it('an empty window is not the same as a broken backend', async () => {
     getDecisions.mockResolvedValue(body({ decisions: [] }));
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() =>
       expect(screen.getByText('No decisions in this window yet.')).toBeTruthy(),
@@ -214,7 +214,7 @@ describe('the dashboard', () => {
       }),
     );
 
-    await render(<Dashboard onExplain={jest.fn()} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
 
     await waitFor(() => expect(screen.getByText('Card paid off 🎉')).toBeTruthy());
     expect(screen.queryByText('$0')).toBeNull();
@@ -226,7 +226,7 @@ describe('the dashboard', () => {
     const onExplain = jest.fn();
     getDecisions.mockResolvedValue(body());
 
-    await render(<Dashboard onExplain={onExplain} />);
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={onExplain} />);
     await waitFor(() => expect(screen.getByText('Paid $400.00')).toBeTruthy());
 
     await fireEvent.press(screen.getByText('Paid $400.00'));

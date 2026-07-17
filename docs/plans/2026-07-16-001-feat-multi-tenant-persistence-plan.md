@@ -37,9 +37,15 @@ Plaid, money movement, real auth, or a live daily decision job.
 
 ## Build Progress
 
-*Last updated 2026-07-16. **U1–U4 are on `main`** (PR #44). **U5's two blockers are fixed**
-(`0027`, `0028` — PR #46, open). 448 Python tests, 51 mobile tests, ruff clean, and
-`backend/data/decisions.json` byte-identical throughout every one of them.*
+*Last updated 2026-07-17. **U1–U4 on `main`** (#44), **U5 on `main`** (#48), **U6–U7 open in a
+PR**. 496 Python tests, 60 mobile tests, ruff clean. The demo household's decisions have not moved
+once across any of it — the artifact's **shape** changed in `0030` and its **decisions** did not,
+proved against a hash taken before the schema moved.*
+
+**The plan is essentially delivered.** The ask was "a database, seeded with a couple of customers,
+so I can understand the dashboards": there are four households in Postgres, scoped twice over, and
+a switcher to compare them. What is left is `0026` (the deploy), `0031` (the one route still
+reading the file), and `0029` (the finding U5 turned up, which is not this plan's to fix).
 
 | Unit | Ticket | Status | Landed in |
 |------|--------|--------|-----------|
@@ -47,12 +53,15 @@ Plaid, money movement, real auth, or a live daily decision job.
 | U2 Schema, RLS, and the first migration | `0020` | done | #44 |
 | U3 Repository scoping and the IDOR suite | `0021` | done | #44 |
 | U4 The `SnapshotStore` seam | `0022` | done | #44 |
-| U5 The archetypes, and the seeder | `0023` | **unblocked, not started** | — |
-| U6 The read path | `0024` | not started | — |
-| U7 Mobile: the household switcher | `0025` | not started | — |
+| U5 The archetypes, and the seeder | `0023` | done | #48 |
+| U6 The read path | `0024` | done | open PR |
+| U7 Mobile: the household switcher | `0025` | done (`/spend` awaits `0031`) | open PR |
 | U8 Neon, and the deploy path | `0026` | in progress | #44 (partial) |
 | — A ledger per card *(spawned by U5)* | `0027` | done | #46 |
 | — APR provenance *(spawned by U5)* | `0028` | done | #46 |
+| — The income bucket is biweekly-shaped *(found by U5)* | `0029` | **open — the finding** | — |
+| — `DayRecord` carries a portfolio *(the decision `0027` deferred)* | `0030` | done | #48 |
+| — The spend surface, per household *(split from U6)* | `0031` | open | — |
 
 ### What the build found, and what it cost to find
 

@@ -17,12 +17,24 @@
  * The selected decision still lives here rather than inside the modal, which is what makes
  * every open a fresh mount against a specific decision: `null` is closed, a decision is open,
  * and there is no third state to get stuck in.
+ *
+ * ## The selected household lives here too, and for a sharper reason
+ *
+ * Ticket 0025. Every screen and the modal read it; none of them owns it. Two copies of "which
+ * household" is not a style problem — it is the bug the ticket names in advance: *"the easiest
+ * thing to leave pointing at a stale household — a bug that looks like working software."* A
+ * Spending tab still showing household A while the feed shows household B does not look broken.
+ * It looks fine, and it is lying.
+ *
+ * One `useState`, passed down, is what makes that unrepresentable.
  */
 import { StatusBar } from 'expo-status-bar';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { DEMO_HOUSEHOLD } from './src/api/client';
 import type { Decision } from './src/api/types';
+import { HouseholdPicker } from './src/components/HouseholdPicker';
 import { Dashboard } from './src/screens/Dashboard';
 import { ExplainModal } from './src/screens/ExplainModal';
 import { Spending } from './src/screens/Spending';
@@ -32,11 +44,25 @@ type Tab = 'decisions' | 'spending';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('decisions');
+  const [household, setHousehold] = useState<string>(DEMO_HOUSEHOLD);
   const [explaining, setExplaining] = useState<Decision | null>(null);
 
   return (
     <View style={styles.app}>
       <StatusBar style="dark" />
+
+      {/* Above the tabs, because it scopes both of them. It is also the reading order: which
+          household, then which view of it. */}
+      <HouseholdPicker
+        selected={household}
+        onSelect={(next) => {
+          setHousehold(next);
+          // Close the modal on a switch. It is open against a decision that belongs to the
+          // household you just left, and re-pointing it at "the same date, over here" would be
+          // inventing a question the user did not ask.
+          setExplaining(null);
+        }}
+      />
 
       <View style={styles.tabs}>
         <TabButton
@@ -53,15 +79,22 @@ export default function App() {
 
       {/* Both screens stay mounted. Switching tabs is not a reason to re-fetch, and a
           half-scrolled feed that resets every time you glance at your spending is the kind of
-          small betrayal that makes an app feel cheap. */}
+          small betrayal that makes an app feel cheap.
+
+          Switching *household* is a different matter, and both screens do re-fetch: the household
+          is a prop, so the load effect re-runs. That is the point — see the note above. */}
       <View style={[styles.screen, tab === 'decisions' ? null : styles.hidden]}>
-        <Dashboard onExplain={setExplaining} />
+        <Dashboard householdId={household} onExplain={setExplaining} />
       </View>
       <View style={[styles.screen, tab === 'spending' ? null : styles.hidden]}>
-        <Spending />
+        <Spending householdId={household} />
       </View>
 
-      <ExplainModal decision={explaining} onClose={() => setExplaining(null)} />
+      <ExplainModal
+        decision={explaining}
+        householdId={household}
+        onClose={() => setExplaining(null)}
+      />
     </View>
   );
 }
