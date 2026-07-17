@@ -2073,3 +2073,35 @@ documented. `last-verified: 2026-07-17` on that file is a real run, not a stamp.
   quantile — has no ticket. Neither does a `today`/day-boundary/timezone definition (zero hits in
   `docs/`), raised by the 2026-07-12 review at [2.4]. Both are the opposite of cruft: work the
   backlog has forgotten rather than work it should drop.
+
+## 2026-07-17 — U1 (`0034`): plaid_items, RLS, and the access_token start guard
+
+First unit of the Plaid transport rung (`docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md`).
+The table, its RLS, and one startup tripwire. Deviations and decisions worth a human's eye:
+
+- **Wired the start guard into `backend/main.py` lifespan.** U1's Files list named
+  `backend/db/session.py`, not `main.py`. But a guard that is defined and never called is exactly the
+  built-tested-never-exercised defect the `0019`–`0033` post-mortems keep naming, so
+  `assert_plaid_tokens_safe_at_rest()` is called in the lifespan beside `assert_rls_binds()`, and a
+  `TestClient` boot test in `test_backend_api.py` proves a production `PLAID_ENV` stops the service
+  coming up. A one-line `main.py` change the plan did not enumerate but its intent requires.
+- **Pulled the `plaid_items` half of the IDOR extension forward from U5.** The plan assigns the full
+  IDOR extension to U5. But adding `plaid_items` to `HOUSEHOLD_SCOPED` without a row in
+  `test_idor.py`'s `two_households` fixture would ship RLS on a new scoped table proven only
+  structurally (a policy exists) and never behaviorally (alice's item invisible to bob). Added the
+  fixture row now; U5 still owns the repository-bypassed proof for both new tables.
+- **`_plaid_token_encryption_active()` returns `False` unconditionally.** KMS is out of this rung, so
+  the honest interim state is that a non-sandbox deploy cannot keep a real token safe and must not
+  boot. The function names the exact conditions (KMS client initializes AND token is ciphertext) that
+  flip it when KMS lands. The signal is the encryption capability, never a non-null `dek_id` — a
+  placeholder `dek_id` with no key behind it is the false "looks protected" the guard refuses.
+- **Left `test_plaid_tables_do_not_exist_yet` untouched.** It guards the bare names
+  `items`/`transactions`/`recurring_events`/`payments`/`users`; the new tables are `plaid_`-prefixed,
+  so they do not trip it and it still guards the genuinely-unbuilt ones. Its name reads slightly stale
+  now, but the assertion is still correct.
+- **Migrations are not linted by CI** (`ruff check engine sim backend tests` excludes `alembic/`).
+  Kept `0005`'s import grouping consistent with `0004` (house style) rather than with `ruff --fix`,
+  which treats the local `alembic/` dir as first-party and regroups differently.
+- **Process note (not a code decision).** The first U1 commit (`ad6a9b6`, later rebased) overwrote
+  this very file with a fresh 27-line stub because it was written without reading the existing 2075-line
+  log first. Caught on resume and repaired by restoring `main`'s copy and appending this entry.

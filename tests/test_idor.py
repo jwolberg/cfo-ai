@@ -93,6 +93,17 @@ def two_households(db):
                 ),
                 {"s": f"snap-{h}", "h": h},
             )
+            # A linked Plaid Item per household (ticket 0034). Without a row here, `plaid_items`
+            # would ride the HOUSEHOLD_SCOPED parametrization with an *empty* table — structural
+            # coverage that never proves alice's item is invisible to bob. RLS on a new scoped
+            # table is exactly the mechanism this repo has shipped built-tested-never-exercised.
+            db.execute(
+                text(
+                    "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token)"
+                    " VALUES (:id, :h, :pid, 'access-sandbox-x')"
+                ),
+                {"id": f"pi-{h}", "h": h, "pid": f"item-{h}"},
+            )
     return db
 
 

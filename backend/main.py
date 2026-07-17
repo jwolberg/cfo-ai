@@ -65,7 +65,7 @@ from backend import assistant, readpath
 from backend.artifact import DayRecord, Summary
 from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
-from backend.db.session import assert_rls_binds, make_engine
+from backend.db.session import assert_plaid_tokens_safe_at_rest, assert_rls_binds, make_engine
 from backend.db.snapshots import PostgresSnapshotStore
 from backend.spend import CardObligations, SpendProjection
 from engine.explain import explain, render
@@ -98,6 +98,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     with app.state.db.connect() as conn:
         assert_rls_binds(conn)
         _assert_migrated(conn)
+        # A plaintext Plaid access_token is harmless in Sandbox and a drainable credential in
+        # production. This refuses a non-sandbox boot until KMS makes it ciphertext — the quiet
+        # trigger (`PLAID_ENV` flips) made loud. No-op when PLAID_ENV is unset (defaults sandbox).
+        assert_plaid_tokens_safe_at_rest(conn)
 
     # Built once, at startup, so a deploy without the Anthropic secret fails here rather
     # than the first time a user opens the modal and asks a question.

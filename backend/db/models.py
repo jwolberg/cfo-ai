@@ -246,6 +246,50 @@ spend_projections = Table(
 )
 
 
+# One row per linked Plaid Item — a bank connection. Ticket 0034, the Plaid transport rung
+# (`docs/plans/2026-07-17-001-feat-plaid-transport-rung-plan.md`). HOUSEHOLD_SCOPED and RLS-FORCEd
+# like every table that holds a credential or a balance: the `access_token` *is* a credential.
+#
+# It is plaintext here because in Sandbox a token grants access to fabricated data and protects
+# nothing, so KMS envelope encryption defers to the first real token (`architecture.md` [7.2]).
+# The trigger fires quietly, though — the day `PLAID_ENV` flips to production the same column
+# becomes a live credential — so `backend/db/session.py`'s start guard refuses a non-sandbox boot
+# until the token is actually encrypted. `dek_id` (on `households`) is the other half of that story
+# and still has no key behind it.
+plaid_items = Table(
+    "plaid_items",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # Plaid's own stable id for the Item, unique across the whole deployment — it is Plaid's key,
+    # not ours, and the webhook doorbell resolves `plaid_item_id → household_id` through it before
+    # any household is known (ADR-0005). The named UNIQUE constraint lives in the migration.
+    Column("plaid_item_id", Text, nullable=False, unique=True),
+    Column("institution_id", Text, nullable=True),
+    # Plaintext in Sandbox; the startup guard forbids a non-sandbox boot while it stays that way.
+    Column("access_token", Text, nullable=False),
+    # The `/transactions/sync` position, persisted per item. NULL before the first sync — Plaid's
+    # "sync from the beginning" is the absent cursor, not a sentinel.
+    Column("cursor", Text, nullable=True),
+    # engine.models.ConnectionState. Ships `healthy`; flips to `login_required` on
+    # ITEM_LOGIN_REQUIRED, which is the first thing that drives `ConnectionState` off a constant.
+    Column("status", Text, nullable=False, server_default=text("'healthy'")),
+    # Becomes `Account.balance_age_days`, the freshness gate — "the thing standing between a
+    # dropped webhook and an overdraft" (`architecture.md` [3.1]). NULL until the first success.
+    Column("last_successful_sync_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("error_code", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "status IN ('healthy', 'login_required', 'disconnected')", name="ck_plaid_items_status"
+    ),
+)
+
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
 # each, and ticket 0021's IDOR suite proves both — independently.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
@@ -255,6 +299,7 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "decisions",
     "snapshots",
     "spend_projections",
+    "plaid_items",
 )
 
 __all__ = [
@@ -267,6 +312,7 @@ __all__ = [
     "decisions",
     "households",
     "metadata",
+    "plaid_items",
     "policies",
     "snapshots",
     "spend_projections",

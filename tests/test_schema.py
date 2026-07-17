@@ -13,6 +13,11 @@ import pytest
 from sqlalchemy import text
 
 from backend.db.models import HOUSEHOLD_SCOPED
+from backend.db.session import (
+    PlaidAccessTokenWouldLeak,
+    assert_plaid_tokens_safe_at_rest,
+    plaid_env,
+)
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -318,6 +323,101 @@ class TestTheTenantIsTheHousehold:
             .all()
         )
         assert rows == [], f"speculative tables exist: {rows}"
+
+
+class TestPlaidItems:
+    """The Plaid transport rung's first table (ticket 0034).
+
+    RLS is covered for free: `plaid_items` is in `HOUSEHOLD_SCOPED`, so the parametrized policy and
+    FORCE tests above and `tests/test_idor.py`'s leak test already exercise it. These are the
+    column-level claims that parametrization does not make.
+    """
+
+    def _item(self, conn, hid: str, row_id: str, item_id: str, token: str = "access-sandbox-x"):
+        conn.execute(
+            text(
+                "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token)"
+                " VALUES (:id, :h, :pid, :tok)"
+            ),
+            {"id": row_id, "h": hid, "pid": item_id, "tok": token},
+        )
+
+    def test_an_item_defaults_to_healthy_with_no_cursor_and_no_sync(self, db) -> None:
+        """Ships `healthy`; the cursor and `last_successful_sync_at` are absent, not sentinels —
+        "sync from the beginning" is the missing cursor, and freshness is unknown before a sync."""
+        with db.begin():
+            _household(db, "h1")
+            self._item(db, "h1", "pi-1", "item-1")
+            row = db.execute(
+                text("SELECT status, cursor, last_successful_sync_at FROM plaid_items")
+            ).one()
+        assert row.status == "healthy"
+        assert row.cursor is None
+        assert row.last_successful_sync_at is None
+
+    def test_plaid_item_id_is_unique_across_households(self, db) -> None:
+        """It is Plaid's key, not ours, and the doorbell resolves `item_id → household` before any
+        scope is set (ADR-0005). Two households sharing one would make that lookup ambiguous."""
+        with pytest.raises(Exception, match="uq_plaid_items_plaid_item_id"), db.begin():
+            _household(db, "h1")
+            _household(db, "h2")
+            self._item(db, "h1", "pi-1", "shared-item")
+            self._item(db, "h2", "pi-2", "shared-item")
+
+    def test_an_unknown_status_is_rejected(self, db) -> None:
+        """`status` is engine.models.ConnectionState — healthy | login_required | disconnected —
+        and the CHECK says so where the data lives, so no path can write a fourth value."""
+        with pytest.raises(Exception, match="ck_plaid_items_status"), db.begin():
+            _household(db, "h1")
+            db.execute(
+                text(
+                    "INSERT INTO plaid_items (id, household_id, plaid_item_id, access_token,"
+                    " status) VALUES ('pi-x', 'h1', 'item-x', 'tok', 'expired')"
+                )
+            )
+
+
+class TestPlaidTokenStartGuard:
+    """`assert_plaid_tokens_safe_at_rest` — the tripwire on the day `PLAID_ENV` flips to production
+    before KMS makes `access_token` ciphertext. Same shape and same spirit as the `assert_rls_binds`
+    tests: the failure is silent (a plaintext credential), so the guard is a startup refusal.
+    """
+
+    def test_sandbox_boots(self, db, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("PLAID_ENV", "sandbox")
+        assert_plaid_tokens_safe_at_rest(db)  # does not raise
+
+    def test_unset_defaults_to_sandbox_and_boots(self, db, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The safe default: no Plaid configured means nothing to protect."""
+        monkeypatch.delenv("PLAID_ENV", raising=False)
+        assert plaid_env() == "sandbox"
+        assert_plaid_tokens_safe_at_rest(db)  # does not raise
+
+    def test_production_is_refused_while_encryption_is_not_active(
+        self, db, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("PLAID_ENV", "production")
+        with pytest.raises(PlaidAccessTokenWouldLeak, match="plaintext"):
+            assert_plaid_tokens_safe_at_rest(db)
+
+    def test_a_non_null_dek_id_does_not_satisfy_the_guard(
+        self, db, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The false "looks protected". A `dek_id` with no key behind it — every synthetic
+        household today — must not let production boot. The guard keys on the encryption
+        *capability*, never on `dek_id` presence, or a stray placeholder would satisfy a check
+        while the token stayed clear.
+        """
+        monkeypatch.setenv("PLAID_ENV", "production")
+        with db.begin():
+            db.execute(
+                text(
+                    "INSERT INTO households (id, archetype, dek_id)"
+                    " VALUES ('h1', 'test', 'dek-123')"
+                )
+            )
+        with pytest.raises(PlaidAccessTokenWouldLeak):
+            assert_plaid_tokens_safe_at_rest(db)
 
 
 def test_deleted_at_records_the_shred_not_a_soft_delete(db) -> None:
