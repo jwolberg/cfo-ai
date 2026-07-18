@@ -27,6 +27,7 @@ from __future__ import annotations
 from sqlalchemy import (
     ARRAY,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -79,6 +80,14 @@ households = Table(
     # Set when the key is destroyed. Not a soft delete — the data is genuinely unrecoverable at
     # that point; this records *when*, for the audit trail that outlives the plaintext.
     Column("deleted_at", TIMESTAMP(timezone=True), nullable=True),
+    # Whether this household is part of the public demo plane (KTD-10, ticket 0046). A `viewer`-role
+    # demo user is a member of exactly the `is_demo` households and nothing else, so the public
+    # bundle reaches the demo with no login while never touching a real household; and Plaid
+    # link-exchange refuses an `is_demo` household, so a real bank item can never attach to the demo
+    # plane. Default false: a real household is never a demo one by omission. Set true by the seeder
+    # on synthetic households (`backend/seed.py`), backfilled true in migration 0011 for the ones
+    # already seeded.
+    Column("is_demo", Boolean, nullable=False, server_default=text("false")),
 )
 
 accounts = Table(
@@ -446,9 +455,77 @@ transfers = Table(
 )
 
 
+# A real, verified user — the identity every route was missing (ticket 0046, the identity rung,
+# `docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md`, ADR-0008).
+#
+# **Deliberately NOT household-scoped** (see `PLATFORM_TABLES` and `HOUSEHOLD_SCOPED` below). A user
+# exists before any household and independent of all of them — the same posture as the raw webhook
+# store (ADR-0005) and the FBO funding account. So there is no `household_id` here, no RLS policy,
+# and it is outside the forced set. Its exclusion is asserted, not incidental
+# (`tests/test_schema.py`, `tests/test_identity_schema.py`).
+#
+# It carries PII (`email`) with no RLS backstop, so the application reaches it **only by single-key
+# lookup** — `get_user_by_stytch_id` / `get_user_by_id` in `backend/db/repository.py`, never an
+# unfiltered scan or join. There is no `users()` list method by design, and a test enforces it.
+#
+# `id` is ours and stable — the identifier the deferred Plaid Link rung passes to
+# `/link/token/create` as `client_user_id` (KTD-1). `stytch_user_id` is the vendor's; only the edge
+# adapter (`backend/identity/stytch.py`) knows it, and a provider swap re-keys only that column.
+users = Table(
+    "users",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("stytch_user_id", Text, nullable=False, unique=True),
+    Column("email", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True), nullable=True),
+)
+
+# The many-to-many bridge between users and the households they may read or write (ticket 0046).
+# This is where "which household may this session touch?" is answered — `households_for_user` reads
+# it, and the request's `household_id` must be in that set or the route refuses (KTD-2).
+#
+# Keyed by `household_id`, so it **is** HOUSEHOLD_SCOPED and RLS-forced like every tenant table.
+# `user_id` is a bridge FK, not the tenant key — `test_no_table_carries_a_user_id` is scoped to say
+# exactly that. `role` is `owner` (may write) or `viewer` (read-only — the public demo principal,
+# KTD-10); it is the one role distinction the rung ships.
+household_members = Table(
+    "household_members",
+    metadata,
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "user_id",
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("role", Text, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("role IN ('owner', 'viewer')", name="ck_household_members_role"),
+)
+
+
+# Tables that are deliberately NOT scoped by household, each for a named and tested reason. `users`
+# is platform-level (a user predates any household, KTD-1); `plaid_webhooks` is item-keyed, not
+# household-keyed (ADR-0005). Naming them here makes each exclusion an asserted decision rather than
+# an omission — `tests/test_schema.py` checks a scoped table did not quietly land in this set and
+# vice versa.
+PLATFORM_TABLES: tuple[str, ...] = (
+    "users",
+    "plaid_webhooks",
+)
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
-# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` is deliberately
-# NOT here (ADR-0005): a webhook names an item, not a household.
+# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` and `users` are
+# deliberately NOT here (see `PLATFORM_TABLES`): a webhook names an item, and a user predates every
+# household.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "accounts",
     "cards",
@@ -459,16 +536,19 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "plaid_items",
     "plaid_transactions",
     "transfers",
+    "household_members",
 )
 
 __all__ = [
     "HOUSEHOLD_SCOPED",
     "MONEY",
+    "PLATFORM_TABLES",
     "RATE",
     "RLS_VAR",
     "accounts",
     "cards",
     "decisions",
+    "household_members",
     "households",
     "metadata",
     "plaid_items",
@@ -478,4 +558,5 @@ __all__ = [
     "snapshots",
     "spend_projections",
     "transfers",
+    "users",
 ]

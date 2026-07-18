@@ -299,6 +299,23 @@ class Repository:
             idempotency_key=idempotency_key,
         )
 
+    def add_membership(self, *, user_id: str, role: str) -> None:
+        """Add (or re-role) a user's membership in *this* household (ticket 0046).
+
+        A Repository method because `household_members` is HOUSEHOLD_SCOPED: the INSERT rides RLS
+        `WITH CHECK`, so a session scoped to household A cannot smuggle a membership into B — the
+        row is bound to `self.household_id` and any other value is rejected. `ON CONFLICT DO UPDATE`
+        rather than raising, so re-seeding converges and a role change is idempotent (matching
+        `set_policy`). `user_id` is a bridge FK; the household stays the tenant.
+        """
+        self._exec(
+            "INSERT INTO household_members (household_id, user_id, role)"
+            " VALUES (:h, :user_id, :role)"
+            " ON CONFLICT (household_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+            user_id=user_id,
+            role=role,
+        )
+
     def add_decision(self, **f: Any) -> None:
         self._exec(
             "INSERT INTO decisions (id, household_id, day, action, amount, target_card_id,"
@@ -348,3 +365,72 @@ def repository(engine: Engine, household_id: str) -> Iterator[Repository]:
     """
     with engine.connect() as conn, household_scope(conn, household_id) as scoped:
         yield Repository(conn=scoped, household_id=household_id)
+
+
+# --- users: platform-level, reached ONLY by single key (ticket 0046, KTD-1) ----------
+#
+# `users` is deliberately outside `HOUSEHOLD_SCOPED` (`backend/db/models.py`): a user predates every
+# household, so there is no household to scope the query to, and these are free functions on a raw
+# connection rather than methods on the household-scoped `Repository`.
+#
+# It carries PII with no RLS backstop, so the discipline that replaces RLS is: **every read is by a
+# unique key** (`id` or `stytch_user_id`), returning at most one row. There is no "list all users"
+# function here on purpose — an unfiltered scan is exactly the cross-user PII leak a later admin
+# route could add by accident, and `tests/test_identity_schema.py` asserts this module exposes no
+# such call.
+
+
+def add_user(
+    conn: Connection, *, user_id: str, stytch_user_id: str, email: str | None = None
+) -> None:
+    """Insert a user, idempotently on `stytch_user_id` (ticket 0046).
+
+    `ON CONFLICT (stytch_user_id) DO NOTHING` makes JIT provisioning safe under the concurrent
+    first-login race: two requests bearing the same brand-new session both try to provision, and the
+    second becomes a no-op rather than a unique-violation. The caller re-reads with
+    `get_user_by_stytch_id` to obtain the row either request won.
+    """
+    conn.execute(
+        text(
+            "INSERT INTO users (id, stytch_user_id, email) VALUES (:id, :sid, :email)"
+            " ON CONFLICT (stytch_user_id) DO NOTHING"
+        ),
+        {"id": user_id, "sid": stytch_user_id, "email": email},
+    )
+
+
+def get_user_by_stytch_id(conn: Connection, stytch_user_id: str) -> dict[str, Any] | None:
+    """The one row for a Stytch user, or None. Single-key lookup — the only sanctioned user read."""
+    row = (
+        conn.execute(
+            text("SELECT * FROM users WHERE stytch_user_id = :sid"), {"sid": stytch_user_id}
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
+
+
+def get_user_by_id(conn: Connection, user_id: str) -> dict[str, Any] | None:
+    """The one row for our user id, or None. Single-key lookup — the only other sanctioned read."""
+    row = (
+        conn.execute(text("SELECT * FROM users WHERE id = :id"), {"id": user_id}).mappings().first()
+    )
+    return dict(row) if row else None
+
+
+def households_for_user(conn: Connection, user_id: str) -> list[str]:
+    """The household ids a user belongs to, via the SECURITY DEFINER lookup (ticket 0046, ADR-0008).
+
+    The membership lookup has the same chicken-and-egg as the webhook doorbell (ADR-0005): to know
+    which household to scope to we must read `household_members`, but it is FORCE'd, so an unscoped
+    app session sees nothing in it. `households_for_user(text)` runs as its owner and reads it for
+    this one narrow purpose, returning only ids. This is the seam `authorize_household` (U2) stands
+    on: the requested `household_id` must be in this set or the route refuses.
+    """
+    rows = (
+        conn.execute(text("SELECT households_for_user(:u) AS household_id"), {"u": user_id})
+        .scalars()
+        .all()
+    )
+    return list(rows)

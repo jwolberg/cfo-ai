@@ -2332,3 +2332,40 @@ The write half, built end to end in shadow mode (no production money moves). Six
 
 Full suite: 636 passed, 5 skipped (the two transfer-sandbox gates + the Plaid sandbox gate + a
 deferred removed-transaction subtest).
+
+---
+
+## The identity rung (plan 2026-07-17-003, tickets 0046–0053)
+
+Started 2026-07-18. Building the identity precondition every route was missing — a verified user, a
+membership graph, and `household_id` derived from the session — plus the first write paths.
+
+### Ticket-numbering drift (build a ticket list)
+The plan targets tickets `0046–0053`. Ticket **files** on disk stopped at `0038` (the transport
+rung, 0034–0038). The sweep rung (plan 002) **reserved** `0039–0045` in its plan text but never wrote
+the ticket markdown — so those numbers are taken but unfiled. Followed the plan: identity is
+`0046–0053`, which is collision-free. The `0039–0045` gap belongs to the sweep rung, not this one.
+(Also: my note that tickets live in `.TerMinal/backlog` is wrong — that dir is empty; the real store
+is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a different repo entirely.)
+
+### U1 / 0046 — identity schema, membership lookup, ADR-0008 (done 2026-07-18)
+- **`users` access is single-key by construction, not just by convention.** The PII guard KTD-1 asks
+  for is implemented as: no `users()` list method exists anywhere, only `get_user_by_id` /
+  `get_user_by_stytch_id`, and `tests/test_identity_schema.py` asserts the module exposes no
+  list/scan function. That is the strongest form of the guard the plan sketched.
+- **`add_user` is `ON CONFLICT (stytch_user_id) DO NOTHING`** — this is the JIT concurrent-first-login
+  race the plan flagged as an FYI, closed at the primitive rather than deferred: two requests bearing
+  the same new session both provision; the second is a no-op; the caller re-reads.
+- **`is_demo` is backfilled true for `archetype IS NOT NULL`** in migration 0011, so the deployed demo
+  households become demo-plane members without a re-seed (mirrors U4's policy_events backfill logic).
+- **Decision — `PLATFORM_TABLES` tuple added to `models.py`.** Rather than only a comment, the
+  deliberately-unscoped tables (`users`, `plaid_webhooks`) are named in a tuple so the exclusion is
+  machine-checkable: a test asserts it is disjoint from `HOUSEHOLD_SCOPED`. Chose this over a bare
+  comment because "asserted, not incidental" was the explicit requirement.
+- **`test_no_table_carries_a_user_id` relaxed precisely**, not loosened: any table with `user_id` must
+  also carry `household_id`, and the only such table is the `household_members` bridge. A future data
+  table sneaking in a `user_id` tenant key still fails it.
+- Verified against real Postgres 17: migration up/down/up clean from 0001; full suite **661 passed,
+  5 skipped** (the 5 are the real-vendor sandbox gates — Plaid + transfers + Stytch-to-come — which
+  skip loudly without creds). CI does not lint `alembic/`, so the migration's long comment lines are
+  house-style, matching 0005/0007.

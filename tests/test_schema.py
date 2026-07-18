@@ -292,10 +292,16 @@ class TestTheAppRoleIsNotPrivileged:
 
 
 class TestTheTenantIsTheHousehold:
-    def test_no_table_carries_a_user_id(self, db) -> None:
+    def test_no_table_carries_a_user_id_as_its_tenant_key(self, db) -> None:
         """`architecture.md` [4] scoped everything by `user_id` until 2026-07-16. A `user` is a
         login; the household is the tenant, and one household may have two logins — for this
-        product that is not a footnote, since a spouse's spending is what breaks a forecast."""
+        product that is not a footnote, since a spouse's spending is what breaks a forecast.
+
+        Relaxed for ticket 0046: `household_members.user_id` is a legitimate **bridge FK**, not a
+        tenant key. So the rule is now precise — any table carrying `user_id` must also carry
+        `household_id` (the household is still the tenant), or it must be the platform `users` table
+        keyed on its own `id`. The banned shape is a household's *data* keyed by `user_id` alone.
+        """
         rows = (
             db.execute(
                 text(
@@ -306,17 +312,39 @@ class TestTheTenantIsTheHousehold:
             .scalars()
             .all()
         )
-        assert rows == [], f"tables scoped by user_id rather than household_id: {rows}"
+        # Every table with a user_id must also have a household_id (so user_id never scopes alone).
+        offenders = []
+        for table in rows:
+            has_household = db.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.columns"
+                    " WHERE table_schema='public' AND table_name=:t AND column_name='household_id'"
+                ),
+                {"t": table},
+            ).scalar()
+            if not has_household:
+                offenders.append(table)
+        assert offenders == [], f"tables scoped by user_id rather than household_id: {offenders}"
+        # And the only such table this rung introduces is the bridge — a guard against a future data
+        # table sneaking a user_id in unnoticed.
+        assert set(rows) == {"household_members"}, (
+            f"a new table carries user_id: {set(rows) - {'household_members'}} — is it a bridge, "
+            "or a tenant-key regression?"
+        )
 
-    def test_plaid_tables_do_not_exist_yet(self, db) -> None:
+    def test_speculative_plaid_tables_do_not_exist_yet(self, db) -> None:
         """ADR-0004 [2]: named in `architecture.md` [4], shape not yet known. Empty tables invite
-        guessed columns; the migration is cheap once Plaid makes the shape real."""
+        guessed columns; the migration is cheap once Plaid makes the shape real.
+
+        `users` was on this not-yet list until ticket 0046 built it (the identity rung), so it is
+        dropped from the list here — a real table with a real shape, no longer speculative.
+        """
         rows = (
             db.execute(
                 text(
                     "SELECT table_name FROM information_schema.tables"
                     " WHERE table_schema='public' AND table_name IN"
-                    " ('items','transactions','recurring_events','payments','users')"
+                    " ('items','transactions','recurring_events','payments')"
                 )
             )
             .scalars()

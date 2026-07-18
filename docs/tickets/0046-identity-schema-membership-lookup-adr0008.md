@@ -2,7 +2,7 @@
 id: "0046"
 title: The identity schema, the membership lookup, and ADR-0008
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: []
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # The identity schema, the membership lookup, and ADR-0008
@@ -69,19 +70,19 @@ tenancy change.
 
 ## Acceptance criteria
 
-- [ ] `users` created platform-level, keyed on `stytch_user_id` UNIQUE, NOT in `HOUSEHOLD_SCOPED`,
+- [x] `users` created platform-level, keyed on `stytch_user_id` UNIQUE, NOT in `HOUSEHOLD_SCOPED`,
       no household RLS — and that exclusion is asserted, not incidental.
-- [ ] `household_members` created RLS enabled AND forced, policy on `app.household_id`, granted to
+- [x] `household_members` created RLS enabled AND forced, policy on `app.household_id`, granted to
       `cfo_app`, `role` CHECK-constrained to `owner`/`viewer`, added to `HOUSEHOLD_SCOPED`.
-- [ ] `households_for_user` is STABLE SECURITY DEFINER with pinned `search_path`, returns only ids,
+- [x] `households_for_user` is STABLE SECURITY DEFINER with pinned `search_path`, returns only ids,
       and is refused to the app role outside its definer context.
-- [ ] `households.is_demo` added (default false), true on seeded synthetic households.
-- [ ] Migration up/down/up clean on a fresh DB from 0001; names its tables as literals (0033's rule).
-- [ ] IDOR leak test is **non-vacuous**: real `household_members` rows seeded; household B reads zero
+- [x] `households.is_demo` added (default false), true on seeded synthetic households.
+- [x] Migration up/down/up clean on a fresh DB from 0001; names its tables as literals (0033's rule).
+- [x] IDOR leak test is **non-vacuous**: real `household_members` rows seeded; household B reads zero
       of A's memberships.
-- [ ] A test asserts `users` is only ever read by single-key lookup (no unfiltered scan returns >1
+- [x] A test asserts `users` is only ever read by single-key lookup (no unfiltered scan returns >1
       row's PII).
-- [ ] `docs/decisions/0008-*.md` accepted, recording the definer fn + the `users` exception + the
+- [x] `docs/decisions/0008-*.md` accepted, recording the definer fn + the `users` exception + the
       tenancy change.
 
 ## Notes / risks

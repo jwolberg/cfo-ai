@@ -49,13 +49,29 @@ ALICE, BOB = "alice", "bob"
 
 @pytest.fixture
 def two_households(db):
-    """Alice and Bob, each with an account, a card, a policy, a decision, and a snapshot.
+    """Alice and Bob, each with an account, a card, a policy, a decision, a snapshot, and a member.
 
     Arranged as superuser so the arranging itself is not the thing under test.
     """
     with db.begin():
         for h in (ALICE, BOB):
             db.execute(text("INSERT INTO households (id, archetype) VALUES (:h, 'test')"), {"h": h})
+            # A user and a membership per household (ticket 0046). `users` is platform-level, so it
+            # is inserted unscoped; the membership rides the HOUSEHOLD_SCOPED leak test below.
+            # Without a real row here, `household_members` would ride the parametrization *empty*
+            # table — structural coverage that never proves alice's membership is invisible to bob,
+            # which is the built-tested-never-exercised failure this repo keeps finding.
+            db.execute(
+                text("INSERT INTO users (id, stytch_user_id, email) VALUES (:uid, :sid, :email)"),
+                {"uid": f"user-{h}", "sid": f"stytch-{h}", "email": f"{h}@example.test"},
+            )
+            db.execute(
+                text(
+                    "INSERT INTO household_members (household_id, user_id, role)"
+                    " VALUES (:h, :uid, 'owner')"
+                ),
+                {"h": h, "uid": f"user-{h}"},
+            )
             db.execute(
                 text(
                     "INSERT INTO accounts (id, household_id, kind, balance, connection,"
