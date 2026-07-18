@@ -1,7 +1,7 @@
 ---
 title: The sweep-execution rung — pay the card, two legs, behind a port, moving nothing first
 type: feat
-status: active
+status: completed
 date: 2026-07-17
 origin: docs/brainstorms/2026-07-17-the-sweep-execution-rung.md
 adr: docs/decisions/0006-*.md (owed by U4 — the FBO/custody commitment + the transfer-webhook tenancy exception)
@@ -55,17 +55,24 @@ first draft:
 
 ## Build Progress
 
-*Not started. Six units, six tickets (`0039`–`0044`), one ADR (`0006`). No code yet.*
-*Numbering confirmed against `main` (merged into this branch 2026-07-17): tickets run through `0038`, ADRs through `0005`, migrations through `0007` — so this rung's migrations are `0008`/`0009`.*
+*Built in shadow, 2026-07-17. Six units, six tickets (`0039`–`0044`), one ADR (`0006`), migrations
+`0008`/`0009`. **Shadow-complete: no production money moves.** The full suite is green; U6's real-
+sandbox hard gate skips loudly pending credentials and must run green before `submit()` turns on.*
 
-| Unit | Ticket | Status |
-|------|--------|--------|
-| U1 The `transfers` ledger, RLS, and the migration (`HOUSEHOLD_SCOPED` 8→9) | `0039` | not started |
-| U2 The `TransferProvider` port + `ShadowProvider` (`submit` = no-op) | `0040` | not started |
-| U3 Debit-leg auth (Plaid Auth → Increase), Method Connect, the FBO funding account + credential guards | `0041` | not started |
-| U4 The durable saga on Cloud Tasks: authorize → submit → poll/webhook → settle/return | `0042` | not started |
-| U5 The `SWEEP_IN_FLIGHT` engine feedback | `0043` | not started |
-| U6 The provider-sandbox hard gate (Increase + Method), IDOR + idempotency assertions | `0044` | not started |
+| Unit | Ticket | Commit | Status |
+|------|--------|--------|--------|
+| U1 The `transfers` ledger, RLS, and the migration (`HOUSEHOLD_SCOPED` 8→9) | `0039` | `f3a235a` | shipped |
+| U2 The `TransferProvider` port + `ShadowProvider` (`submit` = no-op) | `0040` | `b068abe` | shipped |
+| U3 Debit-leg auth (Plaid Auth → Increase), Method Connect, the FBO funding account + credential guards | `0041` | `a85f46a` | shipped |
+| U4 The durable saga on Cloud Tasks: authorize → submit → poll/webhook → settle/return | `0042` | `79c01ef` | shipped |
+| U5 The `SWEEP_IN_FLIGHT` engine feedback | `0043` | `4dfb6d3` | shipped |
+| U6 The provider-sandbox hard gate (Increase + Method), IDOR + idempotency assertions | `0044` | `8a4534c` | shipped (skips pending creds) |
+
+**Carried out of scope, as the plan set (all live-money-gated):** the FastAPI webhook receiver routes +
+Cloud Tasks worker + OIDC gating (mirror `backend/plaid/`; exercised with U6's live sandbox); the
+real Increase/Method HTTP clients wired to production; the live-request snapshot-assembly path that
+computes and passes `sweeps_in_flight` (readpath serves precomputed today); the `0016` attestation
+write-path; turning `submit()` on and the Reg E/GLBA/MTL build behind it.
 
 ---
 

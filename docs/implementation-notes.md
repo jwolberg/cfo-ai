@@ -2300,3 +2300,35 @@ half, not the card-paydown rail) — no change needed there.
 
 Predecessors named in the plan: merge `main` (this branch predated the transport-rung merge);
 fixture-attest pilot households (`0016` has no backend write-path); Increase+Method sandbox creds.
+
+---
+
+## 2026-07-17 — sweep-execution rung, U1–U6 built in shadow (feat/sweep-execution-rung)
+
+The write half, built end to end in shadow mode (no production money moves). Six commits, tickets
+0039–0044, ADR-0006, migrations 0008/0009. Decisions and deviations worth a human's eye:
+
+- **A monotonic `seq` identity column on `transfers` (found during U2).** `created_at` is `now()` =
+  transaction-start time, so a saga step that appends several rows in one transaction ties on it and
+  the append order is unrecoverable — which would break "latest state per leg" (U4/U5). Folded into
+  U1's migration since it wasn't pushed. The ledger orders by `seq`.
+- **Advisory locks, not `SELECT … FOR UPDATE`.** The append-only grant is SELECT+INSERT only, so the
+  app role cannot lock a row (`FOR UPDATE` needs UPDATE privilege). `submit_leg` and `apply_status`
+  serialize with `pg_advisory_xact_lock(hashtext(slot))` instead — which also works when no row yet
+  exists, the exact double-first-submit race. This is the mechanism behind KTD-2's "not a UNIQUE".
+- **`sweeps_in_flight` counts the debit leg only.** Both legs carry the same amount; counting both
+  would double one sweep. The debit is the money leaving checking, which is what an overdraft guard
+  cares about.
+- **Deferred to live wiring (not shipped, per shadow-first + the repo's no-untested-mechanism rule):**
+  the FastAPI webhook routes + Cloud Tasks worker + OIDC (mirror backend/plaid/); the real
+  Increase/Method HTTP clients; the live snapshot-assembly path that passes sweeps_in_flight. All are
+  exercised/wired with U6's live sandbox run, which needs credentials this environment lacks.
+- **U6 skips loudly.** No sandbox credentials here, so the hard gate skips with its full reason (never
+  silently). Provenance is honest: NOT yet run against a real sandbox. It must run green — a forced
+  return on each leg included — before submit() is promoted out of shadow.
+- **Vendor mid-flight question (Spinwheel).** Raised and researched: Spinwheel is a Method-category
+  biller-payoff API, not an Increase-category ACH rail, so "swap Increase→Spinwheel" mixed legs.
+  Resolved by the user as "continue as planned" — Increase debit + Method payoff, unchanged.
+
+Full suite: 636 passed, 5 skipped (the two transfer-sandbox gates + the Plaid sandbox gate + a
+deferred removed-transaction subtest).
