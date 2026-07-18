@@ -65,10 +65,16 @@ from backend import assistant, readpath
 from backend.artifact import DayRecord, Summary
 from backend.auth import expected_key, require_api_key
 from backend.db.repository import repository
-from backend.db.session import assert_plaid_tokens_safe_at_rest, assert_rls_binds, make_engine
+from backend.db.session import (
+    assert_plaid_tokens_safe_at_rest,
+    assert_rls_binds,
+    assert_transfer_credentials_safe_at_rest,
+    make_engine,
+)
 from backend.db.snapshots import PostgresSnapshotStore
 from backend.plaid import link, sync, webhook
 from backend.spend import CardObligations, SpendProjection
+from backend.transfer.funding import assert_transfer_funding_configured
 from engine.explain import explain, render
 
 # The Expo web target runs in a browser, on a different origin from the API — so without
@@ -103,6 +109,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # production. This refuses a non-sandbox boot until KMS makes it ciphertext — the quiet
         # trigger (`PLAID_ENV` flips) made loud. No-op when PLAID_ENV is unset (defaults sandbox).
         assert_plaid_tokens_safe_at_rest(conn)
+        # The write half's mirror: refuse a live-money boot until the debit credential is encrypted
+        # and Method's tenant-wide key comes from a secrets manager (KTD-7), and until the platform
+        # funding account is configured. No-ops in shadow (TRANSFER_MODE unset → 'shadow').
+        assert_transfer_credentials_safe_at_rest(conn)
+        assert_transfer_funding_configured()
 
     # Built once, at startup, so a deploy without the Anthropic secret fails here rather
     # than the first time a user opens the modal and asks a question.

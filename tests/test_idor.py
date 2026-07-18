@@ -120,6 +120,24 @@ def two_households(db):
                     "ptx": f"txn-{h}",
                 },
             )
+            # And one transfer-ledger row each (ticket 0039), same reason again: `transfers` is the
+            # highest-stakes scoped table (its rows are debits), so its leak test must run against
+            # real rows, not an empty set that passes vacuously.
+            db.execute(
+                text(
+                    "INSERT INTO transfers (id, household_id, target_card_id, decision_id,"
+                    " decision_date, leg, state, direction, amount, provider, idempotency_key)"
+                    " VALUES (:id, :h, :card, :dec, '2026-03-02', 'debit', 'submitted', 'debit',"
+                    " '50.00', 'increase', :idem)"
+                ),
+                {
+                    "id": f"xfer-{h}",
+                    "h": h,
+                    "card": f"card-{h}",
+                    "dec": f"dec-{h}",
+                    "idem": f"{h}-2026-03-02-debit-submit",
+                },
+            )
     return db
 
 

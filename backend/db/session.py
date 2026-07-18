@@ -127,6 +127,71 @@ def assert_plaid_tokens_safe_at_rest(conn: Connection) -> None:
         )
 
 
+class TransferCredentialWouldLeak(RuntimeError):
+    """Raised at startup when live money movement is on but its credentials are not safe at rest."""
+
+
+def transfer_mode() -> str:
+    """`shadow` (the default) or `live`. `live` means `submit()` moves real money (KTD-7).
+
+    Shadow is the default because it is the only mode where the transfer credentials protect
+    nothing — `submit()` is a logged no-op, so a plaintext debit credential or an env-var Method key
+    can move no money. Any other value means those credentials are live and must be safe at rest.
+    """
+    return os.environ.get("TRANSFER_MODE", "shadow").strip().lower()
+
+
+def _debit_credential_encryption_active() -> bool:
+    """Whether the ACH debit credential (the Increase-facing Plaid processor/Auth secret) is
+    encrypted at rest. False until KMS lands — the same honest False as the Plaid token guard, and
+    the reason a live boot cannot succeed yet (KTD-7, `architecture.md` [7.2])."""
+    return False
+
+
+def _method_api_key_from_secrets_manager() -> bool:
+    """Whether Method's tenant-wide API key comes from a secrets manager rather than a plaintext
+    env var. False until that path lands. A `METHOD_API_KEY` sitting in the environment is exactly
+    the whole-tenant plaintext credential this refuses (KTD-7): its blast radius is every household,
+    not one item, so it never rides an env var the way a Sandbox token may."""
+    return False
+
+
+def assert_transfer_credentials_safe_at_rest(conn: Connection | None = None) -> None:
+    """Refuse to start if `TRANSFER_MODE=live` while the money-movement credentials are unsafe.
+
+    The hard trigger for encryption is **production `submit()` itself** — not merely a production
+    env flag — so this gate binds on `transfer_mode()`, the switch that turns real money on. In
+    shadow (the default) it is a no-op: `submit()` calls no vendor, so nothing needs protecting.
+
+    Two credentials, two bars (KTD-7): the per-item debit credential reuses the Plaid token's
+    env-flag-shaped encryption gate; Method's tenant-wide API key must come from a secrets manager
+    from day one, because one leaked key moves money for every household. Both helpers are honestly
+    False until that infrastructure lands, so a live boot is refused today — which is the point:
+    you cannot flip real money on before the credential story is real. `conn` is accepted for parity
+    with the other startup guards and for the future ciphertext check.
+    """
+    if transfer_mode() != "live":
+        return
+    problems: list[str] = []
+    if not _debit_credential_encryption_active():
+        problems.append(
+            "the ACH debit credential would sit in plaintext (KMS encryption is not active)"
+        )
+    if not _method_api_key_from_secrets_manager():
+        problems.append(
+            "Method's tenant-wide API key would come from a plaintext env var, not secrets manager"
+        )
+    if problems:
+        joined = "; ".join(problems)
+        raise TransferCredentialWouldLeak(
+            f"TRANSFER_MODE is {transfer_mode()!r}, so submit() moves real money — but {joined}. "
+            "Refusing to start rather than move money against a credential that could drain or "
+            "misdirect funds. See the sweep-execution plan KTD-7: production submit() is the hard "
+            "trigger for KMS and the secrets-manager path, exactly as assert_rls_binds refuses a "
+            "bypass-capable role."
+        )
+
+
 def database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:

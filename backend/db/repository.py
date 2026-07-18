@@ -224,6 +224,81 @@ class Repository:
             change_type=change_type,
         )
 
+    def transfers(self) -> list[dict[str, Any]]:
+        """Every transfer-ledger row for this household, oldest first (ticket 0039).
+
+        The ledger is append-only, so a single logical transfer appears as several rows — one per
+        state transition. The latest-state-per-slot and non-terminal-sum queries the saga (U4) and
+        the `SWEEP_IN_FLIGHT` feedback (U5) need are theirs to add; this is the scoped read the
+        ledger unit and its tests stand on.
+        """
+        return self._all("SELECT * FROM transfers WHERE household_id = :h ORDER BY seq")
+
+    def sweeps_in_flight(self) -> Decimal:
+        """The dollars pulled from checking that have not yet settled or returned — the debit legs
+        whose latest state is `submitted` or `pending` (ticket 0043, U5).
+
+        The engine reads this as `Snapshot.sweeps_in_flight` and refuses to stack a second sweep on
+        an unsettled first (`decision-engine.md` [2.4]: "stacking is how you overdraft someone with
+        their own money"). Counts the **debit** leg only — that is the money leaving the user's
+        account; the payoff leg is downstream money already in the platform account, and counting
+        both would double the same sweep. One row per `decision_date` slot (its latest debit state),
+        so a settled or returned transition drops the slot out of the sum.
+        """
+        rows = self._all(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM ("
+            " SELECT DISTINCT ON (decision_date) amount, state FROM transfers"
+            " WHERE household_id = :h AND leg = 'debit'"
+            " ORDER BY decision_date, seq DESC"
+            ") latest WHERE state IN ('submitted', 'pending')"
+        )
+        return Decimal(rows[0]["total"])
+
+    def add_transfer(
+        self,
+        *,
+        transfer_id: str,
+        target_card_id: str,
+        decision_id: str,
+        decision_date: date,
+        leg: str,
+        state: str,
+        direction: str,
+        amount: Decimal,
+        provider: str,
+        idempotency_key: str,
+        provider_transfer_id: str | None = None,
+        return_code: str | None = None,
+    ) -> None:
+        """Append one transfer-ledger transition (ticket 0039). INSERT only — the table grants the
+        app role no UPDATE or DELETE, so a state transition is a new row, never a rewrite.
+
+        `amount` is a `Decimal` (ADR-0002 [2.2]); the NUMERIC column keeps the exact cent. Through
+        the repository like every other write, so RLS `WITH CHECK` binds the row to `household_id`:
+        a caller that named the wrong household cannot smuggle a transfer elsewhere — the INSERT is
+        rejected.
+        """
+        self._exec(
+            "INSERT INTO transfers"
+            " (id, household_id, target_card_id, decision_id, decision_date, leg, state, direction,"
+            " amount, provider, provider_transfer_id, return_code, idempotency_key)"
+            " VALUES (:tid, :h, :target_card_id, :decision_id, :decision_date, :leg, :state,"
+            " :direction, :amount, :provider, :provider_transfer_id, :return_code,"
+            " :idempotency_key)",
+            tid=transfer_id,
+            target_card_id=target_card_id,
+            decision_id=decision_id,
+            decision_date=decision_date,
+            leg=leg,
+            state=state,
+            direction=direction,
+            amount=amount,
+            provider=provider,
+            provider_transfer_id=provider_transfer_id,
+            return_code=return_code,
+            idempotency_key=idempotency_key,
+        )
+
     def add_decision(self, **f: Any) -> None:
         self._exec(
             "INSERT INTO decisions (id, household_id, day, action, amount, target_card_id,"

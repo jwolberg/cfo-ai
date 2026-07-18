@@ -19,16 +19,19 @@ we *know*. Every sweep is an independent draw from a tail we cannot afford, so h
 take is a risk lever as directly as how large any one of them is — and daily sweeping was a fossil
 of an advice product nobody ever re-argued (`prd.md` §2.4).
 
-**No payment rail is chosen, and nothing in the codebase assumes one.** ACH, a bill-pay partner, a
-deep-link handoff, an FBO account via a banking partner — moving money is a commodity, and the
-choice is foreclosed by a distribution question nobody has answered yet (`prd.md` §6.1, §7.1). The
-engine emits a `Decision`; something else moves the money. That is a decision, not a gap.
+**A payment rail is now built — behind a port, moving nothing.** The write half (the sweep-execution
+rung) debits checking (Increase, ACH) and pays the card (Method) behind a `TransferProvider` port;
+`submit()` is a logged no-op, so the saga runs and writes an append-only ledger while no dollar moves.
+No vendor is committed in production, the port keeps the choice swappable, and a distribution question
+nobody has answered yet (`prd.md` §6.1, §7.1) could still delete the owned-rail bet. The engine emits a
+`Decision`; the rung is now its consumer.
 
-**And no money has ever moved.** No Plaid link, no live balances, no rail, no real auth — nothing
-here has touched a real household. `prd.md` §8 puts exactly one thing in the *Now* column:
+**And no money has ever moved.** No Plaid link, no live balances, no real auth — nothing here has
+touched a real household, and the rail is unproven against the live vendor sandboxes (its hard gate
+skips loudly pending credentials). `prd.md` §8 puts exactly one thing in the *Now* column:
 **shadow mode** — run the engine, move nothing, and check what we *would* have swept against what
-actually happened. That machinery is built and has run against 60 synthetic households. The shadow
-itself has not. See **Status**, below.
+actually happened. That machinery — now the engine *and* the write half — is built. The shadow itself
+has not run. See **Status**, below.
 
 | | |
 |---|---|
@@ -36,7 +39,7 @@ itself has not. See **Status**, below.
 | `sim/` | The answer key: synthetic households whose true daily balance we know. |
 | `backend/` | The walk, the grader, the population calibration, the API, Postgres. |
 | `mobile/` | The surface: the decision feed, the spending view, the explanation. |
-| *the rail* | **Deliberately unbuilt** — see above. |
+| `backend/transfer/` | The write half: a two-leg provider port (Increase + Method), the durable saga, the ledger. **Built in shadow — `submit()` moves nothing, not turned on.** |
 
 ```bash
 .venv/bin/python -m pytest       # the suite is the spec
@@ -349,9 +352,12 @@ describes is a property of the deployment, not only of the test suite. `docs/run
 and `docs/runbooks/neon-provisioning.md` are the procedure, and are blunt about why the obvious
 connection string is the wrong one.
 
-**Not built.** Plaid — no link, no live balances, nothing has touched a real household. No payment
-rail, and deliberately so: `prd.md` §6.1 says no rail is chosen and *"nothing in the codebase
-assumes one — keep it that way,"* because §7.1's distribution question forecloses it. No real auth.
+**Not built / not live.** Plaid — no link, no live balances, nothing has touched a real household.
+The **payment rail is built in shadow** (the sweep-execution rung: a two-leg `TransferProvider` port
+— Increase debit, Method payoff — the durable saga, and the append-only ledger), but `submit()` moves
+nothing, no vendor is committed in production, and it is unproven against the live sandboxes until its
+hard gate runs. `prd.md` §7.1's distribution question could still delete the owned-rail bet. No real
+auth. Turning `submit()` on — with KMS and the Reg E/GLBA/MTL build behind it — is still ahead.
 
 ### The loop is closed, and the first thing it did was say no
 

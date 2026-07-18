@@ -26,10 +26,12 @@ from __future__ import annotations
 
 from sqlalchemy import (
     ARRAY,
+    BigInteger,
     CheckConstraint,
     Column,
     Date,
     ForeignKey,
+    Identity,
     Integer,
     MetaData,
     Numeric,
@@ -365,6 +367,82 @@ plaid_webhooks = Table(
 )
 
 
+# The append-only ledger of money movement — the write half (ticket 0039, the sweep-execution rung,
+# `docs/plans/2026-07-17-002-feat-sweep-execution-rung-plan.md`). One row per state transition of a
+# transfer leg: a debit (ACH pull from checking into a platform funding account) or a payoff (a
+# biller-payoff API landing that money on the card). **Append-only, exactly like
+# `plaid_transactions`:** a transition is a new row, never an UPDATE — the migration grants
+# `cfo_app` SELECT and INSERT and
+# nothing else, so history cannot be rewritten even by mistake. `architecture.md` [5] calls the
+# idempotency here "the highest-stakes in the system, because a duplicate sweep is an overdraft."
+#
+# The idempotency guard keys on `(household_id, decision_date)`, **not** `decision_id` — a same-day
+# re-decision mints a new `decision_id`, so a `decision_id`-keyed constraint would let a second
+# debit slip the guard meant to stop it (KTD-2). It is enforced by a `SELECT … FOR UPDATE` slot lock
+# in the saga (U4), not a UNIQUE here — and there is deliberately **no UNIQUE** on
+# `provider_transfer_id`, since a status-transition row or a superseding transfer shares it, exactly
+# the correction append-only exists to keep (same reasoning as `plaid_transactions`).
+#
+# `target_card_id` matches the persisted `decisions.target_card_id` column (the engine dataclass
+# field is `target_debt_id`; the naming reconciliation is a flagged follow-up, KTD-8).
+# `provider_transfer_id` and `return_code` are NULL until `submit` / a return arrives. Shadow mode
+# (U2) still writes these
+# rows; it just never calls a vendor, so `submit()` is a logged no-op that advances the ledger.
+transfers = Table(
+    "transfers",
+    metadata,
+    Column("id", Text, primary_key=True),
+    # A monotonic insertion order. `created_at` is `now()` — transaction-start time — so a saga step
+    # that appends several rows in one transaction ties on it, and the state machine's whole meaning
+    # is the *order* of transitions (which state is latest). `seq` is the total order the
+    # latest-state-per-slot query (U4/U5) reads; `created_at` stays for wall-clock reporting.
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    # The card this sweep pays down. Not FK'd (like `decisions`, which cannot FK the partitioned
+    # table either) — the card lives under `(household_id, id)` and the scope binds the household.
+    Column("target_card_id", Text, nullable=False),
+    # The decision that authorized this transfer, and the day it was decided. `(household_id,
+    # decision_date)` is the idempotency slot; a re-decision reuses it with a new `decision_id`.
+    Column("decision_id", Text, nullable=False),
+    Column("decision_date", Date, nullable=False),
+    # debit (fund the platform account) | payoff (land it on the card).
+    Column("leg", Text, nullable=False),
+    # The state machine (`architecture.md` [5]). Each transition is a new row.
+    Column("state", Text, nullable=False),
+    # debit (pull) | credit (push). Increase encodes this as the sign of the amount; the port takes
+    # an unsigned amount + this direction and converts (KTD-3).
+    Column("direction", Text, nullable=False),
+    # NUMERIC, never float (ADR-0002 [2.2]). A transfer always moves a positive amount.
+    Column("amount", MONEY, nullable=False),
+    # increase (debit leg) | method (payoff leg). The vendor behind the leg; shadow mode still names
+    # the intended provider, it just does not call it.
+    Column("provider", Text, nullable=False),
+    # The vendor's own id for the transfer, once `submit` returns. NULL before submission; **not
+    # unique** (a superseding or status-transition row shares it).
+    Column("provider_transfer_id", Text, nullable=True),
+    # The return/reversal code once one arrives (NACHA R-code for Increase; a Method error code).
+    Column("return_code", Text, nullable=True),
+    # Derived from the slot + a step suffix (KTD-4), passed as the vendor Idempotency-Key header so
+    # a worker retry of the same step reuses it.
+    Column("idempotency_key", Text, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("leg IN ('debit', 'payoff')", name="ck_transfers_leg"),
+    CheckConstraint(
+        "state IN ('proposed', 'authorized', 'submitted', 'pending', 'settled',"
+        " 'returned', 'failed', 'cancelled')",
+        name="ck_transfers_state",
+    ),
+    CheckConstraint("direction IN ('debit', 'credit')", name="ck_transfers_direction"),
+    CheckConstraint("provider IN ('increase', 'method')", name="ck_transfers_provider"),
+    CheckConstraint("amount > 0", name="ck_transfers_amount_positive"),
+)
+
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
 # each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` is deliberately
 # NOT here (ADR-0005): a webhook names an item, not a household.
@@ -377,6 +455,7 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "spend_projections",
     "plaid_items",
     "plaid_transactions",
+    "transfers",
 )
 
 __all__ = [
@@ -395,4 +474,5 @@ __all__ = [
     "policies",
     "snapshots",
     "spend_projections",
+    "transfers",
 ]

@@ -373,7 +373,10 @@
     and a cursored sync that lands transactions in a table &mdash; is now <b>built and proven
     end-to-end against Plaid Sandbox</b>, but not deployed. What still stands between a real bank
     login and a decision is the <b>recurring-event detector</b> (it needs real data to build
-    against); the <b>payment rail</b> that moves the money is deliberately unchosen for now.
+    against). The <b>payment rail</b> that moves the money is now <b>built in shadow</b> &mdash; a
+    two-leg design (ACH debit, then a card payoff) behind a provider port &mdash; but it
+    <b>moves nothing</b>: the saga runs and writes its ledger while <code>submit()</code> is a
+    logged no-op, and it has not yet been proven against the live vendor sandboxes.
   </p>
   <p class="lede">
     This is a few days into a large, complex build, and the scope ahead is almost
@@ -409,9 +412,10 @@
 <div class="callout go" style="margin-top:0">
   <p>Built and deployed at <strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
   Two screens of the customer app and the explain modal, running live against the API and the
-  database. <b>No mechanism for moving real funds is in place</b> ( no Plaid link, no payment
-  rail). Everything below the API is real and runs; everything that would touch an actual bank
-  account is not built.</p>
+  database. The <b>payment rail</b> (the sweep-execution rung) is now <b>built in shadow</b> behind
+  a provider port, but <b>no mechanism for moving real funds is turned on</b>: <code>submit()</code>
+  is a logged no-op, there is no Plaid link, and no live vendor call. Everything below the API is
+  real and runs; nothing yet touches an actual bank account.</p>
   <p>Codebase: <a href="https://github.com/jwolberg/cfo-ai">github.com/jwolberg/cfo-ai</a>
   is private, so the repository links on this page need access assigned.</p>
 </div>
@@ -419,15 +423,16 @@
 <p class="lede" style="margin:1.5rem 0">
   The path from the bank connection to the money actually moving. The core in the middle which
   decides, stores, serves, and the customer-facing app is built and deployed. <b>The ends are
-  not,</b> and the reason differs at each: one is the next problem, the other &mdash; moving money
-  &mdash; was deliberately unchosen and is now <b>scoped</b> (the two-leg rail below) but unbuilt.
+  not deployed,</b> and the reason differs at each: one is the next problem, the other &mdash;
+  moving money &mdash; was deliberately unchosen and is now <b>built in shadow</b> (the two-leg rail
+  below), moving nothing until it is proven against the live vendors and turned on.
   Below those, the additional surfaces a live money-moving service will need &mdash; onboarding and
   controls, an operator console, and observability &mdash; are scoped here but not yet built.
 </p>
 
 <div class="legend">
   <span class="key"><span class="swatch is-built"></span> Built and running</span>
-  <span class="key"><span class="swatch is-proven"></span> Built &amp; Sandbox-proven, not yet deployed</span>
+  <span class="key"><span class="swatch is-proven"></span> Built in code, not yet live (each box says Sandbox-proven or shadow)</span>
   <span class="key"><span class="swatch is-todo"></span> Not built</span>
 </div>
 
@@ -594,19 +599,21 @@
   <div class="lane">
     <div class="lane-label">Act</div>
     <div class="lane-boxes">
-      <div class="box todo">
-        <span class="tag">ACH</span>
-        <h3>Debit leg &mdash; scoped</h3>
-        <p>Pull the surplus from checking into a funding account <em>we</em> hold. The debit is
-           ordinary ACH, the solved half &mdash; but holding the money in transit is an <b>FBO
-           commitment</b>: Reg E, reconciliation, likely a money-transmitter license.</p>
+      <div class="box proven">
+        <span class="tag">Increase · shadow</span>
+        <h3>Debit leg &mdash; built in shadow</h3>
+        <p>Pull the surplus from checking into a funding account <em>we</em> hold (Increase, ACH).
+           The saga, ledger, and idempotency guard are built and tested; <code>submit()</code> moves
+           nothing. Holding the money in transit is an <b>FBO commitment</b> (Reg E, reconciliation,
+           likely a money-transmitter license), gated behind turning it on.</p>
       </div>
-      <div class="box todo">
-        <span class="tag">Method</span>
-        <h3>Payoff leg &mdash; scoped</h3>
-        <p>Land that money on the card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot
-           route. There is no universal &ldquo;pay a card&rdquo; API; a <b>biller-payoff API</b>
-           (Method, the working assumption) is the channel that reaches any issuer.</p>
+      <div class="box proven">
+        <span class="tag">Method · shadow</span>
+        <h3>Payoff leg &mdash; built in shadow</h3>
+        <p>Land that money on the card at <em>someone else&rsquo;s</em> issuer, which plain ACH
+           cannot route &mdash; a <b>biller-payoff API</b> (Method) reaches any issuer. Built behind
+           the same port; unproven against the live sandbox until the hard gate runs, and moving
+           nothing until then.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not scoped</span>
@@ -679,24 +686,26 @@
 </div>
 
 <div class="callout">
-  <p><strong>The two unbuilt ends are not the same kind of unbuilt.</strong> <b>Source</b> is the
+  <p><strong>Both ends are now built in code; neither is live.</strong> <b>Source</b> is the
   next problem, and it is now partly solved: the <b>Plaid ingest transport is built and proven
   against Sandbox</b> &mdash; token exchange, the webhook doorbell, and cursored sync all land rows
   in a table. What remains is deploying it, a customer link screen, and the piece Sandbox can&rsquo;t
   help build: a <b>recurring-event detector</b> that turns raw transactions into paychecks and bills.
   Without it there are no forecast events, so a linked household would still produce no decision at
   all &mdash; which is why the transport rung deliberately stops one seam short of the forecast.</p>
-  <p><b>Act</b> was unbuilt <em>deliberately</em>, and as of 2026-07-17 it is <b>scoped</b> (the
-  sweep-execution rung). Moving money is two legs, not one. The <b>debit leg</b> pulls from checking
-  &mdash; ordinary ACH, a solved problem. The <b>payoff leg</b> has to land that money on a card at
-  <em>someone else&rsquo;s</em> issuer, which plain ACH cannot route; the channel that reaches any
-  issuer is a <b>biller-payoff API</b> (Method, the working assumption). Because that API pays only
-  from an account <em>we</em> hold, the design <b>commits to holding funds in transit</b> &mdash; the
-  FBO posture the docs say to avoid, taken on knowingly. Two honest caveats remain: <b>distribution
-  can still delete the choice</b> (embed with a bank or issuer and the partner owns the rail, and the
-  custody), and <b>the code still assumes nothing and moves nothing</b> &mdash; the engine emits a
-  decision, the saga runs in <em>shadow</em>, and no dollar moves until a measured tail-risk number
-  and the compliance posture are both real.</p>
+  <p><b>Act</b> was unbuilt <em>deliberately</em>, and as of 2026-07-17 it is <b>built in shadow</b>
+  (the sweep-execution rung, U1&ndash;U6). Moving money is two legs, not one. The <b>debit leg</b>
+  pulls from checking &mdash; ordinary ACH (Increase). The <b>payoff leg</b> has to land that money
+  on a card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot route; the channel that
+  reaches any issuer is a <b>biller-payoff API</b> (Method). Because that API pays only from an
+  account <em>we</em> hold, the design <b>commits to holding funds in transit</b> &mdash; the FBO
+  posture the docs say to avoid, taken on knowingly. The saga, the append-only ledger, the
+  idempotency guard, the webhook trust boundary, and the <code>SWEEP_IN_FLIGHT</code> feedback are
+  all built and tested. Three honest caveats remain: <b>distribution can still delete the choice</b>
+  (embed with a bank or issuer and the partner owns the rail, and the custody); <b>the rail is
+  unproven against the live vendors</b> until the sandbox hard gate runs (it skips loudly today); and
+  <b>the code moves nothing</b> &mdash; <code>submit()</code> is a logged no-op, and no dollar moves
+  until a measured tail-risk number and the compliance posture are both real.</p>
   <p><strong>On TreasuryDirect.</strong> It is the &ldquo;invest what&rsquo;s freed up&rsquo;&rdquo;
   half of the product statement, and it appears nowhere in the codebase. One document needs
   correcting before it is built: <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a> &sect;4.2 still lists
