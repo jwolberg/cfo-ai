@@ -342,3 +342,22 @@ evidence.
 `0046`–`0050` are backend; `0051`/`0052` are mobile; `0053` is the hard gate. `0047`, `0053`, and the
 sandbox half of `0047` **skip loudly** without Stytch sandbox creds rather than passing hollow.
 
+## Status: `0046`–`0052` done. `0053` landed but not green.
+
+Built 2026-07-18, one commit per unit. `0046`–`0050` (backend) are verified against real Postgres 17
+(each migration up/down/up clean from zero); full backend suite **731 passed, 9 skipped** (the skips
+are the vendor gates — Plaid, transfers, and the three Stytch-`0053` tests). `0051`/`0052` (mobile) are
+verified to `tsc` + `jest` (**88 passed**) per the session's agreed constraint — no device or Stytch
+project here, so the **Stytch Expo sign-in SDK wiring and any on-device / deployed-web run are flagged,
+unexercised gaps**, documented in `mobile/src/api/session.ts` and the two tickets.
+
+`0053` is the honest exception: the gate **file** exists and **skips loudly** without credentials, but
+it has **never run green** (no Stytch project in this environment; `_mint_session` raises by design so
+it cannot pass hollow). Closing it needs a Stytch **test** project, `_mint_session` wired to its API, a
+green run — folding any session-JWT-shape correction into `backend/identity/stytch.py`, the one vendor
+file — and the date recorded. Two spawned additions landed with `0052`: **`GET /policy`** (the Settings
+screen needs the current guardrails) and **reason `params` on the decisions wire** (so the feed can
+open the unmatched-payment dead end). The live-assembly path (nothing reads `Repository.policy()` /
+`attested_for` into a live `decide()` yet) stays the plan's named, open Prerequisite — the settings and
+attestation writes are proven **persisted + audited + read-back**, not yet as a re-decided sweep.
+
