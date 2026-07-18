@@ -941,6 +941,7 @@ def walk(
     days: int,
     policy: UserPolicy = DEMO_POLICY,
     spend_quantile: float | None = SPEND_QUANTILE,
+    attested: bool = True,
 ) -> Iterator[WalkDay]:
     """Step a household through `days`, deciding each one. **The** walk — there is only this one.
 
@@ -960,6 +961,15 @@ def walk(
     not. That is safe, and not by luck — every derivation reads `history.as_of(today)`, so days
     beyond `today` are invisible to the snapshot. `tests/test_precompute.py` asserts it rather
     than trusting it.
+
+    `attested` defaults `True` and is threaded straight into each day's `assemble_snapshot` (ticket
+    0056). The three simulation callers — `build()`, `replay()`, the seeder — keep the default,
+    because a simulation is attested by construction and the regression oracle must grade the engine
+    that shipped. The live caller (`backend/livepath.py`) passes `attested_for(repo)` instead, so a
+    household that has not attested its card set walks to an `UNATTESTED` coverage and the
+    money-gate holds. Passing it here rather than reading a database keeps the walk — and
+    `assemble_snapshot` —
+    pure over their inputs, the same discipline `sweeps_in_flight` follows.
     """
     # One ledger per card. `spec.card` — the singular — is deliberately not used here: its own
     # docstring says reading it "on a two-card household is exactly the bug this feature exists to
@@ -1044,6 +1054,7 @@ def walk(
             # much moved, not where it landed.
             last_sweep_amount=sweeps[last_sweep][0] if last_sweep else None,
             spend_quantile=spend_quantile,
+            attested=attested,
         )
 
         decision: Decision = decide(snapshot)
@@ -1108,17 +1119,7 @@ def build(
         if w.offset < warmup_days:
             continue
 
-        served.append(
-            DayRecord(
-                day=w.day,
-                decision=w.decision,
-                checking_balance=money(w.checking),
-                savings_balance=SAVINGS_BALANCE,
-                buffer_floor=policy.buffer_floor,
-                debts=_debts_of(w),
-                history_days=w.snapshot.history_days,
-            )
-        )
+        served.append(served_record(w, policy.buffer_floor))
 
     days = tuple(served)
     _assert_demo_is_worth_showing(days)
@@ -1129,6 +1130,26 @@ def build(
         window_end=days[-1].day,
         days=days,
         summary=summarize(days),
+    )
+
+
+def served_record(w: WalkDay, buffer_floor: Decimal) -> DayRecord:
+    """One walked day, as the served `DayRecord` — the shape the API and the summary read.
+
+    Lifted out of `build()` so the live-assembly path (ticket 0056, `backend/livepath.py`) turns a
+    `WalkDay` into a `DayRecord` through the **same** mapping the shipped artifact does, rather than
+    a second copy that could drift — the `assemble_snapshot`/`walk` discipline applied to the
+    conversion. `buffer_floor` is passed in because it is the *policy's*, and the live path's policy
+    is the household's current one, not the demo default.
+    """
+    return DayRecord(
+        day=w.day,
+        decision=w.decision,
+        checking_balance=money(w.checking),
+        savings_balance=SAVINGS_BALANCE,
+        buffer_floor=buffer_floor,
+        debts=_debts_of(w),
+        history_days=w.snapshot.history_days,
     )
 
 

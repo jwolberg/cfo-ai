@@ -2,7 +2,7 @@
 id: "0056"
 title: The live-assembly path — a settings/attestation write that changes a live decision
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent

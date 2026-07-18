@@ -57,7 +57,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection
 from sqlalchemy.exc import SQLAlchemyError
 
-from backend import assistant, readpath
+from backend import assistant, livepath, readpath
 
 # The wire shapes, imported as types and nothing else. `backend.artifact` is where they are
 # defined; the *file* that module reads and writes is a test fixture (`0031`) and this process
@@ -81,6 +81,7 @@ from backend.identity.deps import (
     households_for,
 )
 from backend.plaid import link, sync, webhook
+from backend.precompute import served_record
 from backend.spend import CardObligations, SpendProjection
 from backend.transfer.funding import assert_transfer_funding_configured
 from engine.decide import MIN_SWEEP
@@ -367,6 +368,42 @@ def no_spend_projection(household_id: str) -> JSONResponse:
     )
 
 
+def frozen_household(household_id: str) -> JSONResponse:
+    """A seeded demo household asked for a *live* decision (ticket 0056).
+
+    A 409, not a 404 or a 500: the household is real and its decisions are on record — but they are
+    the **frozen** ones the seeder walked, and re-deciding them live would re-grade the shipped
+    engine, which is the one thing the live path must not do. The served window is `/decisions`;
+    live assembly is only for a linked household whose policy and attestation are the user's own.
+    """
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "frozen_household",
+            "household_id": household_id,
+            "message": "This is a demo household; its decisions are served from /decisions.",
+        },
+    )
+
+
+def no_linked_data(household_id: str) -> JSONResponse:
+    """A linked household with no transaction history to assemble a live decision from yet.
+
+    A 409, and specifically not a 500: the household is real and linked, and the missing piece is
+    the `plaid_transactions` → `History` adapter — the deferred Link rung (`backend/livepath.py`).
+    Reported distinctly from `no_household` so that, the day a real linked household hits this, it
+    reads as "no data yet", not "no such household".
+    """
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "no_linked_data",
+            "household_id": household_id,
+            "message": "We don't have linked transaction data for that household yet.",
+        },
+    )
+
+
 @app.get("/health", include_in_schema=False)
 async def health() -> dict[str, str]:
     """Cloud Run's probe. Deliberately unauthenticated, and deliberately says nothing.
@@ -428,6 +465,47 @@ async def decisions(
         },
         "summary": summary_json(window.summary),
         "decisions": [decision_json(record) for record in reversed(window.days)],
+    }
+
+
+@app.get("/households/{household_id}/live-decision")
+async def live_decision(
+    repo: Annotated[Repository, Depends(authorize_household)],
+) -> Any:
+    """Re-decide `today` from the household's **current** policy and attestation. Ticket 0056.
+
+    The honest close of the `0049`/`0050` shadow caveats: those write paths persist and read back a
+    user's guardrails and card attestation, but no code fed them into a live `decide()`. This does —
+    it reads `Repository.policy()` and `attested_for(repo)` and threads both into the pure
+    `assemble_snapshot`/`walk`, so a settings or attestation write changes the next decision.
+
+    **Guarded, because a live re-decide is only ever right for a linked household.** A **frozen**
+    seeded demo household is `409`'d to `/decisions`: its decisions are the ones the seeder walked,
+    and re-grading them would re-decide the shipped engine — the exact thing `assemble_snapshot`
+    stays pure to prevent. A **linked** household has no `plaid_transactions` → `History` adapter
+    yet (the deferred Link rung, `backend/livepath.py`), so it `409`s `no_linked_data` until that
+    seam lands. The path is built and its seam is proven now; its first real caller arrives with the
+    Link rung.
+    """
+    if repo.archetype() is not None:
+        return frozen_household(repo.household_id)
+
+    try:
+        history = livepath.linked_history(repo)
+    except livepath.NoLinkedHistory:
+        return no_linked_data(repo.household_id)
+
+    try:
+        # The last day we have data for is this household's "today" — a fact about the history,
+        # not the wall clock, so the decision is deterministic for a given linked dataset.
+        day = livepath.live_decision(repo, history, history.end)
+    except livepath.NoLivePolicy:
+        return no_household(repo.household_id)
+
+    record = served_record(day, day.snapshot.policy.buffer_floor)
+    return {
+        "today": record.day.isoformat(),
+        "decision": decision_json(record),
     }
 
 
@@ -660,10 +738,10 @@ async def update_policy(
     validated (`_validate_policy`), flagged if it *loosens* a guardrail (KTD-9), and appended to
     `policy_events`; `Repository.policy()` then reads it back as the current policy.
 
-    *(Shadow caveat, ticket 0049: nothing reads `Repository.policy()` into `decide()` for a live
-    household yet — the demo uses a hardcoded `UserPolicy` and `readpath.py` serves frozen
-    snapshots. So this proves write + audit + latest-read, not a re-decided sweep; the live path is
-    the named, open Prerequisite.)*
+    *(The live path is built (ticket 0056): `GET /live-decision` reads `Repository.policy()` into a
+    fresh `decide()` for a linked household, so a write here changes that household's next decision.
+    The **frozen demo** still serves a hardcoded `UserPolicy` through `readpath.py` — re-deciding it
+    would re-grade the shipped engine — so the change bites for a linked household, not the demo.)*
     """
     _validate_policy(body)
 
@@ -698,9 +776,10 @@ async def attest(
     override lives in `derive_portfolio`, so a household with a card-shaped outflow to a card we
     cannot see cannot attest its way to `COMPLETE`.
 
-    *(Same shadow caveat as the policy write: `readpath.py` serves frozen precomputed snapshots, so
-    a live decision reflects the attestation only once its snapshot is re-assembled — the live path
-    is the plan's named, open Prerequisite. What lands here is the write + invalidation, shadowed.)*
+    *(The live path is built (ticket 0056): `GET /live-decision` recomputes `attested_for(repo)`
+    into a fresh decision for a linked household, so attesting clears its next money-gate. The
+    frozen demo still serves precomputed snapshots, so the attestation bites for a linked household,
+    not the demo. `UNMATCHED_PAYMENT` stays unoverridable either way — `tests/test_livepath.py`.)*
     """
     fingerprint = card_fingerprint(c["id"] for c in repo.cards())
     repo.add_attestation(card_fingerprint=fingerprint, attested_by=user.id)
