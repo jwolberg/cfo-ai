@@ -34,6 +34,44 @@ from backend.plaid.deps import get_engine, get_plaid_client
 router = APIRouter(prefix="/plaid", tags=["plaid"])
 
 
+class LinkTokenResponse(BaseModel):
+    link_token: str
+    expiration: str
+
+
+@router.post("/link/token")
+def link_token(
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+    client: Annotated[Any, Depends(get_plaid_client)],
+) -> LinkTokenResponse:
+    """Mint a short-lived Plaid `link_token` for the signed-in user — the thing a client-side Link
+    SDK needs to open. The missing first step of the loop (there was only `/link/exchange`, which
+    assumed a `public_token` a UI produced).
+
+    The token is keyed to `client_user_id = user.id` (our stable per-user id, ticket 0046), not a
+    household — a household is chosen only at `/link/exchange`, from the session, so nothing here
+    can point a link at someone else's data. `products=[transactions]` matches what the sync reads
+    (`backend/plaid/sync.py`); Sandbox needs no more. Any signed-in user may mint one; the exchange
+    is where ownership and the demo-plane refusal are enforced.
+    """
+    from plaid.model.country_code import CountryCode
+    from plaid.model.link_token_create_request import LinkTokenCreateRequest
+    from plaid.model.link_token_create_request_user import LinkTokenCreateRequestUser
+    from plaid.model.products import Products
+
+    resp = client.link_token_create(
+        LinkTokenCreateRequest(
+            user=LinkTokenCreateRequestUser(client_user_id=user.id),
+            client_name="cfo-ai",
+            products=[Products("transactions")],
+            country_codes=[CountryCode("US")],
+            language="en",
+        )
+    )
+    return LinkTokenResponse(link_token=resp.link_token, expiration=str(resp.expiration))
+
+
 class LinkExchangeRequest(BaseModel):
     # No `household_id`: a user links to *their own* household, derived from the session. There is
     # nothing here to point at someone else's data.

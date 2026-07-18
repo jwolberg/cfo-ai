@@ -34,8 +34,9 @@ from fastapi import APIRouter, Depends, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from backend.db.repository import Repository
+from backend.db.repository import Repository, repository
 from backend.db.session import household_scope
+from backend.identity.deps import User, current_user
 from backend.plaid.deps import get_engine, get_oidc_verifier, get_plaid_client
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
@@ -220,3 +221,34 @@ async def sync_poll(
         return Response(status_code=status.HTTP_401_UNAUTHORIZED)
     results = run_poll(engine, client)
     return {"items_synced": len(results)}
+
+
+@router.post("/sync/now", response_model=None)
+def sync_now(
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+    engine: Annotated[Engine, Depends(get_engine)],
+    client: Annotated[Any, Depends(get_plaid_client)],
+) -> dict:
+    """Owner-triggered sync of the caller's own household — the session-authed sync trigger.
+
+    The production triggers above are OIDC-gated for Cloud Tasks / Cloud Scheduler: unreachable from
+    a browser, and the webhook path needs a public URL Plaid can call. This is their session-authed
+    sibling, so a household **owner** can pull their own items on demand — which lets the web Link
+    page prove the loop end to end (link → exchange → sync → rows) without any GCP wiring. It
+    reuses `_linkable_household`, so the owner + non-demo + single-household checks are identical to
+    the exchange it follows; a `viewer` or a non-owner is refused there.
+    """
+    from backend.plaid.link import _linkable_household
+
+    household_id = _linkable_household(engine, user)
+    with repository(engine, household_id) as repo:
+        item_ids = repo.plaid_item_ids()
+    results = [run_sync(engine, plaid_item_id, client) for plaid_item_id in item_ids]
+    return {
+        "household_id": household_id,
+        "items_synced": len(results),
+        "added": sum(r.added for r in results),
+        "modified": sum(r.modified for r in results),
+        "removed": sum(r.removed for r in results),
+    }
