@@ -13,9 +13,11 @@ money).
 
 **Status:** partly built, and the line moved on 2026-07-16. [`engine/`](../engine),
 [`sim/`](../sim), [`backend/`](../backend), and [`mobile/`](../mobile) exist and are described as
-built — [3.4], [3.6], [3.7]. **Ingest, normalization, money movement, and auth do not** — [3.1],
-[3.2], [5], and Clerk in [2] are still intent, and should be read as *what we would build and in
-what order*, not as description.
+built — [3.4], [3.6], [3.7]. **Ingest, normalization, and auth do not** — [3.1], [3.2], and Clerk in
+[2] are still intent, and should be read as *what we would build and in what order*, not as
+description. **Money movement ([5]) is built in shadow as of 2026-07-17** — the write half runs, the
+saga and ledger and feedback are real and tested, and `submit()` moves nothing (the sweep-execution
+rung).
 
 **The decision log ([3.3]) was the hard case, and as of 2026-07-17 it is fact rather than intent.**
 Its schema — tables, forced RLS, partitions, a scoping repository, an IDOR suite — was built two
@@ -24,8 +26,9 @@ tickets before anything called it, which this section spent that time saying pla
 serves nobody. It stays in the tree as the **oracle** that proves archetype A's decisions never
 moved — a test input, which is what ADR-0004 [3] always said it would become.
 
-**What is still intent:** ingest ([3.1]), normalization ([3.2]), money movement ([5]), auth, and
-**the deploy**. The live revision predates all of this — see [3.6].
+**What is still intent:** ingest ([3.1]), normalization ([3.2]), auth, and **the deploy**. Money
+movement ([5]) is built in shadow — its production wiring, the live-sandbox hard gate, and turning
+`submit()` on are the parts still ahead. The live revision predates all of this — see [3.6].
 
 ---
 
@@ -492,24 +495,34 @@ here.
 
 ---
 
-## [5] Money movement (not yet built — scoped 2026-07-17)
+## [5] Money movement (built in shadow — 2026-07-17)
 
 There is **no universal "pay this card" API.** Card networks are not a repayment rail;
 each issuer decides what it accepts. Options, in increasing order of pain: deep-link
 handoff → bill-pay partner → FBO/custodial account with a bank partner (heaviest
 compliance; avoid as long as possible).
 
-**The rail is now scoped** — see the sweep-execution rung
-([`brainstorms/2026-07-17-the-sweep-execution-rung.md`](./brainstorms/2026-07-17-the-sweep-execution-rung.md)).
+**The rail is now built in shadow** — see the sweep-execution rung
+([plan](./plans/2026-07-17-002-feat-sweep-execution-rung-plan.md), [ADR-0006](./decisions/0006-the-fbo-commitment-and-the-transfer-webhook-lookup.md)).
 Paying a card is **two legs, not one**: a **debit leg** (ACH pull from the user's checking into a
-platform funding account — an ordinary ACH provider, Increase working assumption) and a **payoff leg**
-(land it on the issuer's card — no plain ACH can route this). The payoff leg is what the ladder above
-was hedging: the 2026 channel that reaches any issuer is a **biller-payoff API, Method** working
-assumption (fact-checked against `docs.methodfi.com`, 2026-07-17). Method's source *must* be a platform
+platform funding account — Increase, funded via Plaid Auth numbers, not a processor token) and a
+**payoff leg** (land it on the issuer's card — no plain ACH can route this). The payoff leg is what
+the ladder above was hedging: the 2026 channel that reaches any issuer is a **biller-payoff API,
+Method** (fact-checked against `docs.methodfi.com`, 2026-07-17). Method's source *must* be a platform
 funding account, so the money transits an account we hold — the rung **commits to the FBO/custodial
 posture** knowingly, which turns on the Reg E / GLBA / money-transmitter and reconciliation obligations
 from the first live transfer. Named processors stay illustrations, not commitments
 ([`prd.md`](./prd.md) §6); the design lives behind a `TransferProvider` port so either leg swaps.
+
+**What is built (shadow, moves nothing):** the append-only `transfers` ledger (RLS, migration `0008`),
+the `TransferProvider` port + a `ShadowProvider` whose `submit()` is a logged no-op, the Increase and
+Method adapters, the durable saga on Cloud Tasks with an advisory-lock idempotency guard, webhook
+signature/replay verification and reconciliation (migration `0009`), and the `SWEEP_IN_FLIGHT`
+feedback. **What is still ahead:** the FastAPI webhook receiver + Cloud Tasks worker wiring, the real
+provider HTTP clients, the live-request snapshot-assembly path, the U6 sandbox hard gate run (it skips
+loudly pending credentials), and turning `submit()` on with KMS + the compliance build behind it.
+Temporal was deliberately *not* adopted here — the saga runs on the proven Cloud Tasks pattern, and
+Temporal enters at the same trigger that turns real money on ([1.2]).
 
 Never call `make_payment()` from a scheduled job against a live balance. The state machine
 is the product — and Method's verified lifecycle (`pending → processing → sent → posted`, and

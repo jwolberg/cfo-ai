@@ -279,13 +279,21 @@ ever had about itself, and they are not yet evidence about households.
    banking partner. **Custody brings materially more compliance and reconciliation burden — avoid
    for as long as possible.**
 
-   **No rail is chosen, and nothing in the codebase assumes one.** `engine/` and `sim/` have zero
+   **No rail is committed, and the engine still assumes none.** `engine/` and `sim/` have zero
    dependencies; the engine emits a `Decision` and something else moves the money
    ([`decision-engine.md`](./decision-engine.md) [6.4]). Where processors are named anywhere in
    these docs, they are illustrations of a *pricing shape*, never a vendor commitment — §2 cites
    them to argue the rail is a commodity. Keep it that way: the ladder from renting origination →
    owning orchestration on an FBO → a direct ODFI relationship is a **cost and control** decision,
    not a capability one, and per-item cost only starts to matter at a volume we are nowhere near.
+
+   **Update (2026-07-17): the write half is built in shadow.** The sweep-execution rung
+   ([plan](./plans/2026-07-17-002-feat-sweep-execution-rung-plan.md), [ADR-0006](./decisions/0006-the-fbo-commitment-and-the-transfer-webhook-lookup.md))
+   now assumes a *reversible working-assumption* rail behind a `TransferProvider` port — Increase for
+   the ACH debit, Method for the card payoff — and commits to the FBO custody posture knowingly. This
+   does not violate the rule above: the engine still assumes nothing, no vendor is committed in
+   production, the port keeps the choice swappable, and `submit()` moves nothing. The one place a rail
+   could still leak into a decision rule (`MIN_SWEEP`) stays flagged-open, below.
 
    **The trap to avoid** is letting a processor's fee schedule leak into a decision rule. A sweep
    cadence or a minimum-sweep floor tuned to someone's per-transaction price is a **risk parameter
@@ -366,6 +374,13 @@ had before switching on the money: **a measured tail-risk number.**
 
 The **machinery** of shadow mode is built and has run; the **shadow** has not. That distinction is
 the whole of the current status, and collapsing it in either direction would be a lie:
+
+**Update (2026-07-17): the write half's machinery is now built in shadow too.** Beyond the engine and
+grader below, the money-movement rung (the append-only ledger, the two-leg provider port, the durable
+saga, webhook verification, and the `SWEEP_IN_FLIGHT` feedback) is built and tested — but `submit()`
+is a logged no-op, it is unproven against the live vendor sandboxes (the hard gate skips pending
+credentials), and it moves nothing. So the "machinery built, shadow not run" framing now covers both
+halves: the engine decides in shadow, and the rung would-execute in shadow, and no dollar has moved.
 
 - **Built and run.** The grader (`engine/outcome.py`) has a caller (`backend/replay.py`), and
   `backend/calibrate.py` grades a population at every setting of the spend model. It has produced
