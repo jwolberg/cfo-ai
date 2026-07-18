@@ -2557,3 +2557,37 @@ the honest close of the `[~]` shadow caveats in `0049`/`0050`. A write now chang
   even with a current attestation (the override holds). The 7 DB-backed tests in `test_livepath.py`
   skip locally (no Postgres) and run on CI's fresh-migrated DB. Full suite **442 passed, 306 skipped**;
   ruff clean.
+
+### The Link rung, Phase 1 — originate a bank link + onboarding (2026-07-18)
+Branch `feat/plaid-link-onboarding` (off main). Closes the two mechanical gaps between the
+Sandbox-proven ingest transport and "a real user links a bank": there was **no way to start a Link
+session** (only `/link/exchange`, which assumed a `public_token` nothing produced) and **no
+self-service onboarding** (no `POST /households`; `add_membership` only ever called by the seeder).
+This makes the loop drivable end to end against Plaid **Sandbox**.
+
+- **`POST /households`** (onboarding, `backend/main.py`) → `create_household()`
+  (`repository.py`): creates a real household (`archetype=NULL`, `is_demo=false`) and the owner
+  membership in **one scoped transaction**, so there is never an orphan household with no owner.
+  Idempotent for the single-household case the Link flow assumes (returns the existing one,
+  `created:false`); belonging to >1 real household is the `409` ambiguity `_linkable_household`
+  already refuses.
+- **`POST /plaid/link/token`** (`backend/plaid/link.py`): mints a Plaid `link_token` keyed to
+  `client_user_id = user.id`, `products=[transactions]`. The missing first step; the household is
+  still only chosen at exchange, from the session.
+- **`POST /plaid/sync/now`** (`backend/plaid/sync.py`): the session-authed, owner-gated sibling of
+  the OIDC-gated `/sync/worker`+`/sync/poll` — lets a browser trigger the initial pull without Cloud
+  Tasks/OIDC or a public webhook URL. Reuses `_linkable_household`, so owner/non-demo/single-household
+  checks match the exchange.
+- **`web/link.html`**: a standalone dev page (Plaid Link JS) driving create→token→Link→exchange→sync.
+  Served *outside* the app from an allowed CORS origin (`python3 -m http.server 8081` → `localhost:8081`),
+  so it has **zero production footprint** and holds no secret (you paste a `session_jwt`). Sandbox login
+  is `user_good / pass_good`.
+- **Verified against real local Postgres** (`TEST_DATABASE_URL`): the whole loop lands a transaction
+  row scoped to the created household (`test_link_loop.py`), onboarding is idempotent/owner-correct
+  (`test_onboarding.py`). Full suite **739 passed, 10 skipped** (the skips are the vendor-credential
+  gates); ruff clean.
+- **Deliberately deferred to Phase 2** (needs live-assembly PR #69 + is research-shaped): the
+  `plaid_transactions`→`sim.History` adapter (spec-inference from real accounts) and the
+  recurring-event/income detector, i.e. turning ingested rows into a *decision*. Also still ahead of
+  real accounts: KMS envelope encryption (the `PLAID_ENV=production` boot guard is hardcoded-off) and
+  a Plaid **Trial plan** (real production data, ≤10 Items; verified current via Plaid docs 2026).

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cfo-ai · connect a bank (dev)</title>
+  <!--
+    A minimal dev/dogfooding page that drives the Plaid Link loop against the local API:
+      create household  →  link_token  →  Plaid Link  →  public_token  →  exchange  →  sync now.
+
+    Serve it from an origin the API's CORS allows (default http://localhost:8081):
+        cd web && python3 -m http.server 8081
+    then open http://localhost:8081/link.html. The API is expected at http://localhost:8000.
+
+    It is NOT part of the deployed app — it is a static file, served separately, and it holds no
+    secret: you paste a session token you already have. Sandbox login is user_good / pass_good.
+  -->
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.3rem; }
+    label { display: block; font-weight: 600; margin: 1rem 0 .25rem; }
+    input { width: 100%; padding: .5rem; font: inherit; box-sizing: border-box; }
+    button { padding: .6rem 1rem; font: inherit; font-weight: 600; margin: .5rem .5rem 0 0; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    #log { white-space: pre-wrap; background: #0001; padding: .75rem; border-radius: 6px; margin-top: 1rem; min-height: 4rem; font-family: ui-monospace, monospace; font-size: 13px; }
+    .ok { color: #1a7f37; } .err { color: #cf222e; }
+  </style>
+</head>
+<body>
+  <h1>cfo-ai — connect a bank <small>(Sandbox dev tool)</small></h1>
+
+  <label for="base">API base URL</label>
+  <input id="base" value="http://localhost:8000" />
+
+  <label for="token">Session bearer token (Stytch <code>session_jwt</code>)</label>
+  <input id="token" placeholder="paste your session_jwt" />
+
+  <div>
+    <button id="create">1 · Create / find my household</button>
+    <button id="connect">2 · Connect a bank</button>
+  </div>
+
+  <div id="log">Ready. Paste a token, then step 1, then step 2.</div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const base = () => $("base").value.replace(/\/+$/, "");
+    const token = () => $("token").value.trim();
+
+    function log(msg, cls) {
+      const el = $("log");
+      const line = document.createElement("div");
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      el.appendChild(line);
+    }
+
+    async function api(method, path, body) {
+      if (!token()) { log("No token — paste a session_jwt first.", "err"); throw new Error("no token"); }
+      const res = await fetch(base() + path, {
+        method,
+        headers: { "Authorization": "Bearer " + token(), "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const text = await res.text();
+      let data; try { data = JSON.parse(text); } catch { data = text; }
+      if (!res.ok) { log(`${method} ${path} → ${res.status}: ${text}`, "err"); throw new Error(text); }
+      return data;
+    }
+
+    $("create").onclick = async () => {
+      try {
+        const r = await api("POST", "/households");
+        log(`Household: ${r.household_id} (${r.created ? "created" : "already yours"})`, "ok");
+      } catch {}
+    };
+
+    $("connect").onclick = async () => {
+      try {
+        log("Requesting a link_token…");
+        const { link_token } = await api("POST", "/plaid/link/token");
+        const handler = Plaid.create({
+          token: link_token,
+          onSuccess: async (public_token, metadata) => {
+            try {
+              log("Link succeeded — exchanging…");
+              const ex = await api("POST", "/plaid/link/exchange", {
+                public_token,
+                institution_id: metadata && metadata.institution ? metadata.institution.institution_id : null,
+              });
+              log(`Item linked: ${ex.item_id} → household ${ex.household_id}`, "ok");
+              log("Syncing transactions…");
+              const s = await api("POST", "/plaid/sync/now");
+              log(`Sync: ${s.items_synced} item(s), +${s.added} added / ${s.modified} modified / ${s.removed} removed.`, "ok");
+              log("Done — transactions are now in plaid_transactions.", "ok");
+            } catch {}
+          },
+          onExit: (err) => { if (err) log("Link exited: " + JSON.stringify(err), "err"); },
+        });
+        handler.open();
+      } catch {}
+    };
+  </script>
+</body>
+</html>

@@ -64,7 +64,12 @@ from backend import assistant, livepath, readpath
 # never opens it. Importing the names rather than the module is what keeps that visible.
 from backend.artifact import DayRecord, Summary
 from backend.attestation import attested_for, card_fingerprint
-from backend.db.repository import Repository, repository
+from backend.db.repository import (
+    Repository,
+    create_household,
+    households_for_user,
+    repository,
+)
 from backend.db.session import (
     assert_plaid_tokens_safe_at_rest,
     assert_rls_binds,
@@ -437,6 +442,48 @@ async def households(
         found = readpath.list_households(conn, only=allowed)
 
     return {"households": [{"id": h.id, "archetype": h.archetype, "label": h.label} for h in found]}
+
+
+@app.post("/households", status_code=status.HTTP_201_CREATED)
+async def create_household_route(
+    request: Request, user: Annotated[User, Depends(current_user)]
+) -> Any:
+    """Create a **real** household owned by the signed-in user — the onboarding write path the
+    identity rung deferred (Decision 3), and the precondition a real bank link needs.
+
+    Idempotent for the single-household case the Link flow assumes: if the caller already owns
+    exactly one non-demo household, it is returned with `201`→`200` and `created: false` rather than
+    minting a second one (two would make `POST /plaid/link/exchange` ambiguous — see
+    `_linkable_household`). Owning more than one is already that ambiguity and is a `409`. Demo
+    memberships never count here — a real bank cannot attach to the demo plane (KTD-10).
+    """
+    engine = request.app.state.db
+    with engine.connect() as conn:
+        allowed = households_for_user(conn, user.id)
+        existing = (
+            conn.execute(
+                text("SELECT id FROM households WHERE id = ANY(:ids) AND NOT is_demo"),
+                {"ids": allowed},
+            )
+            .scalars()
+            .all()
+            if allowed
+            else []
+        )
+
+    if len(existing) == 1:
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={"household_id": existing[0], "created": False},
+        )
+    if len(existing) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You already belong to more than one real household.",
+        )
+
+    household_id = create_household(engine, owner_user_id=user.id)
+    return {"household_id": household_id, "created": True}
 
 
 @app.get("/households/{household_id}/decisions")

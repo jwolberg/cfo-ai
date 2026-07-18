@@ -513,3 +513,28 @@ def households_for_user(conn: Connection, user_id: str) -> list[str]:
         .all()
     )
     return list(rows)
+
+
+def create_household(engine: Engine, *, owner_user_id: str) -> str:
+    """Create a **real** (non-demo) household and make `owner_user_id` its owner. The onboarding
+    write path the identity rung deferred (ticket 0046, Decision 3) — signup → *create household* →
+    link a bank.
+
+    `archetype = NULL` and `is_demo = false`: this is a real household, never the public demo plane
+    (KTD-10), so a real bank Item can attach to it (`backend/plaid/link.py` refuses `is_demo`). The
+    two writes ride **one transaction** under the new household's scope: the `households` INSERT
+    needs no RLS (it is the tenant registry), and the `household_members` INSERT rides RLS
+    `WITH CHECK` bound to this id — so the membership can only ever attach to the household just
+    created, never someone else's. If either fails, neither lands, and there is no orphan household
+    with no owner (which would be a household nobody — not even its creator — could ever reach).
+    """
+    household_id = f"hh_{uuid.uuid4().hex}"
+    with engine.connect() as conn, household_scope(conn, household_id) as scoped:
+        scoped.execute(
+            text("INSERT INTO households (id, archetype, is_demo) VALUES (:h, NULL, false)"),
+            {"h": household_id},
+        )
+        Repository(conn=scoped, household_id=household_id).add_membership(
+            user_id=owner_user_id, role="owner"
+        )
+    return household_id
