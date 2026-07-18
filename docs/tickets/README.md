@@ -290,3 +290,55 @@ None of them had a symptom. All of them had a green test.
 Every already-migrated database stays green forever, including CI. It broke only for someone
 starting fresh — a new developer, a new Neon branch — which is the person least equipped to tell a
 real defect from their own setup going wrong.
+
+---
+
+# The identity rung — a real user, membership-scoped households, the first write path
+
+Ticket set for `docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md`, one per
+Implementation Unit (U6 split into U6a/U6b per the scope review → **eight** units, `0046`–`0053`).
+The transport rung took `0034`–`0038` (files present); the sweep rung reserved `0039`–`0045` (plan
+002 references them but never filed the markdown), so identity starts at `0046` to avoid collision.
+
+This rung builds the missing precondition under every route: a **verified user (Stytch)**, a
+**membership graph** mapping users to households, and the derivation of `household_id` from the
+session instead of the request — then uses that new write-capable seam to ship the product's first
+two controls, the **settings** write path and the **card-attestation** money-gate. No production
+money moves and no real bank is linked; the rail stays shadow, the Plaid transport stays Sandbox.
+
+## Dependency order
+
+```
+0046 (identity schema + households_for_user + ADR-0008)
+  └─ 0047 (Stytch adapter + current_user / authorize_household)
+       └─ 0048 (API cutover — session-derived, membership-authorized household)
+            ├─ 0049 (settings write path — append-only policy_events)
+            ├─ 0050 (attestation write path — the 0016 money-gate, in shadow)
+            └─ 0051 (mobile — session auth cutover) ◄── 0048 only
+                 └─ 0052 (mobile — Settings + Attest screens) ◄── 0049, 0050, 0051
+0053 (real-Stytch end-to-end gate) ◄── 0046–0052
+```
+
+| Ticket | Title | Owner | Depends on |
+|---|---|---|---|
+| [0046](0046-identity-schema-membership-lookup-adr0008.md) | Identity schema, membership lookup, ADR-0008 | backend-python-agent | — |
+| [0047](0047-stytch-adapter-current-user-authorize-household.md) | Stytch adapter + `current_user`/`authorize_household` | backend-python-agent | 0046 |
+| [0048](0048-api-cutover-session-derived-household.md) | API cutover — session-derived household (fixes the Plaid-link premise) | backend-python-agent | 0046, 0047 |
+| [0049](0049-settings-write-path-policy-events.md) | Settings write path — append-only `policy_events` | backend-python-agent | 0046, 0047, 0048 |
+| [0050](0050-attestation-write-path-money-gate.md) | Attestation write path — the `0016` money-gate, in shadow | backend-python-agent | 0046, 0047, 0048 |
+| [0051](0051-mobile-session-auth-cutover.md) | Mobile — session auth cutover (drop the baked key) | mobile-rn-agent | 0048 |
+| [0052](0052-mobile-settings-attestation-screens.md) | Mobile — Settings + Attestation write screens | mobile-rn-agent | 0049, 0050, 0051 |
+| [0053](0053-real-stytch-e2e-gate.md) | The real-Stytch end-to-end gate | backend-python-agent | 0046–0052 |
+
+## The thing worth reading before picking any of these up
+
+The recurring defect this repo keeps finding is **a mechanism built, tested, and never actually
+exercised** — the dial `build()` could not read, the RLS the default role ignored, the IDOR suite
+that ran as superuser. This rung's whole authz story is exactly that shape of risk, so `0053` drives
+a **real Stytch sandbox** end to end and the `0046` membership leak test is seeded **non-vacuous**
+(real `household_members` rows, not an empty-table isolation proof). A green mocked suite is not
+evidence.
+
+`0046`–`0050` are backend; `0051`/`0052` are mobile; `0053` is the hard gate. `0047`, `0053`, and the
+sandbox half of `0047` **skip loudly** without Stytch sandbox creds rather than passing hollow.
+
