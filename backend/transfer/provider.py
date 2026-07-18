@@ -69,10 +69,15 @@ class Auth:
     The key is derived once, client-side, and reused on every retry of the same submission so a
     worker crash mid-retry cannot create two transfers against one slot — the guarantee Temporal
     would not give for free either (noted for the later saga substrate migration).
+
+    `authorization_ref` carries a vendor authorization id for a rail whose `authorize()` is a real
+    two-step vendor call — Plaid Transfer's `/transfer/authorization/create` (ADR-0007). Increase
+    and Method leave it `None`: their `authorize()` is client-side (KTD-3).
     """
 
     intent: TransferIntent
     idempotency_key: str
+    authorization_ref: str | None = None
 
 
 @dataclass(frozen=True)

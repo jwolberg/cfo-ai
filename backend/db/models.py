@@ -438,7 +438,10 @@ transfers = Table(
         name="ck_transfers_state",
     ),
     CheckConstraint("direction IN ('debit', 'credit')", name="ck_transfers_direction"),
-    CheckConstraint("provider IN ('increase', 'method')", name="ck_transfers_provider"),
+    # plaid_transfer is the primary debit rail (ADR-0007); increase stays a swappable backup.
+    CheckConstraint(
+        "provider IN ('plaid_transfer', 'increase', 'method')", name="ck_transfers_provider"
+    ),
     CheckConstraint("amount > 0", name="ck_transfers_amount_positive"),
 )
 

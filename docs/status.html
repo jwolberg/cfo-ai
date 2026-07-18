@@ -600,12 +600,14 @@
     <div class="lane-label">Act</div>
     <div class="lane-boxes">
       <div class="box proven">
-        <span class="tag">Increase · shadow</span>
+        <span class="tag">Plaid Transfer · shadow</span>
         <h3>Debit leg &mdash; built in shadow</h3>
-        <p>Pull the surplus from checking into a funding account <em>we</em> hold (Increase, ACH).
+        <p>Pull the surplus from checking into a funding account <em>we</em> hold (<b>Plaid
+           Transfer</b>, debiting the item already linked; Increase is a backup &mdash; ADR-0007).
            The saga, ledger, and idempotency guard are built and tested; <code>submit()</code> moves
-           nothing. Holding the money in transit is an <b>FBO commitment</b> (Reg E, reconciliation,
-           likely a money-transmitter license), gated behind turning it on.</p>
+           nothing. Default timing is <b>wait-for-clear</b>: the payoff waits for this debit to
+           settle. Holding money in transit is an <b>FBO commitment</b> (Reg E, reconciliation,
+           likely an MTL), gated behind turning it on.</p>
       </div>
       <div class="box proven">
         <span class="tag">Method · shadow</span>

@@ -59,6 +59,14 @@ first draft:
 `0008`/`0009`. **Shadow-complete: no production money moves.** The full suite is green; U6's real-
 sandbox hard gate skips loudly pending credentials and must run green before `submit()` turns on.*
 
+> **Superseded on the debit rail (2026-07-18, [ADR-0007](../decisions/0007-the-debit-rail-and-the-timing-model.md), migration `0010`, ticket `0045`).**
+> The body below documents the Increase-debit + Method-payoff decision as originally built. The debit
+> rail is now **Plaid Transfer** (it debits the already-linked Plaid item; Increase stays a swappable
+> backup, and its adapter remains in the tree), and the leg timing is settled: **wait-for-clear,
+> initiated early**, with a Signal-scored prefund as a bounded exception (`saga.run_sweep`). Read the
+> Increase-specific mechanics below as the *pattern* the Plaid Transfer adapter follows, not the
+> current vendor.
+
 | Unit | Ticket | Commit | Status |
 |------|--------|--------|--------|
 | U1 The `transfers` ledger, RLS, and the migration (`HOUSEHOLD_SCOPED` 8→9) | `0039` | `f3a235a` | shipped |

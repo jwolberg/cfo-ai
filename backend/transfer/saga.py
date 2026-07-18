@@ -19,6 +19,9 @@ Two operations the worker and the reconciliation poll call:
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -150,3 +153,91 @@ def apply_status(
             return_code=return_code,
         )
         return new_state
+
+
+@dataclass(frozen=True)
+class Sweep:
+    """One sweep: pay `amount` toward `target_card_id`, as two legs. The provider fields are the
+    ledger `provider` values — the debit rail (Plaid Transfer, ADR-0007) and the payoff rail.
+    """
+
+    household_id: str
+    target_card_id: str
+    decision_id: str
+    decision_date: date
+    amount: Decimal
+    debit_provider: str = "plaid_transfer"
+    payoff_provider: str = "method"
+
+
+def _debit_intent(sweep: Sweep) -> TransferIntent:
+    return TransferIntent(
+        household_id=sweep.household_id,
+        target_card_id=sweep.target_card_id,
+        decision_id=sweep.decision_id,
+        decision_date=sweep.decision_date,
+        leg="debit",
+        direction="debit",
+        amount=sweep.amount,
+        provider=sweep.debit_provider,  # type: ignore[arg-type]
+    )
+
+
+def _payoff_intent(sweep: Sweep) -> TransferIntent:
+    return TransferIntent(
+        household_id=sweep.household_id,
+        target_card_id=sweep.target_card_id,
+        decision_id=sweep.decision_id,
+        decision_date=sweep.decision_date,
+        leg="payoff",
+        direction="credit",
+        amount=sweep.amount,
+        provider=sweep.payoff_provider,  # type: ignore[arg-type]
+    )
+
+
+def run_sweep(
+    engine: Engine,
+    sweep: Sweep,
+    *,
+    debit_adapter: TransferProvider,
+    payoff_adapter: TransferProvider,
+    prefund: bool = False,
+) -> str | None:
+    """Start a sweep: submit the debit leg, and choose when the payoff fires (ADR-0007 [2.2]).
+
+    Returns the debit's provider ref (or `None` if the slot's debit already submitted).
+
+    **Default — wait-for-clear:** submit only the debit; the Method payoff is gated on the debit
+    reaching `settled`, via `settle_and_continue` when a webhook or the poll reports it. Safe: the
+    card is never paid with money not yet collected. "Early" is the caller's job — schedule the
+    debit with enough ACH lead time before the due date (the decision→execution trigger, ahead).
+
+    **`prefund=True`:** submit the payoff immediately after the debit, floating our own capital to
+    hit the due date. Faster, but a debit return or fraud is a direct loss. A bounded exception,
+    gated upstream on a low Plaid Signal return-risk score; the flag is the mechanism, not policy.
+    """
+    debit_ref = submit_leg(engine, _debit_intent(sweep), debit_adapter)
+    if prefund:
+        submit_leg(engine, _payoff_intent(sweep), payoff_adapter)
+    return debit_ref
+
+
+def settle_and_continue(
+    engine: Engine,
+    sweep: Sweep,
+    debit_ref: str,
+    *,
+    debit_adapter: TransferProvider,
+    payoff_adapter: TransferProvider,
+) -> LedgerState | None:
+    """Advance the debit against its provider; once it is `settled`, submit the Method payoff.
+
+    Called by the worker/poll when a debit webhook or reconciliation fires. Idempotent throughout:
+    `apply_status` no-ops on an unchanged/terminal debit, and `submit_leg`'s slot guard makes a
+    repeated payoff submission a no-op — so a redelivered "debit settled" cannot create two payoffs.
+    """
+    state = apply_status(engine, debit_adapter, sweep.debit_provider, debit_ref)
+    if state == "settled":
+        submit_leg(engine, _payoff_intent(sweep), payoff_adapter)
+    return state
