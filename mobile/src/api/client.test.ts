@@ -9,7 +9,7 @@
  * The session is mocked (ticket 0051): the client reads a bearer token from `session.ts`, and here
  * that returns a fixed token so we can assert the `Authorization` header without a real Stytch flow.
  */
-import { ApiError, askAssistant, getDecisions, getExplanation } from './client';
+import { ApiError, askAssistant, attest, getDecisions, getExplanation, updatePolicy } from './client';
 import { getSessionToken } from './session';
 
 jest.mock('./session');
@@ -106,6 +106,47 @@ describe('failures have names', () => {
     fetchMock.mockReturnValue(respond(500));
 
     await expect(getDecisions(HH)).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it('a 422 is a validation error carrying the backend detail', async () => {
+    // The Settings screen surfaces these inline (ticket 0052), so the detail must survive the
+    // boundary rather than being flattened to a generic failure.
+    fetchMock.mockReturnValue(respond(422, { detail: ['buffer_floor cannot be negative'] }));
+
+    await expect(updatePolicy(HH, {} as never)).rejects.toMatchObject({
+      kind: 'validation',
+      detail: ['buffer_floor cannot be negative'],
+    });
+  });
+});
+
+describe('the write paths', () => {
+  it('updatePolicy sends a PATCH with the full guardrail body', async () => {
+    fetchMock.mockReturnValue(respond(200, {}));
+    const body = {
+      buffer_floor: '500.00',
+      max_sweep: '1600.00',
+      max_weekly_sweep: '3200.00',
+      min_days_between_sweeps: 7,
+      blackout_dates: [],
+    };
+
+    await updatePolicy(HH, body);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(`/households/${HH}/policy`);
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual(body);
+  });
+
+  it('attest sends a POST to the household’s attest route', async () => {
+    fetchMock.mockReturnValue(respond(200, { attested: true, card_fingerprint: 'fp' }));
+
+    await attest(HH);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(`/households/${HH}/attest`);
+    expect(init.method).toBe('POST');
   });
 });
 

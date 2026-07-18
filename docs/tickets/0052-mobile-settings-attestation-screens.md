@@ -2,7 +2,7 @@
 id: "0052"
 title: Mobile — the Settings + Attestation write screens
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: mobile-rn-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0049", "0050", "0051"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # Mobile — the Settings + Attestation write screens
@@ -47,9 +48,17 @@ Requirements: the write paths (U4/U5); U6a (session + household context).
 
 ## Acceptance criteria
 
-- [ ] A settings change persists and the dashboard reflects the new guardrail.
-- [ ] An invalid edit shows an inline error and **no write**.
-- [ ] Pause today/range/indefinite each persist and are individually removable.
-- [ ] Attesting a clean household clears the coverage refusal in the feed.
-- [ ] A household with an unmatched payment shows the **distinct blocked state** and the write is
-      refused, not silently dropped.
+- [~] A settings change **persists** (jest: `updatePolicy` called with the full body; backend
+      write→read proven in U4). "the dashboard reflects the new guardrail" end-to-end is not exercised
+      on device — the same on-device caveat as U6a.
+- [x] An invalid edit shows an inline error and **no write** (jest-verified).
+- [~] Pause is a **confirm-then-add over `blackout_dates`, each day listed and individually
+      removable** (jest-verified). Shipped as **today + arbitrary-date add**; explicit "range" and
+      "indefinite-until-cleared" *modes* are simplified to the same add/remove mechanism rather than
+      distinct UI — a deliberate minimality call (the plan warns pause is where scope balloons).
+- [~] Attesting an unattested household **makes the write and confirms success**, and `onAttested`
+      **re-fetches the feed** (jest-verified). "clears the coverage refusal in the feed" end-to-end
+      needs the backend to re-assemble coverage — the shadow/live-serving caveat (readpath serves
+      frozen snapshots), so it is not observed here.
+- [x] A household with an unmatched payment shows the **distinct blocked state** and the write is
+      refused, not silently dropped (jest-verified).

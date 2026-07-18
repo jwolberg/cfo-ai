@@ -149,6 +149,32 @@ class TestTheWritePath:
         assert _events(seeded)[-1]["changed_by"] == "u-owner"
 
 
+class TestReadPolicy:
+    def test_a_member_reads_the_current_policy(self, client, seeded) -> None:
+        resp = client.get(f"/households/{HH}/policy", headers=_auth(OWNER_TOKEN))
+        assert resp.status_code == 200
+        assert resp.json()["buffer_floor"] == "800.00"
+
+    def test_it_reflects_a_write(self, client, seeded) -> None:
+        client.patch(
+            f"/households/{HH}/policy",
+            headers=_auth(OWNER_TOKEN),
+            json={**_BASE, "buffer_floor": "500.00"},
+        )
+        resp = client.get(f"/households/{HH}/policy", headers=_auth(OWNER_TOKEN))
+        assert resp.json()["buffer_floor"] == "500.00"
+
+    def test_a_viewer_may_read(self, client, seeded) -> None:
+        """Reads are allowed for any member; only writes need owner."""
+        resp = client.get(f"/households/{HH}/policy", headers=_auth(VIEWER_TOKEN))
+        assert resp.status_code == 200
+
+    def test_a_non_member_is_403(self, client, seeded) -> None:
+        assert (
+            client.get(f"/households/{HH}/policy", headers=_auth(OUTSIDER_TOKEN)).status_code == 403
+        )
+
+
 class TestLooseningIsFlagged:
     def test_a_lower_floor_is_flagged_loosening(self, client, seeded) -> None:
         client.patch(

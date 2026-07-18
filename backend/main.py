@@ -205,6 +205,22 @@ def usd(amount: Decimal | None) -> str | None:
     return None if amount is None else str(amount)
 
 
+def _reason_params(reason: Any) -> dict[str, Any]:
+    """A reason's params, JSON-safe. `Decimal` → text (money never crosses as a float), `date` →
+    ISO; everything else (the enums, the small ints) passes through. This is what lets the mobile
+    feed read `card_coverage_incomplete`'s `coverage`/`unmatched` and open the right Attest state
+    (ticket 0052) — the sub-state was computed all along and simply never crossed the wire."""
+    out: dict[str, Any] = {}
+    for key, value in (reason.params or {}).items():
+        if isinstance(value, Decimal):
+            out[key] = str(value)
+        elif isinstance(value, date):
+            out[key] = value.isoformat()
+        else:
+            out[key] = value
+    return out
+
+
 def decision_json(record: DayRecord) -> dict[str, Any]:
     """One day, as the client sees it.
 
@@ -213,6 +229,10 @@ def decision_json(record: DayRecord) -> dict[str, Any]:
     being left to infer the outcome from prose — and, just as importantly, the backend never
     writes a sentence of its own. All product copy lives in `engine/explain.py` and nowhere
     else, which is what lets a copy edit be a copy edit rather than a financial change.
+
+    The reason **params** travel too (JSON-safe), so the client can act on the structured fact —
+    the Attest screen keys on `card_coverage_incomplete`'s `coverage`/`unmatched` — rather than
+    parsing the rendered sentence.
     """
     decision = record.decision
     return {
@@ -223,7 +243,8 @@ def decision_json(record: DayRecord) -> dict[str, Any]:
         "projected_low_balance": usd(decision.projected_low_balance),
         "reason_codes": [code.value for code in decision.codes],
         "reasons": [
-            {"code": reason.code.value, "text": render(reason)} for reason in decision.reasons
+            {"code": reason.code.value, "text": render(reason), "params": _reason_params(reason)}
+            for reason in decision.reasons
         ],
         # "Paid off" is a REFUSE carrying NO_DEBT, never a third action. Derived in one place
         # (`DayRecord.paid_off`) so the UI cannot invent a different rule for it.
@@ -611,6 +632,20 @@ def _policy_json(row: dict[str, Any]) -> dict[str, Any]:
         "min_days_between_sweeps": row["min_days_between_sweeps"],
         "blackout_dates": [d.isoformat() for d in row["blackout_dates"]],
     }
+
+
+@app.get("/households/{household_id}/policy")
+async def read_policy(repo: Annotated[Repository, Depends(authorize_household)]) -> Any:
+    """The household's current guardrails — for the Settings screen to prefill (ticket 0052).
+
+    Any member may read (the write is `owner`-gated separately). A spawned addition of U6b: the
+    mobile Settings screen needs the current policy to edit it, and no read endpoint existed — only
+    latest `buffer_floor` leaked out through the decisions feed. Returns the latest `policy_events`
+    projection, or `404` if a household somehow has no policy (every seeded one does)."""
+    current = repo.policy()
+    if current is None:
+        return no_household(repo.household_id)
+    return _policy_json(current)
 
 
 @app.patch("/households/{household_id}/policy")

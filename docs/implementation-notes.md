@@ -2482,3 +2482,25 @@ sign-in and the deployed web build are not exercisable here, so those stay flagg
   faked; documented in `session.ts`. `expo-secure-store` installed (app.json plugin added).
 - Verified: `tsc --noEmit` clean; jest **74 passed** (10 suites) including new session + NoHousehold
   + rewritten client/picker/App tests. `expo install` used for the SDK (respects the Expo v57 pin).
+
+### U6b / 0052 — mobile Settings + Attestation screens (done 2026-07-18, verified to tsc+jest)
+- **Settings.tsx** (modal over PATCH /policy): prefilled from a **new GET /policy** endpoint (a
+  spawned addition — the screen needs the current guardrails and only `buffer_floor` leaked via the
+  feed; owner-gate is on the write, any member may read). Inline per-field validation mirrors U4's
+  bounds (no write on an invalid edit), a **saving** state, an **explicit "Saved"**, the server's 422
+  surfaced inline, and a viewer told they lack permission. **Pause** is a confirm-then-add over
+  `blackout_dates`, each day listed and individually removable.
+- **Attest.tsx** (modal over POST /attest): two distinct states — *unattested* confirms and clears
+  the gate; *unmatched_payment* is a **named dead end** (no in-app fix this rung, points to support),
+  not a silent write failure (KTD-7).
+- **Feed CTA:** `DecisionFeedItem` renders a "Confirm your cards" button on a `card_coverage_incomplete`
+  refusal, opening Attest with the coverage sub-state. That sub-state reaches the client via a second
+  spawned addition: **reason `params` now cross the wire** (`decision_json` serializes them JSON-safe;
+  the mobile `Reason` type gains optional `params`) — the coverage/unmatched were computed all along
+  and simply never serialized. Without this the dead-end would be unreachable (the built-never-
+  exercised trap).
+- **Spawned additions filed as done-in-scope** (both needed for the screens to actually work): GET
+  /policy, and reason params on the decisions wire.
+- Verified: mobile `tsc` clean, jest **88 passed** (12 suites); backend **731 passed, 9 skipped**
+  (GET /policy tests added; the 9 skips are the vendor gates incl. U7's 3). Same on-device caveat as
+  U6a — the Stytch sign-in and a real device run are the flagged, unexercised pieces.

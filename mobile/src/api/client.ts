@@ -25,10 +25,13 @@
 import { getSessionToken } from './session';
 import type {
   AssistantResponse,
+  AttestResponse,
   DecisionsResponse,
   ExplainResponse,
   HouseholdsResponse,
   IsoDate,
+  Policy,
+  PolicyUpdate,
   SpendResponse,
   Turn,
 } from './types';
@@ -56,6 +59,7 @@ export type ApiErrorKind =
   | 'network'
   | 'unauthorized'
   | 'no_record'
+  | 'validation'
   | 'server'
   | 'malformed';
 
@@ -63,6 +67,9 @@ export class ApiError extends Error {
   constructor(
     readonly kind: ApiErrorKind,
     message: string,
+    /** For `validation` (a 422): the backend's `detail` — the list of guardrail problems the
+     *  Settings screen surfaces inline (ticket 0052). Undefined for every other kind. */
+    readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -112,6 +119,19 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
     throw new ApiError('no_record', 'No decision on record for that day');
   }
 
+  if (response.status === 422) {
+    // A guardrail write that failed validation (ticket 0052). Carry the backend's `detail` so the
+    // Settings screen can show it inline rather than as a generic failure. A malformed body here
+    // just yields an empty detail — still a validation error, still not a write.
+    let detail: unknown;
+    try {
+      detail = ((await response.json()) as { detail?: unknown }).detail;
+    } catch {
+      detail = undefined;
+    }
+    throw new ApiError('validation', 'The change was rejected', detail);
+  }
+
   if (!response.ok) {
     throw new ApiError('server', `The service returned ${response.status}`);
   }
@@ -152,6 +172,33 @@ export function getDecisions(householdId: string): Promise<DecisionsResponse> {
  */
 export function getSpend(householdId: string): Promise<SpendResponse> {
   return request<SpendResponse>(`/households/${householdId}/spend`);
+}
+
+/** The household's current guardrails, to prefill the Settings screen (ticket 0052). */
+export function getPolicy(householdId: string): Promise<Policy> {
+  return request<Policy>(`/households/${householdId}/policy`);
+}
+
+/**
+ * Write the guardrails (the product's first user-driven write). Owner-only on the backend; a viewer
+ * or non-member gets `unauthorized`, an invariant violation gets a `validation` ApiError carrying the
+ * per-field problems. Every field is sent, so a partial edit cannot silently drop a guardrail.
+ */
+export function updatePolicy(householdId: string, body: PolicyUpdate): Promise<Policy> {
+  return request<Policy>(`/households/${householdId}/policy`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Attest that the household's current cards are all of them — clearing the coverage money-gate
+ * (ticket 0052). Owner-only. The backend fingerprints the current cards; a later new card
+ * invalidates it. It never clears an `unmatched_payment` coverage state — that is a dead end the
+ * Attest screen names rather than a write it fakes.
+ */
+export function attest(householdId: string): Promise<AttestResponse> {
+  return request<AttestResponse>(`/households/${householdId}/attest`, { method: 'POST' });
 }
 
 /**

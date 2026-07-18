@@ -16,13 +16,33 @@ import { formatDateShort, formatMoney } from '../format';
 import { MIN_TAP_TARGET, colors, radius, shadow, space, type } from '../theme';
 import type { Decision } from '../api/types';
 
+/** The coverage sub-state and unmatched count the Attest screen needs, carried on the
+ *  `card_coverage_incomplete` reason's params (ticket 0052). */
+export interface CoverageRefusal {
+  coverage: string;
+  unmatched: number;
+}
+
 interface Props {
   decision: Decision;
   onPress: (decision: Decision) => void;
+  /** Open the Attest screen for a coverage-incomplete refusal (ticket 0052). Optional: without it,
+   *  the CTA does not render — a household with no coverage refusal never sees one anyway. */
+  onAttest?: (refusal: CoverageRefusal) => void;
 }
 
-export function DecisionFeedItem({ decision, onPress }: Props) {
+/** The coverage refusal on this decision, if any — the CTA into Attest keys on it. */
+function coverageRefusal(decision: Decision): CoverageRefusal | null {
+  const reason = decision.reasons.find((r) => r.code === 'card_coverage_incomplete');
+  if (!reason) return null;
+  const coverage = typeof reason.params?.coverage === 'string' ? reason.params.coverage : 'unattested';
+  const unmatched = typeof reason.params?.unmatched === 'number' ? reason.params.unmatched : 0;
+  return { coverage, unmatched };
+}
+
+export function DecisionFeedItem({ decision, onPress, onAttest }: Props) {
   const swept = decision.action === 'sweep';
+  const refusal = coverageRefusal(decision);
 
   // "Paid off" is a refusal carrying `no_debt` — never a third action. The backend derives
   // it once (`DayRecord.paid_off`) and every layer reads that flag rather than re-deriving
@@ -58,6 +78,20 @@ export function DecisionFeedItem({ decision, onPress }: Props) {
           {reason}
         </Text>
       )}
+
+      {/* The CTA into Attest — otherwise a user staring at "we can't confirm your cards" has no way
+          to reach the screen that clears it (ticket 0052). Only on a coverage refusal, only when a
+          handler is wired. The feed data stays read-only; this opens a screen, it does not write. */}
+      {refusal && onAttest ? (
+        <Pressable
+          onPress={() => onAttest(refusal)}
+          accessibilityRole="button"
+          style={styles.cta}
+          testID={`attest-cta-${decision.date}`}
+        >
+          <Text style={styles.ctaLabel}>Confirm your cards</Text>
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 }
@@ -82,4 +116,14 @@ const styles = StyleSheet.create({
   date: { ...type.label },
   headline: { ...type.heading, marginBottom: space.xs },
   reason: { ...type.small },
+  cta: {
+    marginTop: space.md,
+    minHeight: MIN_TAP_TARGET,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: space.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.tabActive,
+  },
+  ctaLabel: { ...type.label, color: '#FFFFFF', fontSize: 14 },
 });
