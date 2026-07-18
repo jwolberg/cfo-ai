@@ -16,6 +16,7 @@ from __future__ import annotations
 from backend.transfer.funding import FundingAccount, funding_account
 from backend.transfer.increase import AuthNumbers, IncreaseProvider
 from backend.transfer.method import MethodDestination, MethodProvider
+from backend.transfer.plaid_transfer import PlaidItem, PlaidTransferProvider
 from backend.transfer.provider import (
     Auth,
     Direction,
@@ -39,6 +40,8 @@ __all__ = [
     "LedgerState",
     "MethodDestination",
     "MethodProvider",
+    "PlaidItem",
+    "PlaidTransferProvider",
     "Provider",
     "ProviderRef",
     "Return",

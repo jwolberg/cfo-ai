@@ -503,10 +503,12 @@ handoff → bill-pay partner → FBO/custodial account with a bank partner (heav
 compliance; avoid as long as possible).
 
 **The rail is now built in shadow** — see the sweep-execution rung
-([plan](./plans/2026-07-17-002-feat-sweep-execution-rung-plan.md), [ADR-0006](./decisions/0006-the-fbo-commitment-and-the-transfer-webhook-lookup.md)).
+([plan](./plans/2026-07-17-002-feat-sweep-execution-rung-plan.md), [ADR-0006](./decisions/0006-the-fbo-commitment-and-the-transfer-webhook-lookup.md),
+[ADR-0007](./decisions/0007-the-debit-rail-and-the-timing-model.md)).
 Paying a card is **two legs, not one**: a **debit leg** (ACH pull from the user's checking into a
-platform funding account — Increase, funded via Plaid Auth numbers, not a processor token) and a
-**payoff leg** (land it on the issuer's card — no plain ACH can route this). The payoff leg is what
+platform funding account — **Plaid Transfer**, which debits off the item the transport rung already
+linked; Increase stays a swappable backup, ADR-0007) and a **payoff leg** (land it on the issuer's
+card — no plain ACH can route this). The payoff leg is what
 the ladder above was hedging: the 2026 channel that reaches any issuer is a **biller-payoff API,
 Method** (fact-checked against `docs.methodfi.com`, 2026-07-17). Method's source *must* be a platform
 funding account, so the money transits an account we hold — the rung **commits to the FBO/custodial
@@ -523,6 +525,12 @@ provider HTTP clients, the live-request snapshot-assembly path, the U6 sandbox h
 loudly pending credentials), and turning `submit()` on with KMS + the compliance build behind it.
 Temporal was deliberately *not* adopted here — the saga runs on the proven Cloud Tasks pattern, and
 Temporal enters at the same trigger that turns real money on ([1.2]).
+
+**Timing (ADR-0007):** there is no instant, irrevocable way to *pull* from checking (ACH debit is the
+only universal pull, and it is slow + revocable for up to 60 days). So the default is **wait-for-clear,
+initiated early** — the payoff is gated on the debit reaching `settled`, and the debit is scheduled
+with enough lead time before the due date — with a Signal-scored **prefund** as a bounded exception.
+Both run behind one saga flag and are measured in shadow first.
 
 Never call `make_payment()` from a scheduled job against a live balance. The state machine
 is the product — and Method's verified lifecycle (`pending → processing → sent → posted`, and

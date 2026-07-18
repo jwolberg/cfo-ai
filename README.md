@@ -20,7 +20,7 @@ take is a risk lever as directly as how large any one of them is — and daily s
 of an advice product nobody ever re-argued (`prd.md` §2.4).
 
 **A payment rail is now built — behind a port, moving nothing.** The write half (the sweep-execution
-rung) debits checking (Increase, ACH) and pays the card (Method) behind a `TransferProvider` port;
+rung) debits checking (Plaid Transfer, ACH) and pays the card (Method) behind a `TransferProvider` port;
 `submit()` is a logged no-op, so the saga runs and writes an append-only ledger while no dollar moves.
 No vendor is committed in production, the port keeps the choice swappable, and a distribution question
 nobody has answered yet (`prd.md` §6.1, §7.1) could still delete the owned-rail bet. The engine emits a
@@ -39,7 +39,7 @@ has not run. See **Status**, below.
 | `sim/` | The answer key: synthetic households whose true daily balance we know. |
 | `backend/` | The walk, the grader, the population calibration, the API, Postgres. |
 | `mobile/` | The surface: the decision feed, the spending view, the explanation. |
-| `backend/transfer/` | The write half: a two-leg provider port (Increase + Method), the durable saga, the ledger. **Built in shadow — `submit()` moves nothing, not turned on.** |
+| `backend/transfer/` | The write half: a two-leg provider port (Plaid Transfer debit + Method payoff), the durable saga, the ledger. **Built in shadow — `submit()` moves nothing, not turned on.** |
 
 ```bash
 .venv/bin/python -m pytest       # the suite is the spec
@@ -354,10 +354,11 @@ connection string is the wrong one.
 
 **Not built / not live.** Plaid — no link, no live balances, nothing has touched a real household.
 The **payment rail is built in shadow** (the sweep-execution rung: a two-leg `TransferProvider` port
-— Increase debit, Method payoff — the durable saga, and the append-only ledger), but `submit()` moves
-nothing, no vendor is committed in production, and it is unproven against the live sandboxes until its
-hard gate runs. `prd.md` §7.1's distribution question could still delete the owned-rail bet. No real
-auth. Turning `submit()` on — with KMS and the Reg E/GLBA/MTL build behind it — is still ahead.
+— Plaid Transfer debit, Method payoff, wait-for-clear timing — the durable saga, and the append-only
+ledger; ADR-0007), but `submit()` moves nothing, no vendor is committed in production, and it is
+unproven against the live sandboxes until its hard gate runs. `prd.md` §7.1's distribution question
+could still delete the owned-rail bet. No real auth. Turning `submit()` on — with KMS and the Reg
+E/GLBA/MTL build behind it — is still ahead.
 
 ### The loop is closed, and the first thing it did was say no
 
