@@ -34,6 +34,11 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
     "httpx>=0.27",  # fastapi.testclient
+    # The Stytch server SDK, used only to MINT real sessions in the identity hard gate
+    # (`tests/test_identity_sandbox.py`, ticket 0053). Verification is our own local JWKS code
+    # (`backend/identity/stytch.py`) and does not need it — this is test-only, and the gate skips
+    # loudly without Stytch credentials, so CI installs it but never exercises it.
+    "stytch>=13,<16",
     "cfo-ai[api]",
 ]
 

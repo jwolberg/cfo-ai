@@ -342,7 +342,7 @@ evidence.
 `0046`–`0050` are backend; `0051`/`0052` are mobile; `0053` is the hard gate. `0047`, `0053`, and the
 sandbox half of `0047` **skip loudly** without Stytch sandbox creds rather than passing hollow.
 
-## Status: `0046`–`0052` done. `0053` landed but not green.
+## Status: `0046`–`0053` all done. `0053` is green against real Stytch.
 
 Built 2026-07-18, one commit per unit. `0046`–`0050` (backend) are verified against real Postgres 17
 (each migration up/down/up clean from zero); full backend suite **731 passed, 9 skipped** (the skips
@@ -351,13 +351,37 @@ verified to `tsc` + `jest` (**88 passed**) per the session's agreed constraint �
 project here, so the **Stytch Expo sign-in SDK wiring and any on-device / deployed-web run are flagged,
 unexercised gaps**, documented in `mobile/src/api/session.ts` and the two tickets.
 
-`0053` is the honest exception: the gate **file** exists and **skips loudly** without credentials, but
-it has **never run green** (no Stytch project in this environment; `_mint_session` raises by design so
-it cannot pass hollow). Closing it needs a Stytch **test** project, `_mint_session` wired to its API, a
-green run — folding any session-JWT-shape correction into `backend/identity/stytch.py`, the one vendor
-file — and the date recorded. Two spawned additions landed with `0052`: **`GET /policy`** (the Settings
+`0053` ran **green against a real Stytch test project on 2026-07-18** (4 passed): a real minted
+`session_jwt` verifies through our own local JWKS adapter, a non-member is `403`'d, the policy and
+attestation writes land attributed to the real user, and two real users are mutually invisible. One
+vendor-reality correction (the plan budgeted for ≥1) — the JWKS host is environment-specific
+(`test.stytch.com` for Test) — landed in `backend/identity/stytch.py`, the one vendor file. Without
+credentials the gate still **skips loudly**, so CI proves it *can* run and prod proves it *did*. Two
+spawned additions landed with `0052`: **`GET /policy`** (the Settings
 screen needs the current guardrails) and **reason `params` on the decisions wire** (so the feed can
 open the unmatched-payment dead end). The live-assembly path (nothing reads `Repository.policy()` /
 `attested_for` into a live `decide()` yet) stays the plan's named, open Prerequisite — the settings and
 attestation writes are proven **persisted + audited + read-back**, not yet as a re-decided sweep.
+
+## What's next (the identity rung is built; these carry it the rest of the way)
+
+The rung's own tickets (`0046`–`0053`) are all done. What remains was, until now, only prose across
+the plan (`§Scope Boundaries`, `§Prerequisites`), `implementation-notes.md`, and
+`docs/runbooks/deploy.md [0.5]` — so it is filed here as real tickets.
+
+| Ticket | What | Owner | Depends on |
+|---|---|---|---|
+| [0054](0054-deploy-the-identity-cutover.md) | Deploy the cutover — Stytch config + migrations + the demo session, without breaking the live demo (run `deploy.md [0.5]`) | infra-devops-agent | 0048–0053 |
+| [0055](0055-mobile-stytch-signin-sdk.md) | Mobile — the real Stytch Expo sign-in flow, and an on-device / deployed-web run (the live half `0051`/`0052` couldn't reach) | mobile-rn-agent | 0051, 0052, 0054 |
+| [0056](0056-live-assembly-path.md) | The live-assembly path — read the current policy/attestation into a live `decide()`, so a write changes the next decision (the plan's open Prerequisite) | backend-python-agent | 0049, 0050 |
+
+**The next rung is a feature, not a ticket:** the **customer Plaid Link UI + onboarding** (signup →
+create household → link bank), deferred by the plan's Decision 3. Like every other rung it earns its
+own plan doc + ticket set (a `docs/plans/…` entry), consuming this rung's stable `users.id` as Plaid's
+`client_user_id`. It is not filed here — it is the next planning cycle.
+
+**Deferred for later (event-triggered, per the plan's §"Deferred for later")** — not yet ticketed
+because their trigger has not arrived: KYC/AML identity verification (first money movement), step-up /
+adaptive MFA (money-on), KMS for the Stytch secret (first real signup), the operator console /
+kill-switch / access-and-audit admin surface (its own rung), and native app-store presence + push.
 

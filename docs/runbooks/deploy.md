@@ -45,6 +45,49 @@ every lifespan gate passed against real Neon: `expected_key()`, `database_url()`
 the question rather than answers it — `[6a]` is the measurement, and `0026` stays open until
 someone records the wall-clock. Do not infer it from the ~500ms brochure figure.
 
+## [0.5] ⚠️ The identity rung changed the deploy contract — read before redeploying `main`
+
+**A redeploy of `main` at or after the identity rung (tickets `0046`–`0053`,
+[`../plans/2026-07-17-003-...`](../plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md))
+is NOT the routine redeploy `[0]` describes.** Every user route now requires a **verified Stytch
+session** — the shared `RESFI_API_KEY` is retired for them. Deploy the new code without the steps
+below and the live demo breaks in a way `/health` will not show you:
+
+- **No `STYTCH_PROJECT_ID`** → the first authed request hits `stytch.verify` → `StytchConfigError` →
+  **500**. `/health` is unauthenticated, so Cloud Run reports the revision healthy while every real
+  request fails — the exact "looks fine, serves errors" failure ADR-0004 [3.2] is about.
+- **Migrations `0011`–`0013` not applied** → the new routes read tables that don't exist.
+  `_assert_migrated()` does **not** check them (it lists only the read-path tables), so it will not
+  catch this at startup — you find out per-request. **`0012` backfills then DROPS the mutable
+  `policies` table** (its history moves to append-only `policy_events`; safe by design, but it runs).
+- **Web build with no `EXPO_PUBLIC_DEMO_SESSION`** → the public demo (`cfo-ai-1.web.app`) sends no
+  bearer and gets **401** on every route. The demo is no longer unauthenticated: it runs on a
+  pre-seeded, read-only `viewer` session baked into the build (KTD-10).
+
+**Do these, in this order:**
+
+1. **Validate Stytch end-to-end FIRST.** Create a Stytch **test** project, then run
+   `tests/test_identity_sandbox.py` green (ticket `0053`) with `STYTCH_PROJECT_ID` + `STYTCH_SECRET`
+   set. This is what confirms the real session-JWT shape; the plan budgets for a vendor-reality
+   correction here, and if there is one it lands in `backend/identity/stytch.py` **before** it can
+   bite the deploy. Until `0053` is green, everything below is built against an unconfirmed shape.
+2. **Store the Stytch secrets** in Secret Manager alongside the others (`[4]`): `STYTCH_PROJECT_ID`
+   (needed to verify JWKS and as the audience) and `STYTCH_SECRET` (server API). Leave `STYTCH_ENV`
+   unset/`test` for a test project — `assert_stytch_secret_safe_at_rest()` no-ops there; flip to
+   `live` only once the secret is genuinely managed, or startup refuses (KTD-4).
+3. **Migrate and seed** as usual (`[2]`, `[3]`): `alembic upgrade head` applies `0011`–`0013`; the
+   seeder creates the demo `viewer` + reviewer `owner` users, their memberships, and sets `is_demo`
+   (migration `0011` also backfills `is_demo=true` for the already-seeded households).
+4. **Deploy the backend** (`[5]`) with the two new secrets wired (see the amended command there).
+5. **Mint the demo session and rebuild the web** (`[7]`): mint a read-only `viewer` `session_jwt`
+   for the seeded demo user (`stytch-demo-viewer`) against the Stytch project, set it as
+   `EXPO_PUBLIC_DEMO_SESSION`, and `npm run build:web` + `firebase deploy`. **The exact mint call is
+   the one step this runbook cannot yet state with confidence** — it is the same
+   `_mint_session` that `0053` wires; treat `0053` going green as the prerequisite that pins it.
+
+Everything else in this runbook still applies. The sections below were last verified for the
+pre-identity revision — treat their command bodies as correct and these deltas as the amendment.
+
 ---
 
 ## [1] Placeholders
@@ -228,9 +271,17 @@ gcloud run deploy "$SERVICE" \
   --cpu=1 \
   --memory=512Mi \
   --timeout=120s \
-  --set-secrets="RESFI_API_KEY=${SECRET_API_KEY}:latest,ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATABASE_URL=${SECRET_DATABASE_URL}:latest" \
-  --set-env-vars="^|^PYTHONUNBUFFERED=1|RESFI_ALLOWED_ORIGINS=https://cfo-ai-1.web.app,https://cfo-ai-1.firebaseapp.com"
+  --set-secrets="RESFI_API_KEY=${SECRET_API_KEY}:latest,ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATABASE_URL=${SECRET_DATABASE_URL}:latest,STYTCH_SECRET=${SECRET_STYTCH_SECRET}:latest" \
+  --set-env-vars="^|^PYTHONUNBUFFERED=1|RESFI_ALLOWED_ORIGINS=https://cfo-ai-1.web.app,https://cfo-ai-1.firebaseapp.com|STYTCH_PROJECT_ID=${STYTCH_PROJECT_ID}"
 ```
+
+> **Identity-rung amendment (see `[0.5]`).** `STYTCH_SECRET` joins the secrets and
+> `STYTCH_PROJECT_ID` joins the env-vars (the project id is not itself a secret — it is the JWKS
+> issuer/audience and appears in every token). Store `SECRET_STYTCH_SECRET` in Secret Manager the
+> same way as the others (`[4]`). Because `--set-env-vars` REPLACES the whole set (see the warning
+> below), `STYTCH_PROJECT_ID` MUST be listed here alongside the CORS origins — a deploy that drops it
+> is the `StytchConfigError` 500 from `[0.5]`. `RESFI_API_KEY` stays wired only for any residual
+> internal use; it authorizes no user route now. Leave `STYTCH_ENV` unset (defaults `test`).
 
 > ⚠️ **`--set-env-vars` REPLACES the whole set — it does not add to it.** The running service carries
 > `RESFI_ALLOWED_ORIGINS` as well as `PYTHONUNBUFFERED`, and a deploy passing only the latter drops
