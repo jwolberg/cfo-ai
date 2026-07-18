@@ -363,3 +363,25 @@ open the unmatched-payment dead end). The live-assembly path (nothing reads `Rep
 `attested_for` into a live `decide()` yet) stays the plan's named, open Prerequisite — the settings and
 attestation writes are proven **persisted + audited + read-back**, not yet as a re-decided sweep.
 
+## What's next (the identity rung is built; these carry it the rest of the way)
+
+The rung's own tickets (`0046`–`0053`) are all done. What remains was, until now, only prose across
+the plan (`§Scope Boundaries`, `§Prerequisites`), `implementation-notes.md`, and
+`docs/runbooks/deploy.md [0.5]` — so it is filed here as real tickets.
+
+| Ticket | What | Owner | Depends on |
+|---|---|---|---|
+| [0054](0054-deploy-the-identity-cutover.md) | Deploy the cutover — Stytch config + migrations + the demo session, without breaking the live demo (run `deploy.md [0.5]`) | infra-devops-agent | 0048–0053 |
+| [0055](0055-mobile-stytch-signin-sdk.md) | Mobile — the real Stytch Expo sign-in flow, and an on-device / deployed-web run (the live half `0051`/`0052` couldn't reach) | mobile-rn-agent | 0051, 0052, 0054 |
+| [0056](0056-live-assembly-path.md) | The live-assembly path — read the current policy/attestation into a live `decide()`, so a write changes the next decision (the plan's open Prerequisite) | backend-python-agent | 0049, 0050 |
+
+**The next rung is a feature, not a ticket:** the **customer Plaid Link UI + onboarding** (signup →
+create household → link bank), deferred by the plan's Decision 3. Like every other rung it earns its
+own plan doc + ticket set (a `docs/plans/…` entry), consuming this rung's stable `users.id` as Plaid's
+`client_user_id`. It is not filed here — it is the next planning cycle.
+
+**Deferred for later (event-triggered, per the plan's §"Deferred for later")** — not yet ticketed
+because their trigger has not arrived: KYC/AML identity verification (first money movement), step-up /
+adaptive MFA (money-on), KMS for the Stytch secret (first real signup), the operator console /
+kill-switch / access-and-audit admin surface (its own rung), and native app-store presence + push.
+
