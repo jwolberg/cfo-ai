@@ -192,6 +192,49 @@ def assert_transfer_credentials_safe_at_rest(conn: Connection | None = None) -> 
         )
 
 
+class StytchSecretWouldLeak(RuntimeError):
+    """Raised at startup when a real (non-test) Stytch secret would sit in a plaintext env var."""
+
+
+def stytch_env() -> str:
+    """`test` (the default) or `live`. Mirrors `plaid_env()`/`transfer_mode()`.
+
+    `test` is the default because a Stytch **test** project issues sessions for fabricated users and
+    forges nothing real — so its secret in an env var protects nothing. Any other value means the
+    secret mints sessions for *real* users, and a leak forges real logins even while every balance
+    is still synthetic (KTD-4).
+    """
+    return os.environ.get("STYTCH_ENV", "test").strip().lower()
+
+
+def _stytch_secret_from_secrets_manager() -> bool:
+    """Whether the Stytch secret comes from a secrets manager rather than a plaintext env var. False
+    until that path lands — the same honest False as the Plaid/Method credential guards, and the
+    reason a `live` boot cannot succeed yet (KTD-4)."""
+    return False
+
+
+def assert_stytch_secret_safe_at_rest() -> None:
+    """Refuse to start if `STYTCH_ENV=live` while the Stytch secret would sit in plaintext.
+
+    **The trigger is the first real (non-sandbox) Stytch project — NOT money-on.** Unlike the Plaid
+    and transfer credentials, whose asset is drainable funds, the Stytch secret's asset is real user
+    identity and session issuance, which goes live the moment real users exist, independent of the
+    financial rail being on. So this gate binds on `stytch_env()`, and it is honestly refused today
+    because the secrets-manager path does not exist yet — you cannot stand up a real Stytch project
+    before the secret story is real. In `test` (the default) it is a no-op.
+    """
+    if stytch_env() == "test":
+        return
+    if not _stytch_secret_from_secrets_manager():
+        raise StytchSecretWouldLeak(
+            f"STYTCH_ENV is {stytch_env()!r}, so the Stytch secret mints sessions for real users — "
+            "but it would come from a plaintext env var, not a secrets manager. A leaked secret "
+            "forges real logins. Refusing to start until the secret is managed (identity KTD-4, "
+            "triggered at first real signup, not money-on)."
+        )
+
+
 def database_url() -> str:
     url = os.environ.get("DATABASE_URL")
     if not url:

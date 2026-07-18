@@ -299,6 +299,18 @@ class Repository:
             idempotency_key=idempotency_key,
         )
 
+    def member_role(self, user_id: str) -> str | None:
+        """This user's role in *this* household (`owner`/`viewer`), or None if not a member.
+
+        A scoped read: RLS makes only this household's membership rows visible, so a caller can read
+        their own role and no one else's. The write dependencies gate on this — `owner` may write,
+        `viewer` may not (ticket 0047, KTD-10)."""
+        rows = self._all(
+            "SELECT role FROM household_members WHERE household_id = :h AND user_id = :u",
+            u=user_id,
+        )
+        return rows[0]["role"] if rows else None
+
     def add_membership(self, *, user_id: str, role: str) -> None:
         """Add (or re-role) a user's membership in *this* household (ticket 0046).
 

@@ -2,7 +2,7 @@
 id: "0047"
 title: The Stytch verification adapter + current_user / authorize_household
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0046"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # The Stytch verification adapter + current_user / authorize_household
@@ -62,14 +63,14 @@ enforced at money-on.
 
 ## Acceptance criteria
 
-- [ ] A tampered / expired / replayed / wrong-alg token is rejected **before any DB touch**.
-- [ ] A valid token JIT-provisions a `users` row exactly once (idempotent on second login).
-- [ ] `authorize_household` yields a scoped repo for a member and `403`s a valid **non-member**.
-- [ ] JWKS cache evicts on a TTL (rotated key stops being trusted within a bounded window).
-- [ ] The secret guard raises in a simulated production config with a plaintext credential; the
+- [x] A tampered / expired / replayed / wrong-alg token is rejected **before any DB touch**.
+- [x] A valid token JIT-provisions a `users` row exactly once (idempotent on second login).
+- [x] `authorize_household` yields a scoped repo for a member and `403`s a valid **non-member**.
+- [x] JWKS cache evicts on a TTL (rotated key stops being trusted within a bounded window).
+- [x] The secret guard raises in a simulated production config with a plaintext credential; the
       Stytch secret never appears in logs.
-- [ ] The dependencies gate a throwaway route correctly under a stubbed verifier.
-- [ ] The sandbox gate skips **loudly** with its full reason when creds are absent.
+- [x] The dependencies gate a throwaway route correctly under a stubbed verifier.
+- [x] The sandbox gate skips **loudly** with its full reason when creds are absent.
 
 ## Notes / risks
 

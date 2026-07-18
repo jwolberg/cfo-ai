@@ -2369,3 +2369,30 @@ is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a diffe
   5 skipped** (the 5 are the real-vendor sandbox gates — Plaid + transfers + Stytch-to-come — which
   skip loudly without creds). CI does not lint `alembic/`, so the migration's long comment lines are
   house-style, matching 0005/0007.
+
+### U2 / 0047 — Stytch adapter + current_user / authorize_household (done 2026-07-18)
+- **`backend/identity/` isolates the vendor.** `stytch.py` is the only file that names Stytch;
+  `deps.py` consumes an opaque `Verifier` callable (defaulted to `stytch.verify`, overridable via
+  FastAPI `dependency_overrides` in tests). A provider swap touches `stytch.py` + the mobile SDK.
+- **Verification mirrors the Plaid webhook JWT path** (local, offline, JWKS by `kid`), with the two
+  KTD-4 differences made real: RS256 pinned (alg-confusion refused before any key fetch), and the
+  `kid` cache is **TTL-evicting** (10 min) rather than never-evict — with a direct test that ages a
+  cache entry past the TTL and asserts a refetch. A rotated/revoked signing key stops being trusted
+  in a bounded window.
+- **Decision — the owner role is read *inside the scope*, not from the definer function.**
+  `households_for_user` returns only ids (ADR-0008 froze that). Rather than widen it or add a second
+  definer function, `authorize_household_owner` opens the scoped repo and reads
+  `repo.member_role(user_id)` — RLS makes exactly the caller's own membership row visible. Cheaper and
+  keeps the definer surface returning nothing but ids.
+- **Two connections per authorized request** (membership check unscoped, then scoped repo) — the
+  plan's logged FYI, accepted: RLS still binds the scoped work; the single-connection optimisation is
+  a follow-up, not a correctness issue.
+- **Stytch shape is the documented one, flagged for U7.** `iss = stytch.com/<project_id>`,
+  `aud = [<project_id>]`, `sub =` the user id. The plan's Deferred Notes budget for ≥1 vendor-reality
+  correction against the real sandbox — if live tokens disagree, `stytch.py` is the only file to fix.
+- **Secret guard** (`assert_stytch_secret_safe_at_rest`) mirrors the Plaid/transfer at-rest guards but
+  triggers on `STYTCH_ENV=live` (first real project), NOT money-on — identity goes live before money.
+  Wired into the lifespan in U3.
+- Full suite: **681 passed, 6 skipped** (the 6th is the new loud Stytch-sandbox JWKS gate — no creds
+  here). `test_identity_deps.py` proves the decode path against a generated RSA keypair (no network),
+  so "rejected before any DB touch" is exercised, not asserted.
