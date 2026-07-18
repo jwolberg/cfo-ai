@@ -51,3 +51,14 @@ creds, mirroring `tests/test_plaid_sandbox.py`.
 - [ ] The suite skips **loudly** without creds, naming exactly what is missing.
 - [ ] Provenance + any vendor-reality correction recorded (in the test docstring and
       `docs/implementation-notes.md`).
+
+## Status (2026-07-18)
+
+The gate **file is landed** (`tests/test_identity_sandbox.py`) and **skips loudly** without
+Stytch credentials — verified (3 skipped, with the full reason). It is **not green**: no Stytch
+sandbox credentials exist in this environment, so the real session-mint + end-to-end run has
+**not** been executed, and `_mint_session` raises `NotImplementedError` by design so the gate
+cannot pass hollow. Provenance is honest: NOT yet run against real Stytch. Remaining to close:
+obtain a Stytch **test** project, wire `_mint_session` to its server API, run green (folding
+any vendor-reality correction into `backend/identity/stytch.py`), and record the date. Also
+gated on U6b per depends_on, though the gate itself exercises only the backend path.
