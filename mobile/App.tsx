@@ -29,14 +29,15 @@
  * One `useState`, passed down, is what makes that unrepresentable.
  */
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { DEMO_HOUSEHOLD } from './src/api/client';
-import type { Decision } from './src/api/types';
+import { getHouseholds } from './src/api/client';
+import type { Decision, Household } from './src/api/types';
 import { HouseholdPicker } from './src/components/HouseholdPicker';
 import { Dashboard } from './src/screens/Dashboard';
 import { ExplainModal } from './src/screens/ExplainModal';
+import { NoHousehold } from './src/screens/NoHousehold';
 import { Spending } from './src/screens/Spending';
 import { MIN_TAP_TARGET, colors, space, type } from './src/theme';
 
@@ -44,25 +45,70 @@ type Tab = 'decisions' | 'spending';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('decisions');
-  const [household, setHousehold] = useState<string>(DEMO_HOUSEHOLD);
   const [explaining, setExplaining] = useState<Decision | null>(null);
+
+  // The household(s) this session may see (ticket 0051). There is no baked default any more: the app
+  // learns which household to read from `GET /households`, which the backend scopes to the caller's
+  // membership. `null` = still loading; `[]` = a verified session with no household (a fresh or QA
+  // user) → the NoHousehold screen, not a blank one.
+  const [households, setHouseholds] = useState<Household[] | null>(null);
+  const [household, setHousehold] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getHouseholds()
+      .then((r) => {
+        if (!live) return;
+        setHouseholds(r.households);
+        // Default to the first membership; a real customer has exactly one, the reviewer picks.
+        setHousehold((current) => current ?? r.households[0]?.id ?? null);
+      })
+      .catch(() => {
+        // A failure to list is treated as "no household to show" rather than a crash — the screens
+        // render their own errors against a chosen household, and here there is none to choose.
+        if (live) setHouseholds([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  if (households === null) {
+    return (
+      <View style={[styles.app, styles.center]}>
+        <StatusBar style="dark" />
+        <ActivityIndicator color={colors.tabActive} accessibilityLabel="Loading your households" />
+      </View>
+    );
+  }
+
+  if (households.length === 0 || household === null) {
+    // A verified session that belongs to no household lands here — not a blank screen, and not a
+    // signup flow (onboarding is the next rung). See `NoHousehold`.
+    return <NoHousehold />;
+  }
 
   return (
     <View style={styles.app}>
       <StatusBar style="dark" />
 
-      {/* Above the tabs, because it scopes both of them. It is also the reading order: which
+      {/* The picker only earns its place when there is a choice. A single-membership user (a real
+          customer, whose one household is theirs) sees no picker; the reviewer — a member of every
+          demo household — still does. It scopes both tabs, and it is the reading order: which
           household, then which view of it. */}
-      <HouseholdPicker
-        selected={household}
-        onSelect={(next) => {
-          setHousehold(next);
-          // Close the modal on a switch. It is open against a decision that belongs to the
-          // household you just left, and re-pointing it at "the same date, over here" would be
-          // inventing a question the user did not ask.
-          setExplaining(null);
-        }}
-      />
+      {households.length > 1 ? (
+        <HouseholdPicker
+          households={households}
+          selected={household}
+          onSelect={(next) => {
+            setHousehold(next);
+            // Close the modal on a switch. It is open against a decision that belongs to the
+            // household you just left, and re-pointing it at "the same date, over here" would be
+            // inventing a question the user did not ask.
+            setExplaining(null);
+          }}
+        />
+      ) : null}
 
       <View style={styles.tabs}>
         <TabButton
@@ -123,6 +169,7 @@ function TabButton({
 
 const styles = StyleSheet.create({
   app: { flex: 1, backgroundColor: colors.page },
+  center: { alignItems: 'center', justifyContent: 'center' },
   screen: { flex: 1 },
   // `display: none` rather than unmounting: see the note above. State survives the switch.
   hidden: { display: 'none' },

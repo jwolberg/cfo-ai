@@ -25,30 +25,26 @@
  * pay cadence and card count. "Household B" would be a failure: the reason these four exist is
  * comparison, and a label you cannot compare with is a label that has not done its job.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { getHouseholds } from '../api/client';
 import type { Household } from '../api/types';
 import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, space, type } from '../theme';
 
 interface Props {
+  /**
+   * The households this session may switch to — the caller's memberships, owned and fetched by
+   * `App` (ticket 0051). The picker used to fetch its own list; now `App` does, once, because it
+   * also needs the list to choose the initial household and to decide whether the picker renders at
+   * all (a single-membership user has no choice to make). Presentational from here.
+   */
+  households: Household[];
   selected: string;
   onSelect: (householdId: string) => void;
 }
 
-export function HouseholdPicker({ selected, onSelect }: Props) {
-  const [households, setHouseholds] = useState<Household[]>([]);
+export function HouseholdPicker({ households, selected, onSelect }: Props) {
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    // A failure here is deliberately quiet: the list is chrome, and the screens below it render
-    // their own load and error states against the household actually selected. A red banner
-    // because a *label* could not be fetched would be the picker shouting about itself.
-    getHouseholds()
-      .then((r) => setHouseholds(r.households))
-      .catch(() => setHouseholds([]));
-  }, []);
 
   const current = households.find((h) => h.id === selected);
 

@@ -2,7 +2,7 @@
 id: "0051"
 title: Mobile — session auth cutover (drop the baked key)
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: mobile-rn-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0048"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # Mobile — session auth cutover (drop the baked key)
@@ -48,9 +49,11 @@ signs in to get their own `owner` session; the two planes never cross.
 
 ## Acceptance criteria
 
-- [ ] A signed-in member sees only their household(s); single-membership skips the picker.
-- [ ] A signed-in user with **zero** memberships sees the `NoHousehold` screen, not a crash or blank.
-- [ ] **No static API key remains in the bundle.**
-- [ ] The session token is read from SecureStore, never logged.
-- [ ] The reviewer dev user still sees all demo households; the deployed web build works for a
-      signed-in member with no baked key.
+- [x] A signed-in member sees only their household(s); single-membership skips the picker.
+- [x] A signed-in user with **zero** memberships sees the `NoHousehold` screen, not a crash or blank.
+- [x] **No static API key remains in the bundle.**
+- [x] The session token is read from SecureStore, never logged.
+- [~] The reviewer dev user still sees all demo households (jest-verified via the membership-scoped
+      picker). The **deployed web build works for a signed-in member with no baked key** is not
+      exercised here — no device/web-build environment — and stays a flagged gap alongside the Stytch
+      sign-in SDK wiring.

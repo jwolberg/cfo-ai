@@ -2463,3 +2463,22 @@ is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a diffe
   `decide()` money-gate itself (UNATTESTED → CARD_COVERAGE_INCOMPLETE, COMPLETE clears it).
 - Same shadow caveat as U4 (readpath serves frozen snapshots) — write + invalidation proven, not a
   re-decided live sweep. Full suite **727 passed, 6 skipped**; migration up/down/up clean from zero.
+
+### U6a / 0051 — mobile session auth cutover (done 2026-07-18, verified to tsc+jest)
+Per the user's call (2026-07-18): mobile built and verified to tsc + jest; a real on-device Stytch
+sign-in and the deployed web build are not exercisable here, so those stay flagged gaps (like U7).
+- **The baked `EXPO_PUBLIC_API_KEY`/`X-API-Key` is gone.** `src/api/session.ts` is the one place the
+  session token lives: **SecureStore on native** (Keychain/Keystore, never AsyncStorage, never
+  logged), and the **pre-seeded demo session** (`EXPO_PUBLIC_DEMO_SESSION`) on web for the public
+  demo plane (KTD-10). A real stored token wins over the demo one. `client.ts` sends
+  `Authorization: Bearer <token>`; a missing token fails closed (no auth header → backend 401).
+- **`DEMO_HOUSEHOLD` default is removed.** `App` bootstraps the household from `GET /households`
+  (membership-scoped): loading → spinner, empty → **NoHousehold** screen (not blank, not signup),
+  else the first membership. The picker renders only when there's a choice (>1) — a single-membership
+  customer sees none; the reviewer still does. `HouseholdPicker` is now presentational (App owns the
+  list; the picker no longer fetches).
+- **Deferred, flagged:** the Stytch Expo sign-in UI (magic link / OTP) is the seam `signInWithToken`
+  exposes — wiring the SDK and running it on a device needs a real Stytch project + simulator. Not
+  faked; documented in `session.ts`. `expo-secure-store` installed (app.json plugin added).
+- Verified: `tsc --noEmit` clean; jest **74 passed** (10 suites) including new session + NoHousehold
+  + rewritten client/picker/App tests. `expo install` used for the SDK (respects the Expo v57 pin).

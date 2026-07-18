@@ -17,7 +17,10 @@
  */
 import { render, screen, waitFor, within } from '@testing-library/react-native';
 
-import { DEMO_HOUSEHOLD, ApiError } from '../api/client';
+import { ApiError } from '../api/client';
+// The demo household id (was client.DEMO_HOUSEHOLD before the identity cutover, ticket 0051).
+const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
+
 import type { CardSpend, SpendResponse } from '../api/types';
 import { Spending } from './Spending';
 

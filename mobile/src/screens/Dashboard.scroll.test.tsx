@@ -12,7 +12,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react-nat
 
 import type { Decision, DecisionsResponse } from '../api/types';
 import { Dashboard } from './Dashboard';
-import { DEMO_HOUSEHOLD } from '../api/client';
+const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
 
 jest.mock('../api/client', () => ({
   ...jest.requireActual('../api/client'),
