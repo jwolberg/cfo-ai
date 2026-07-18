@@ -269,6 +269,55 @@ class Repository:
             change_type=change_type,
         )
 
+    def add_plaid_account(self, **f: Any) -> None:
+        """Append one account-balance snapshot (migration 0014). INSERT only — a refresh is a new
+        row, and the reader (`latest_plaid_accounts`) takes the newest by `seq`."""
+        self._exec(
+            "INSERT INTO plaid_accounts"
+            " (id, household_id, plaid_item_id, plaid_account_id, name, official_name, type,"
+            " subtype, current_balance, available_balance, iso_currency_code)"
+            " VALUES (:id, :h, :plaid_item_id, :plaid_account_id, :name, :official_name, :type,"
+            " :subtype, :current_balance, :available_balance, :iso_currency_code)",
+            id=f"pa_{uuid.uuid4().hex}",
+            **f,
+        )
+
+    def add_plaid_liability(self, **f: Any) -> None:
+        """Append one card-terms snapshot (migration 0014). INSERT only, latest-by-`seq`.
+
+        `purchase_apr` is a fraction (0.2399), not a percentage — the engine's `apr` convention. The
+        caller converts Plaid's percentage; an unknown APR is `None` (the estimated case, 0028)."""
+        self._exec(
+            "INSERT INTO plaid_liabilities"
+            " (id, household_id, plaid_item_id, plaid_account_id, last_statement_balance,"
+            " last_statement_issue_date, minimum_payment, next_payment_due_date, purchase_apr,"
+            " is_overdue)"
+            " VALUES (:id, :h, :plaid_item_id, :plaid_account_id, :last_statement_balance,"
+            " :last_statement_issue_date, :minimum_payment, :next_payment_due_date, :purchase_apr,"
+            " :is_overdue)",
+            id=f"pl_{uuid.uuid4().hex}",
+            **f,
+        )
+
+    def latest_plaid_accounts(self) -> list[dict[str, Any]]:
+        """The newest balance snapshot **per account** — one row for each `plaid_account_id`.
+
+        `DISTINCT ON` ordered by `seq DESC` so a re-fetch supersedes the prior snapshot without
+        rewriting it: the history stays in the table, and the reader sees only the current balance.
+        Ordered by `seq`, not `fetched_at`, for the reason the table's own comment gives.
+        """
+        return self._all(
+            "SELECT DISTINCT ON (plaid_account_id) * FROM plaid_accounts"
+            " WHERE household_id = :h ORDER BY plaid_account_id, seq DESC"
+        )
+
+    def latest_plaid_liabilities(self) -> list[dict[str, Any]]:
+        """The newest card-terms snapshot per account — the mirror of `latest_plaid_accounts`."""
+        return self._all(
+            "SELECT DISTINCT ON (plaid_account_id) * FROM plaid_liabilities"
+            " WHERE household_id = :h ORDER BY plaid_account_id, seq DESC"
+        )
+
     def transfers(self) -> list[dict[str, Any]]:
         """Every transfer-ledger row for this household, oldest first (ticket 0039).
 
