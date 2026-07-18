@@ -2504,3 +2504,20 @@ sign-in and the deployed web build are not exercisable here, so those stay flagg
 - Verified: mobile `tsc` clean, jest **88 passed** (12 suites); backend **731 passed, 9 skipped**
   (GET /policy tests added; the 9 skips are the vendor gates incl. U7's 3). Same on-device caveat as
   U6a — the Stytch sign-in and a real device run are the flagged, unexercised pieces.
+
+### U7 / 0053 — real-Stytch end-to-end gate: GREEN (2026-07-18)
+Run against a real Stytch **test** project (creds supplied by the user via a scratchpad env file,
+outside the repo; never committed/logged). **4 passed.**
+- **One vendor-reality correction, exactly where the plan said it would land** (`stytch.py`): the JWKS
+  host is environment-specific — `test.stytch.com` for Test, `api.stytch.com` for Live. The earlier
+  code derived `api.stytch.com` unconditionally → 404 on a test project. Fixed with `_stytch_host()`
+  keyed on the `project-test-`/`project-live-` id prefix (no dependency on STYTCH_ENV). The
+  issuer/audience/sub shape I'd coded blind was **confirmed correct** against a real minted token.
+- **Mint path:** `_mint_session` uses the Stytch server SDK's Passwords product (create-or-
+  authenticate), returning `(session_jwt, stytch_user_id)`. Per-run unique emails so each run mints
+  fresh throwaway users (avoids a stale-password collision from a prior run). `stytch` added to
+  `[dev]` extras.
+- **Gate proves, against real sessions:** verify + JIT-provision; non-member 403; owner's policy +
+  attestation writes land and are attributed to the real user id (audited); two real users mutually
+  invisible. Without creds it skips loudly (CI: 4 skipped) — so CI proves it *can* run, prod proves it
+  *did*. Full suite: **731 passed, 10 skipped** (no creds); gate **4 passed** (with creds).

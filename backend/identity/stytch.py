@@ -62,16 +62,30 @@ def stytch_project_id() -> str:
     return pid
 
 
+def _stytch_host() -> str:
+    """The API host for this project. Stytch serves **Test** projects from `test.stytch.com` and
+    **Live** from `api.stytch.com`; the project id prefix (`project-test-…` / `project-live-…`) is
+    self-describing, so the host follows from it and needs no `STYTCH_ENV`.
+
+    Vendor-reality correction (confirmed 2026-07-18 against a real test project, U7/0053): the plan
+    and an earlier draft here derived the JWKS URL from `api.stytch.com` unconditionally, which 404s
+    for a test project. This is the one file the plan said such a correction would land in.
+    """
+    return (
+        "test.stytch.com" if stytch_project_id().startswith("project-test-") else "api.stytch.com"
+    )
+
+
 def _jwks_url() -> str:
     """Where this project's public signing keys live.
 
-    Overridable via `STYTCH_JWKS_URL` (the sandbox test and any future proxy set it); otherwise the
-    documented Stytch sessions JWKS endpoint for this project.
+    Overridable via `STYTCH_JWKS_URL` (a proxy, or a pinned host in a test); otherwise the Stytch
+    sessions JWKS endpoint for this project on its environment's host.
     """
     override = os.environ.get("STYTCH_JWKS_URL", "").strip()
     if override:
         return override
-    return f"https://api.stytch.com/v1/sessions/jwks/{stytch_project_id()}"
+    return f"https://{_stytch_host()}/v1/sessions/jwks/{stytch_project_id()}"
 
 
 @dataclass

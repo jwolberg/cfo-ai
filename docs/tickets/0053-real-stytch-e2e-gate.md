@@ -2,7 +2,7 @@
 id: "0053"
 title: The real-Stytch end-to-end gate (the unit that makes the rest real)
 type: testing
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0046", "0047", "0048", "0049", "0050", "0051", "0052"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # The real-Stytch end-to-end gate (the unit that makes the rest real)
@@ -44,21 +45,27 @@ creds, mirroring `tests/test_plaid_sandbox.py`.
 
 ## Acceptance criteria
 
-- [ ] A real session verifies and provisions a `users` row.
-- [ ] A real non-member session is refused on every household route.
-- [ ] The policy write and attestation write are visible and audited.
-- [ ] Two sandbox users are mutually invisible.
-- [ ] The suite skips **loudly** without creds, naming exactly what is missing.
-- [ ] Provenance + any vendor-reality correction recorded (in the test docstring and
-      `docs/implementation-notes.md`).
+- [x] A real session verifies and provisions a `users` row.
+- [x] A real non-member session is refused on every household route.
+- [x] The policy write and attestation write are visible and audited (attributed to the real user).
+- [x] Two sandbox users are mutually invisible.
+- [x] The suite skips **loudly** without creds, naming exactly what is missing.
+- [x] Provenance + the vendor-reality correction recorded (test docstring + implementation-notes).
 
-## Status (2026-07-18)
+## Status (2026-07-18) — GREEN
 
-The gate **file is landed** (`tests/test_identity_sandbox.py`) and **skips loudly** without
-Stytch credentials — verified (3 skipped, with the full reason). It is **not green**: no Stytch
-sandbox credentials exist in this environment, so the real session-mint + end-to-end run has
-**not** been executed, and `_mint_session` raises `NotImplementedError` by design so the gate
-cannot pass hollow. Provenance is honest: NOT yet run against real Stytch. Remaining to close:
-obtain a Stytch **test** project, wire `_mint_session` to its server API, run green (folding
-any vendor-reality correction into `backend/identity/stytch.py`), and record the date. Also
-gated on U6b per depends_on, though the gate itself exercises only the backend path.
+Run **green against a real Stytch test project on 2026-07-18** (4 passed): a real `session_jwt`
+minted via the Passwords product verifies through our own local JWKS adapter and JIT-provisions the
+`users` row; a real non-member session is `403`'d; a member's `PATCH /policy` and `POST /attest` land
+and are attributed to the real user id; two real sessions are mutually invisible.
+
+**One vendor-reality correction** (the plan budgeted for ≥1): the JWKS host is environment-specific —
+Stytch serves Test from `test.stytch.com`, not the `api.stytch.com` an earlier draft derived
+unconditionally (which 404s a test project). Fixed in `backend/identity/stytch.py` (`_stytch_host`),
+the one file that names the vendor. The session-JWT shape the adapter verifies
+(`iss = stytch.com/<pid>`, `aud = [<pid>]`, `sub` = the Stytch user id) was confirmed **correct** — no
+change needed there.
+
+Without creds the gate still **skips loudly** (verified: 4 skipped with the full reason), so CI keeps
+proving it *can* run, not that it *did*. `stytch` (the server SDK, used only to mint sessions) is now
+a `[dev]` extra. The `_mint_session` `NotImplementedError` placeholder is gone.
