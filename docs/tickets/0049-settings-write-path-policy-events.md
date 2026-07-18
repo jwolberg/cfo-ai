@@ -2,7 +2,7 @@
 id: "0049"
 title: The settings write path — append-only policy_events, current state derived
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0046", "0047", "0048"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # The settings write path — append-only policy_events, current state derived
@@ -55,16 +56,16 @@ are the two compensating controls.
 
 ## Acceptance criteria
 
-- [ ] Write→read roundtrip returns the new guardrails; `Repository.policy()` returns them on the
+- [x] Write→read roundtrip returns the new guardrails; `Repository.policy()` returns them on the
       next read, ordered by `seq`.
-- [ ] Validation against `UserPolicy.__post_init__` + explicit bounds (`buffer_floor ≥ 0`, caps
+- [x] Validation against `UserPolicy.__post_init__` + explicit bounds (`buffer_floor ≥ 0`, caps
       `≥ MIN_SWEEP` and internally consistent, `min_days_between_sweeps` in a sane range); an
       invariant violation is rejected with **no row appended**.
-- [ ] A non-member `403`s.
-- [ ] History is non-destructive — prior values remain in `policy_events`.
-- [ ] Cross-household scope holds.
-- [ ] A loosening change is flagged distinctly in the event row.
-- [ ] The `policy_events` backfill runs in the migration; no already-seeded household loses its
+- [x] A non-member `403`s.
+- [x] History is non-destructive — prior values remain in `policy_events`.
+- [x] Cross-household scope holds.
+- [x] A loosening change is flagged distinctly in the event row.
+- [x] The `policy_events` backfill runs in the migration; no already-seeded household loses its
       policy after cutover.
 
 ## Notes / caveat

@@ -72,11 +72,19 @@ from backend.db.session import (
     make_engine,
 )
 from backend.db.snapshots import PostgresSnapshotStore
-from backend.identity.deps import User, authorize_household, current_user, households_for
+from backend.identity.deps import (
+    User,
+    authorize_household,
+    authorize_household_owner,
+    current_user,
+    households_for,
+)
 from backend.plaid import link, sync, webhook
 from backend.spend import CardObligations, SpendProjection
 from backend.transfer.funding import assert_transfer_funding_configured
+from engine.decide import MIN_SWEEP
 from engine.explain import explain, render
+from engine.models import UserPolicy
 
 # The Expo web target runs in a browser, on a different origin from the API — so without
 # CORS the whole `expo start --web` verification path fails while native targets work fine.
@@ -158,7 +166,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins(),
-    allow_methods=["GET", "POST"],
+    # PATCH for the policy write path (ticket 0049); POST for the attestation and assistant.
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -534,6 +543,107 @@ async def explain_decision(
         **decision_json(record),
         "narration": list(explain(record.decision)),
     }
+
+
+class PolicyUpdate(BaseModel):
+    """A guardrail change (ticket 0049). Money fields are `Decimal` — the wire carries them as
+    strings (`"800.00"`), so no float ever touches a dollar amount, the discipline the read path
+    holds too. `blackout_dates` is the pause surface (U6b builds the UI over it)."""
+
+    buffer_floor: Decimal
+    max_sweep: Decimal
+    max_weekly_sweep: Decimal
+    min_days_between_sweeps: int
+    blackout_dates: list[date] = Field(default_factory=list)
+
+
+def _validate_policy(body: PolicyUpdate) -> None:
+    """The guardrail invariants, enforced before any row is appended (ticket 0049).
+
+    `UserPolicy.__post_init__` is run so the engine's own rule (non-negative spacing) is the single
+    source of that truth; the explicit bounds add what the dataclass does not check: a non-negative
+    floor, a single-sweep cap at or above the engine's `MIN_SWEEP`, and a weekly cap that is not
+    below a single sweep (an internally inconsistent pair that would let no sweep through). A
+    violation is a 422 with **no row written** — a rejected change must not land in the audit trail.
+    """
+    problems: list[str] = []
+    if body.buffer_floor < 0:
+        problems.append("buffer_floor cannot be negative")
+    if body.max_sweep < MIN_SWEEP:
+        problems.append(f"max_sweep must be at least the engine minimum sweep ({MIN_SWEEP})")
+    if body.max_weekly_sweep < body.max_sweep:
+        problems.append("max_weekly_sweep cannot be below max_sweep")
+    if body.min_days_between_sweeps > 90:
+        problems.append("min_days_between_sweeps above 90 is almost certainly a mistake")
+    try:
+        UserPolicy(
+            buffer_floor=body.buffer_floor,
+            max_sweep=body.max_sweep,
+            max_weekly_sweep=body.max_weekly_sweep,
+            min_days_between_sweeps=body.min_days_between_sweeps,
+        )
+    except ValueError as exc:
+        problems.append(str(exc))
+    if problems:
+        raise HTTPException(status_code=422, detail=problems)
+
+
+def _is_loosening(current: dict[str, Any] | None, body: PolicyUpdate) -> bool:
+    """Whether `body` weakens a guardrail relative to the current policy (KTD-9). No prior policy
+    loosens nothing. A lower floor, a higher cap, or shorter spacing each count."""
+    if current is None:
+        return False
+    return (
+        body.buffer_floor < current["buffer_floor"]
+        or body.max_sweep > current["max_sweep"]
+        or body.max_weekly_sweep > current["max_weekly_sweep"]
+        or body.min_days_between_sweeps < current["min_days_between_sweeps"]
+    )
+
+
+def _policy_json(row: dict[str, Any]) -> dict[str, Any]:
+    """A policy event, as the client sees it. Money as strings; dates as ISO."""
+    return {
+        "buffer_floor": usd(row["buffer_floor"]),
+        "max_sweep": usd(row["max_sweep"]),
+        "max_weekly_sweep": usd(row["max_weekly_sweep"]),
+        "min_days_between_sweeps": row["min_days_between_sweeps"],
+        "blackout_dates": [d.isoformat() for d in row["blackout_dates"]],
+    }
+
+
+@app.patch("/households/{household_id}/policy")
+async def update_policy(
+    body: PolicyUpdate,
+    repo: Annotated[Repository, Depends(authorize_household_owner)],
+    user: Annotated[User, Depends(current_user)],
+) -> Any:
+    """Write a validated, audited, append-only policy change — the product's **first write path**.
+
+    Owner-gated (`authorize_household_owner`): the demo `viewer` is refused (KTD-10). The change is
+    validated (`_validate_policy`), flagged if it *loosens* a guardrail (KTD-9), and appended to
+    `policy_events`; `Repository.policy()` then reads it back as the current policy.
+
+    *(Shadow caveat, ticket 0049: nothing reads `Repository.policy()` into `decide()` for a live
+    household yet — the demo uses a hardcoded `UserPolicy` and `readpath.py` serves frozen
+    snapshots. So this proves write + audit + latest-read, not a re-decided sweep; the live path is
+    the named, open Prerequisite.)*
+    """
+    _validate_policy(body)
+
+    current = repo.policy()
+    repo.set_policy(
+        buffer_floor=body.buffer_floor,
+        max_sweep=body.max_sweep,
+        max_weekly_sweep=body.max_weekly_sweep,
+        min_days_between_sweeps=body.min_days_between_sweeps,
+        blackout_dates=[d.isoformat() for d in body.blackout_dates],
+        changed_by=user.id,
+        loosened=_is_loosening(current, body),
+    )
+    written = repo.policy()
+    assert written is not None  # just appended
+    return _policy_json(written)
 
 
 class Turn(BaseModel):

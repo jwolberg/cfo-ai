@@ -2422,3 +2422,23 @@ is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a diffe
 - **Owner-gated write refusal (PATCH /policy, POST /attest) is asserted at the dep level in U2's
   tests** but the routes themselves land in U4/U5 — the route-level viewer-write-403 test lands with
   them.
+
+### U4 / 0049 — settings write path, append-only policy_events (done 2026-07-18)
+- **`policy_events` replaces the mutable `policies` table outright** (KTD-6's honest form — no second
+  copy that can disagree). Migration 0012 creates it (append-only grant: SELECT+INSERT), **backfills
+  one event per existing policies row**, then DROPs `policies`. `downgrade()` recreates `policies` and
+  repopulates it from the latest event per household, so the reversal loses nothing either. Verified
+  up/down/up clean from zero.
+- **`policy()` reads the latest by `seq`, not `created_at`** (the transfers.seq tie lesson).
+  `set_policy` is now an INSERT with `changed_by` + `loosened`; the seeder's call is unchanged (both
+  default). `two_households` IDOR fixture switched from a `policies` row to a `policy_events` row, so
+  the leak test stays non-vacuous.
+- **PATCH /households/{id}/policy** is owner-gated (viewer → 403, non-member → 403, no session → 401),
+  validates before appending (buffer≥0, max_sweep≥MIN_SWEEP, weekly≥single, spacing 0–90, plus
+  UserPolicy.__post_init__) — a 422 writes no row — and flags a **loosening** change distinctly
+  (KTD-9): lower floor, higher cap, or shorter spacing vs. the current policy.
+- Added PATCH to the CORS allow-methods (the deployed web build needs it).
+- **Shadow caveat kept honest in code + ticket:** nothing reads `Repository.policy()` into `decide()`
+  for a live household yet (demo uses a hardcoded UserPolicy, readpath serves frozen snapshots), so
+  this proves write + audit + latest-read, not a re-decided sweep — the live-assembly path is the
+  plan's named, open Prerequisite. Full suite **709 passed, 6 skipped**.

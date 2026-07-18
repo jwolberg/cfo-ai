@@ -90,10 +90,10 @@ def two_households(db):
             )
             db.execute(
                 text(
-                    "INSERT INTO policies (household_id, buffer_floor, max_sweep,"
-                    " max_weekly_sweep) VALUES (:h, '750.00', '500.00', '1000.00')"
+                    "INSERT INTO policy_events (id, household_id, buffer_floor, max_sweep,"
+                    " max_weekly_sweep) VALUES (:id, :h, '750.00', '500.00', '1000.00')"
                 ),
-                {"h": h},
+                {"id": f"pe-{h}", "h": h},
             )
             db.execute(
                 text(

@@ -15,6 +15,7 @@ someone forgets exactly once. There is no way to hold a `Repository` and not kno
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -47,7 +48,16 @@ class Repository:
         return self._all("SELECT * FROM cards WHERE household_id = :h ORDER BY id")
 
     def policy(self) -> dict[str, Any] | None:
-        rows = self._all("SELECT * FROM policies WHERE household_id = :h")
+        """The current guardrails — the **latest** `policy_events` row for this household (KTD-6).
+
+        Ordered by `seq`, not `created_at`: a seed transaction can write the initial event and a
+        later one in the same wall-clock instant, and the state's whole meaning is *which is latest*
+        (the `transfers.seq` lesson). Returns the projection of an append-only history, not a
+        mutable row — there is no second copy that could disagree with the audit trail.
+        """
+        rows = self._all(
+            "SELECT * FROM policy_events WHERE household_id = :h ORDER BY seq DESC LIMIT 1"
+        )
         return rows[0] if rows else None
 
     def decisions(self, start: date | None = None, end: date | None = None) -> list[dict[str, Any]]:
@@ -141,18 +151,38 @@ class Repository:
             **f,
         )
 
-    def set_policy(self, **f: Any) -> None:
+    def set_policy(
+        self,
+        *,
+        buffer_floor: Decimal,
+        max_sweep: Decimal,
+        max_weekly_sweep: Decimal,
+        min_days_between_sweeps: int,
+        blackout_dates: list[str],
+        changed_by: str | None = None,
+        loosened: bool = False,
+    ) -> None:
+        """Append a policy change (ticket 0049, KTD-6). **An INSERT, never an upsert** — the mutable
+        `policies` row was retired; the current policy is the latest event `policy()` reads.
+
+        `changed_by` is the user who made the change (NULL for the seeder's initial event);
+        `loosened` flags a change that weakened a guardrail — the audit marker the step-up retrofit
+        finds them by (KTD-9). The append-only grant means even this method cannot rewrite history:
+        a correction is another event, and `policy()` simply reads the newest.
+        """
         self._exec(
-            "INSERT INTO policies (household_id, buffer_floor, max_sweep, max_weekly_sweep,"
-            " min_days_between_sweeps, blackout_dates)"
-            " VALUES (:h, :buffer_floor, :max_sweep, :max_weekly_sweep, :min_days_between_sweeps,"
-            " :blackout_dates)"
-            " ON CONFLICT (household_id) DO UPDATE SET"
-            " buffer_floor = EXCLUDED.buffer_floor, max_sweep = EXCLUDED.max_sweep,"
-            " max_weekly_sweep = EXCLUDED.max_weekly_sweep,"
-            " min_days_between_sweeps = EXCLUDED.min_days_between_sweeps,"
-            " blackout_dates = EXCLUDED.blackout_dates",
-            **f,
+            "INSERT INTO policy_events (id, household_id, changed_by, buffer_floor, max_sweep,"
+            " max_weekly_sweep, min_days_between_sweeps, blackout_dates, loosened)"
+            " VALUES (:id, :h, :changed_by, :buffer_floor, :max_sweep, :max_weekly_sweep,"
+            " :min_days_between_sweeps, :blackout_dates, :loosened)",
+            id=f"pe_{uuid.uuid4().hex}",
+            changed_by=changed_by,
+            buffer_floor=buffer_floor,
+            max_sweep=max_sweep,
+            max_weekly_sweep=max_weekly_sweep,
+            min_days_between_sweeps=min_days_between_sweeps,
+            blackout_dates=blackout_dates,
+            loosened=loosened,
         )
 
     def add_plaid_item(

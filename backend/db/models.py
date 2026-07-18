@@ -158,15 +158,32 @@ cards = Table(
     ),  # 28: every month has one
 )
 
-policies = Table(
-    "policies",
+# The append-only guardrail history — the source of record for a household's policy (ticket 0049,
+# the identity rung's U4, KTD-6). It **replaces** the old mutable `policies` row: policy is
+# safety-critical and the whole codebase's identity is append-only auditability, so a change is a
+# new event and the current policy is the latest one, read by `seq` (not `created_at`, which a seed
+# transaction can tie on — the `transfers.seq` lesson). `Repository.policy()` projects it; nothing
+# keeps a second mutable copy that could disagree.
+#
+# Append-only is a **grant** (SELECT + INSERT only, migration 0012), not a convention — like
+# `plaid_transactions` and `transfers`. `changed_by` is the user who made the change (NULL for a
+# seeded/initial event); `loosened` marks a change that weakened a guardrail, the audit marker the
+# deferred step-up retrofit finds them by (KTD-9).
+policy_events = Table(
+    "policy_events",
     metadata,
+    Column("id", Text, primary_key=True),
+    # Monotonic order — `policy()` reads the latest by this, never by `created_at`.
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
     Column(
         "household_id",
         Text,
         ForeignKey("households.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
+    # The actor. FK to the platform `users` table, ON DELETE SET NULL so a shredded user's audit
+    # trail survives with the actor nulled rather than the history erased.
+    Column("changed_by", Text, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
     Column("buffer_floor", MONEY, nullable=False),
     Column("max_sweep", MONEY, nullable=False),
     Column("max_weekly_sweep", MONEY, nullable=False),
@@ -174,7 +191,12 @@ policies = Table(
     # is a policy value and not a constant.
     Column("min_days_between_sweeps", Integer, nullable=False, server_default=text("7")),
     Column("blackout_dates", ARRAY(Date), nullable=False, server_default=text("'{}'")),
-    CheckConstraint("min_days_between_sweeps >= 0", name="ck_policies_spacing_nonneg"),
+    Column("loosened", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("buffer_floor >= 0", name="ck_policy_events_buffer_nonneg"),
+    CheckConstraint("max_sweep >= 0", name="ck_policy_events_max_sweep_nonneg"),
+    CheckConstraint("max_weekly_sweep >= 0", name="ck_policy_events_weekly_nonneg"),
+    CheckConstraint("min_days_between_sweeps >= 0", name="ck_policy_events_spacing_nonneg"),
 )
 
 # Partitioned by month on `day` from the first migration. Free at zero rows; a migration
@@ -529,7 +551,7 @@ PLATFORM_TABLES: tuple[str, ...] = (
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "accounts",
     "cards",
-    "policies",
+    "policy_events",
     "decisions",
     "snapshots",
     "spend_projections",
@@ -554,7 +576,7 @@ __all__ = [
     "plaid_items",
     "plaid_transactions",
     "plaid_webhooks",
-    "policies",
+    "policy_events",
     "snapshots",
     "spend_projections",
     "transfers",
