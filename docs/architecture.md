@@ -502,6 +502,19 @@ each issuer decides what it accepts. Options, in increasing order of pain: deep-
 handoff → bill-pay partner → FBO/custodial account with a bank partner (heaviest
 compliance; avoid as long as possible).
 
+**Why not the two lighter, custody-free rungs?** Both avoid holding funds, and each costs the
+product its point. **Deep-link handoff** (drop the user into their bank's bill-pay or the issuer's
+"pay from a linked account" screen; the issuer pulls the ACH straight from checking) touches no money
+we control — but it is **user-initiated**, so there is no autonomous amount or timing, which *is* the
+product. **Directed-debit bill-pay** (the issuer pulls the user's DDA and we only send the
+instruction) avoids *our* custody, but reaches only participating issuers and most such networks
+settle through *their* FBO — the custody moved to the partner, it did not vanish. That is the real
+lever: to move money **autonomously** to **any** issuer, the funds must transit *someone's*
+controlled account; the only choice is **whose license carries it.** A bank/BaaS partner holding
+transit funds under their own charter keeps the reach and the autonomy while moving the Reg E / MTL
+burden off us — Method simply makes *us* that someone. (Push-to-card rails — Visa Direct, Mastercard
+Send — credit debit cards, not credit-card balances, so they are not an option for the payoff leg.)
+
 **The rail is now built in shadow** — see the sweep-execution rung
 ([plan](./plans/2026-07-17-002-feat-sweep-execution-rung-plan.md), [ADR-0006](./decisions/0006-the-fbo-commitment-and-the-transfer-webhook-lookup.md),
 [ADR-0007](./decisions/0007-the-debit-rail-and-the-timing-model.md)).
