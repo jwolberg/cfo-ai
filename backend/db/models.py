@@ -368,6 +368,63 @@ plaid_transactions = Table(
 )
 
 
+# `plaid_accounts` / `plaid_liabilities` (migration 0014): the balance and card-terms snapshots that
+# `plaid_transactions` cannot carry — what is *true now*, not what was *done*. Append-only like
+# `plaid_transactions` (SELECT/INSERT only; a refresh is a new row); the reader takes the latest per
+# account by `seq`, never `fetched_at` (the `policy_events`/`transfers` monotonic-order lesson).
+plaid_accounts = Table(
+    "plaid_accounts",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("plaid_account_id", Text, nullable=False),
+    Column("name", Text, nullable=True),
+    Column("official_name", Text, nullable=True),
+    # Plaid's type/subtype: depository/checking, depository/savings, credit/credit card.
+    Column("type", Text, nullable=True),
+    Column("subtype", Text, nullable=True),
+    Column("current_balance", MONEY, nullable=True),
+    Column("available_balance", MONEY, nullable=True),
+    Column("iso_currency_code", Text, nullable=True),
+    Column("fetched_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+)
+
+
+plaid_liabilities = Table(
+    "plaid_liabilities",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("plaid_item_id", Text, nullable=False),
+    Column("plaid_account_id", Text, nullable=False),
+    Column("last_statement_balance", MONEY, nullable=True),
+    Column("last_statement_issue_date", Date, nullable=True),
+    Column("minimum_payment", MONEY, nullable=True),
+    Column("next_payment_due_date", Date, nullable=True),
+    # A fraction (0.2399), not a percentage — the engine's `apr` convention; the fetch converts.
+    Column("purchase_apr", RATE, nullable=True),
+    Column("is_overdue", Boolean, nullable=True),
+    Column("fetched_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint(
+        "purchase_apr IS NULL OR (purchase_apr >= 0 AND purchase_apr <= 2)",
+        name="ck_plaid_liabilities_apr_range",
+    ),
+)
+
+
 # **The one table deliberately outside `HOUSEHOLD_SCOPED`** (ticket 0035, ADR-0005). Plaid's webhook
 # carries `item_id`, not `household_id`, so the doorbell cannot resolve a household before RLS could
 # be set — and RLS fails closed, so a scoped insert here would see nothing to match and reject the
@@ -582,6 +639,8 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "spend_projections",
     "plaid_items",
     "plaid_transactions",
+    "plaid_accounts",
+    "plaid_liabilities",
     "transfers",
     "household_members",
     "card_attestations",
@@ -600,7 +659,9 @@ __all__ = [
     "household_members",
     "households",
     "metadata",
+    "plaid_accounts",
     "plaid_items",
+    "plaid_liabilities",
     "plaid_transactions",
     "plaid_webhooks",
     "policy_events",

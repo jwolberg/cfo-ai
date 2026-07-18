@@ -2620,3 +2620,34 @@ detector we have not built"). `backend/recurring.py`, pure and deterministic (no
   scoping — **balance/liability ingest**: transaction rows carry no account balance or card
   APR/statement, so `opening_balance` and `CardSpec` cannot be inferred from them; a linked decision
   needs `/accounts/balance` + `/liabilities` ingested too. That is the next unit, not this one.
+
+### The Link rung, Phase 2 — account-state ingest (balances + card terms) (2026-07-18)
+Branch `feat/plaid-account-ingest` (off main). The prerequisite the detector work surfaced:
+`plaid_transactions` records what a household *did*; a decision also needs what is *true now* — the
+checking/savings balance (→ `opening_balance`) and the card statement/due-date/APR (→ `CardSpec`),
+which transaction rows do not carry.
+
+- **Migration 0014** — `plaid_accounts` + `plaid_liabilities`, append-only snapshots. Same discipline
+  as `plaid_transactions`: `SELECT, INSERT` grant only (no rewrite), RLS ENABLE+FORCE, and a `seq`
+  IDENTITY so the reader takes the latest per account by `seq`, never `fetched_at` (the
+  `policy_events`/`transfers` tie-on-the-wall-clock lesson). Round-trips clean (from-zero → head →
+  downgrade 0013 → head), so 0033's CI job stays green. Mirrored into `backend/db/models.py`
+  (`HOUSEHOLD_SCOPED` + `__all__`) so `test_schema`/autogenerate know them.
+- **`backend/plaid/accounts.py::ingest_account_state`** — resolves the household (the SECURITY DEFINER
+  lookup, as `sync.py`), then under scope calls `/accounts/balance/get` and `/liabilities/get` and
+  appends a snapshot per account. **Balances always; liabilities when present** — `/liabilities/get`
+  needs the product consented at link time, so a `plaid.ApiException` there degrades to "balances
+  only" rather than failing the refresh (the card terms arrive when the Item is linked with
+  liabilities). Plaid's APR **percentage** → engine **fraction** (23.99 → 0.2399); an unknown APR is
+  `None` (the 0028 `estimated` case), never a 0% card.
+- **Repository**: `add_plaid_account`/`add_plaid_liability` (INSERT), `latest_plaid_accounts`/
+  `latest_plaid_liabilities` (`DISTINCT ON … ORDER BY plaid_account_id, seq DESC`).
+- Verified vs real local Postgres: `tests/test_plaid_accounts.py` (4) — balances+terms land, APR
+  converted, liabilities-absent degrades, a refetch supersedes by seq, unknown item is reported not
+  crashed. Full suite **751 passed, 10 skipped**; ruff clean.
+- **Not wired yet** (deliberate, to keep this off the stacked branches): the fetch isn't called from
+  a route. Wiring it into the link/sync flow — and adding the `liabilities` product to the
+  `link_token` (Phase 1 #70) so a real Sandbox Item returns card terms — is a small follow-up once the
+  branches converge. **Still the last Phase-2 unit:** spec-inference (`RecurringStream`s + these
+  snapshots → `HouseholdSpec`) + the `plaid_transactions`→`History` adapter wiring
+  `livepath.linked_history` (needs live-assembly #69).
