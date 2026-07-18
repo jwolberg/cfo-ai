@@ -83,6 +83,50 @@ jobs:
           # is ever unset here, so the skip cannot go quiet.
           TEST_DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cfo_ai_test
 
+  # Ticket 0033's still-open follow-up, finally closed (the identity rung's three new migrations were
+  # the moment). The `quality` job migrates a fresh DB to head via the pytest fixture, so
+  # upgrade-from-zero is already exercised — but that fixture only ever goes UP, and only once. This
+  # job proves the whole chain is **reversible from zero**: upgrade → downgrade to base → upgrade
+  # again. It is the standalone, visible guard that a `downgrade()` stays clean and that no migration
+  # imports a live constant that would make an old revision describe today's schema (0033's trap: the
+  # bug that "only breaks from zero is the quietest of all — every already-migrated database, CI
+  # included, stays green forever"). Runs `alembic` directly, not through pytest.
+  migrations:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cfo_ai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Migrate up, down to base, and up again (from zero)
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cfo_ai_test
+        run: |
+          set -euxo pipefail
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
   mobile:
     runs-on: ubuntu-latest
     defaults:
