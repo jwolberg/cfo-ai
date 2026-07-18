@@ -826,6 +826,7 @@ def assemble_snapshot(
     last_sweep_amount: Decimal | None = None,
     sweeps_in_flight: Decimal = ZERO,
     spend_quantile: float | None = SPEND_QUANTILE,
+    attested: bool = True,
 ) -> Snapshot:
     """The `Snapshot` the engine sees on `today`, given the walk's state.
 
@@ -845,6 +846,14 @@ def assemble_snapshot(
     `transfers` ledger (`Repository.sweeps_in_flight`) so an unsettled debit suppresses the next
     sweep. Kept a parameter, not read here, because this function must stay pure over its inputs for
     replay to grade the engine that shipped.
+
+    `attested` is a parameter for the identical reason (ticket 0050, U5, KTD-7): a simulation is
+    attested by construction, so the walk/replay/seeder take the default `True` (preserving the
+    regression oracle), while a live caller computes it from the real `card_attestations`
+    (`backend/attestation.py:attested_for`) and passes it. Reading a database inside here would make
+    this function impure and the replay grade a different engine — the same trap `sweeps_in_flight`
+    avoids. Attestation only ever moves `UNATTESTED → COMPLETE`; `derive_portfolio` keeps
+    `UNMATCHED_PAYMENT` overriding regardless.
     """
     # Each card against **its own** ledger. Passing one balance to every card was ticket 0027's
     # bug: a $3,000 card reported the $14,000 card's balance, `_select_target` ranked them equal
@@ -875,7 +884,7 @@ def assemble_snapshot(
         funding_account_id=CHECKING_ID,
         events=derive_cash_events(spec, today),
         pending=(),
-        portfolio=derive_portfolio(history, cards, today, attested=True),
+        portfolio=derive_portfolio(history, cards, today, attested=attested),
         policy=policy,
         daily_discretionary_high=daily_discretionary_high(history, today),
         income_variation=income_variation(history, today),

@@ -341,6 +341,28 @@ class Repository:
         )
         return rows[0]["role"] if rows else None
 
+    def add_attestation(self, *, card_fingerprint: str, attested_by: str | None = None) -> None:
+        """Append a card-completeness attestation for this household (ticket 0050, KTD-7).
+
+        An INSERT, never an upsert — the append-only grant means an attestation is a new row and
+        `current_attestation()` reads the latest. `card_fingerprint` is the stable hash of the
+        attested card set; a later new card changes the current set's fingerprint and the match in
+        `attested_for` fails, dropping coverage back to `UNATTESTED` — the correct safety move."""
+        self._exec(
+            "INSERT INTO card_attestations (id, household_id, attested_by, card_fingerprint)"
+            " VALUES (:id, :h, :attested_by, :fp)",
+            id=f"att_{uuid.uuid4().hex}",
+            attested_by=attested_by,
+            fp=card_fingerprint,
+        )
+
+    def current_attestation(self) -> dict[str, Any] | None:
+        """The latest attestation for this household, or None — read by `seq`, not `created_at`."""
+        rows = self._all(
+            "SELECT * FROM card_attestations WHERE household_id = :h ORDER BY seq DESC LIMIT 1"
+        )
+        return rows[0] if rows else None
+
     def add_membership(self, *, user_id: str, role: str) -> None:
         """Add (or re-role) a user's membership in *this* household (ticket 0046).
 

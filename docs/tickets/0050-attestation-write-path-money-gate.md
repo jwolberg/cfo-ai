@@ -2,7 +2,7 @@
 id: "0050"
 title: The attestation write-path (0016) — the money-gate, in shadow
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0046", "0047", "0048"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # The attestation write-path (0016) — the money-gate, in shadow
@@ -43,12 +44,12 @@ membership + `owner`-authorized.
 
 ## Acceptance criteria
 
-- [ ] Attest → coverage `COMPLETE` and the money-gate clears (in shadow).
-- [ ] An unattested household is refused `CARD_COVERAGE_INCOMPLETE`.
-- [ ] A household with an unmatched card payment **cannot** be attested to `COMPLETE`
+- [x] Attest → coverage `COMPLETE` and the money-gate clears (in shadow).
+- [x] An unattested household is refused `CARD_COVERAGE_INCOMPLETE`.
+- [x] A household with an unmatched card payment **cannot** be attested to `COMPLETE`
       (`UNMATCHED_PAYMENT` overrides).
-- [ ] Adding a card changes the fingerprint → re-triggers `UNATTESTED`.
-- [ ] A non-member `403`s; cross-household scope holds.
+- [x] Adding a card changes the fingerprint → re-triggers `UNATTESTED`.
+- [x] A non-member `403`s; cross-household scope holds.
 
 ## Notes / caveat
 

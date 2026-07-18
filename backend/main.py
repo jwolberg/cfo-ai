@@ -63,6 +63,7 @@ from backend import assistant, readpath
 # defined; the *file* that module reads and writes is a test fixture (`0031`) and this process
 # never opens it. Importing the names rather than the module is what keeps that visible.
 from backend.artifact import DayRecord, Summary
+from backend.attestation import attested_for, card_fingerprint
 from backend.db.repository import Repository, repository
 from backend.db.session import (
     assert_plaid_tokens_safe_at_rest,
@@ -644,6 +645,31 @@ async def update_policy(
     written = repo.policy()
     assert written is not None  # just appended
     return _policy_json(written)
+
+
+@app.post("/households/{household_id}/attest")
+async def attest(
+    repo: Annotated[Repository, Depends(authorize_household_owner)],
+    user: Annotated[User, Depends(current_user)],
+) -> Any:
+    """Attest that the household's current cards are all of them — clearing the `0016` money-gate.
+
+    Owner-gated (the demo `viewer` is refused, KTD-10). The attestation is fingerprinted over the
+    household's **current** cards and appended; a later new card changes that fingerprint and drops
+    coverage back to `UNATTESTED` (KTD-7). The response reports whether the household is now
+    attested — `True` here unless a card changed between read and write.
+
+    `attested` clears `UNATTESTED → COMPLETE` only; it never overrides `UNMATCHED_PAYMENT` — that
+    override lives in `derive_portfolio`, so a household with a card-shaped outflow to a card we
+    cannot see cannot attest its way to `COMPLETE`.
+
+    *(Same shadow caveat as the policy write: `readpath.py` serves frozen precomputed snapshots, so
+    a live decision reflects the attestation only once its snapshot is re-assembled — the live path
+    is the plan's named, open Prerequisite. What lands here is the write + invalidation, shadowed.)*
+    """
+    fingerprint = card_fingerprint(c["id"] for c in repo.cards())
+    repo.add_attestation(card_fingerprint=fingerprint, attested_by=user.id)
+    return {"attested": attested_for(repo), "card_fingerprint": fingerprint}
 
 
 class Turn(BaseModel):

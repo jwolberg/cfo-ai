@@ -534,6 +534,31 @@ household_members = Table(
 )
 
 
+# The append-only record of a user's card-completeness attestation (ticket 0050, U5, KTD-7). The
+# engine refuses to sweep a household whose card set it cannot be sure is complete; this is the row
+# that clears that gate (the 0016 money-gate). `card_fingerprint` is a stable hash of the attested
+# card identities — coverage is COMPLETE only while it matches the household's *current* cards, so a
+# newly appearing card silently invalidates a stale attestation. Append-only (SELECT + INSERT grant,
+# migration 0013), like `policy_events` and `transfers`; `current_attestation()` reads the latest by
+# `seq`. It only ever moves UNATTESTED → COMPLETE — `derive_portfolio` keeps UNMATCHED_PAYMENT
+# overriding regardless.
+card_attestations = Table(
+    "card_attestations",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("attested_by", Text, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+    Column("card_fingerprint", Text, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+)
+
+
 # Tables that are deliberately NOT scoped by household, each for a named and tested reason. `users`
 # is platform-level (a user predates any household, KTD-1); `plaid_webhooks` is item-keyed, not
 # household-keyed (ADR-0005). Naming them here makes each exclusion an asserted decision rather than
@@ -559,6 +584,7 @@ HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "plaid_transactions",
     "transfers",
     "household_members",
+    "card_attestations",
 )
 
 __all__ = [
@@ -568,6 +594,7 @@ __all__ = [
     "RATE",
     "RLS_VAR",
     "accounts",
+    "card_attestations",
     "cards",
     "decisions",
     "household_members",

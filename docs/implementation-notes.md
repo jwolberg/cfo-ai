@@ -2442,3 +2442,24 @@ is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a diffe
   for a live household yet (demo uses a hardcoded UserPolicy, readpath serves frozen snapshots), so
   this proves write + audit + latest-read, not a re-decided sweep — the live-assembly path is the
   plan's named, open Prerequisite. Full suite **709 passed, 6 skipped**.
+
+### U5 / 0050 — attestation write path, the 0016 money-gate in shadow (done 2026-07-18)
+- **`card_attestations` (append-only, migration 0013)** + `Repository.add_attestation` /
+  `current_attestation` (latest by seq). `backend/attestation.py`: `card_fingerprint` (a stable,
+  set-based, collision-resistant hash — separator-joined sorted-unique ids) and `attested_for(repo)`
+  (True only while the latest attestation's fingerprint matches the household's *current* cards).
+- **Deviation-with-reason (KTD-7 said "assemble_snapshot reads the attestation"):** `assemble_snapshot`
+  must stay a pure function of its inputs so `replay.py` grades the shipped engine (the same reason
+  `sweeps_in_flight` is passed in, stated in its docstring). So `attested` is a **parameter**
+  (default True → walk/replay/seeder unchanged, regression oracle preserved) computed by
+  `attested_for` and passed by a live caller. The hardcoded `attested=True` at precompute.py:878 is
+  replaced with the param. This honors KTD-7's intent (attestation drives the gate) without breaking
+  purity — documented in the assemble_snapshot docstring.
+- **POST /households/{id}/attest** is owner-gated (viewer/non-member 403, no session 401),
+  fingerprints the current cards, appends, and reports coverage.
+- **Four-layer test** so "the gate clears end to end" rests on none alone: fingerprint properties;
+  repo append + `attested_for` invalidation (a **new card silently drops coverage** — the KTD-7 safety
+  point); `derive_portfolio` coverage transitions (UNMATCHED_PAYMENT overrides attestation); and the
+  `decide()` money-gate itself (UNATTESTED → CARD_COVERAGE_INCOMPLETE, COMPLETE clears it).
+- Same shadow caveat as U4 (readpath serves frozen snapshots) — write + invalidation proven, not a
+  re-decided live sweep. Full suite **727 passed, 6 skipped**; migration up/down/up clean from zero.
