@@ -72,6 +72,10 @@
     letter-spacing: -0.02em;
   }
   .lede { font-size: 1.075rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.5rem; }
+  .lede-list { font-size: 1.075rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.5rem;
+               padding-left: 1.15rem; }
+  .lede-list li { margin: 0 0 0.6rem; padding-left: 0.15rem; }
+  .lede-list li::marker { color: var(--go-rule); }
   .thesis {
     border-left: 4px solid var(--stop);
     padding: .3rem 0 .3rem 1rem;
@@ -365,19 +369,31 @@
        alt="resfi — responsible finance" width="259" height="88">
   <h1>What&rsquo;s built, and what isn&rsquo;t</h1>
   <p class="lede">
-    Status as of 17 July 2026. <strong>The core functionality between the bank connection and the
-    payment rail is built and deployed</strong>: the decision engine, the database, the API,
-    and the app. The harness that measures it is live as well. This is a grader that scores each decision against what
-    actually happened, though still running only on synthetic data.
-    The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook doorbell,
-    and a cursored sync that lands transactions in a table &mdash; is now <b>built and proven
-    end-to-end against Plaid Sandbox</b>, but not deployed. What still stands between a real bank
-    login and a decision is the <b>recurring-event detector</b> (it needs real data to build
-    against). The <b>payment rail</b> that moves the money is now <b>built in shadow</b> &mdash; a
-    two-leg design (ACH debit, then a card payoff) behind a provider port &mdash; but it
-    <b>moves nothing</b>: the saga runs and writes its ledger while <code>submit()</code> is a
-    logged no-op, and it has not yet been proven against the live vendor sandboxes.
+    Status as of 18 July 2026. Where each piece of the path from a bank login to money actually
+    moving stands today:
   </p>
+  <ul class="lede-list">
+    <li><strong>The core is built and deployed</strong> &mdash; the decision engine, the database,
+      the API, and the app &mdash; and the harness that measures it is live too: a grader that scores
+      each decision against what actually happened, still running only on synthetic data.</li>
+    <li>The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook
+      doorbell, and a cursored sync that lands transactions in a table &mdash; is <b>built and proven
+      end-to-end against Plaid Sandbox</b>, but not deployed.</li>
+    <li>What still stands between a real bank login and a decision is the <b>recurring-event
+      detector</b> (it needs real data to build against).</li>
+    <li>The <b>payment rail</b> that moves the money is <b>built in shadow</b> &mdash; a two-leg
+      design (ACH debit, then a card payoff) behind a provider port &mdash; but it <b>moves
+      nothing</b>: the saga runs and writes its ledger while <code>submit()</code> is a logged no-op,
+      not yet proven against the live vendor sandboxes.</li>
+    <li><b>New &mdash; identity, and the first write path.</b> A <b>verified user (Stytch)</b>, a
+      <b>membership graph</b> that scopes every route to the households a user may touch, and the
+      product&rsquo;s <b>first user-driven writes</b> &mdash; a settings screen for the guardrails and
+      the card-completeness attestation that clears the engine&rsquo;s money-gate &mdash; are now
+      <b>built</b>. The backend is proven against a real Postgres; the baked shared key is retired.
+      Not yet deployed: it needs a Stytch project wired and the demo&rsquo;s read-only session baked
+      in, and the customer sign-in and bank-link flow are the next rung. Still no real money and no
+      real bank.</li>
+  </ul>
   <p class="lede">
     This is a few days into a large, complex build, and the scope ahead is almost
     certainly bigger than what stands today. Read this as real progress on the hard middle, not as a
@@ -412,10 +428,12 @@
 <div class="callout go" style="margin-top:0">
   <p>Built and deployed at <strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
   Two screens of the customer app and the explain modal, running live against the API and the
-  database. The <b>payment rail</b> (the sweep-execution rung) is now <b>built in shadow</b> behind
-  a provider port, but <b>no mechanism for moving real funds is turned on</b>: <code>submit()</code>
-  is a logged no-op, there is no Plaid link, and no live vendor call. Everything below the API is
-  real and runs; nothing yet touches an actual bank account.</p>
+  database &mdash; and, in code, the app&rsquo;s <b>first write screens</b> (settings and card
+  attestation) behind a real Stytch session, not yet deployed. The <b>payment rail</b> (the
+  sweep-execution rung) is <b>built in shadow</b> behind a provider port, but <b>no mechanism for
+  moving real funds is turned on</b>: <code>submit()</code> is a logged no-op, there is no Plaid
+  link, and no live vendor call. Everything below the API is real and runs; nothing yet touches an
+  actual bank account.</p>
   <p>Codebase: <a href="https://github.com/jwolberg/cfo-ai">github.com/jwolberg/cfo-ai</a>
   is private, so the repository links on this page need access assigned.</p>
 </div>
@@ -426,8 +444,10 @@
   not deployed,</b> and the reason differs at each: one is the next problem, the other &mdash;
   moving money &mdash; was deliberately unchosen and is now <b>built in shadow</b> (the two-leg rail
   below), moving nothing until it is proven against the live vendors and turned on.
-  Below those, the additional surfaces a live money-moving service will need &mdash; onboarding and
-  controls, an operator console, and observability &mdash; are scoped here but not yet built.
+  Below those, the additional surfaces a live money-moving service will need &mdash; onboarding, an
+  operator console, and observability &mdash; are scoped here but not yet built. The customer
+  <b>controls</b> (settings and the card attestation) and the <b>identity</b> beneath them are now
+  built in code, not yet live.
 </p>
 
 <div class="legend">
@@ -497,9 +517,11 @@
       <div class="box">
         <span class="tag">Neon &middot; Postgres</span>
         <h3>Database</h3>
-        <p>Seven tables. Every decision stores its <b>entire frozen input</b>, not a pointer to it
-           &mdash; so any past decision stays explainable and replayable after the underlying data
-           changes.</p>
+        <p>Every decision stores its <b>entire frozen input</b>, not a pointer to it &mdash; so any
+           past decision stays explainable and replayable after the underlying data changes. The
+           identity rung adds a <b>users</b> table and a <b>membership graph</b>, and turns settings
+           and attestation into <b>append-only histories</b> (the current state is the latest event),
+           matching the same audited discipline as the decision and transfer ledgers.</p>
       </div>
       <div class="box">
         <span class="tag">Built</span>
@@ -545,7 +567,10 @@
       <div class="box">
         <span class="tag">Google Cloud Run</span>
         <h3>API</h3>
-        <p>Read-only. Every route is a GET; the product has no write path at all.</p>
+        <p>Every route now derives the household from the session and <b>authorizes it against
+           membership</b>. Once read-only; it has its <b>first write paths</b> &mdash; settings and
+           the card attestation &mdash; each append-only and audited, the demo viewer structurally
+           read-only.</p>
       </div>
       <div class="box">
         <span class="tag">claude-sonnet-5</span>
@@ -553,11 +578,14 @@
         <p>Narrates the engine&rsquo;s recorded reasons into plain language. It never produces a
            decision and is never in the decision path.</p>
       </div>
-      <div class="box todo">
-        <span class="tag">Not built &middot; Clerk</span>
+      <div class="box proven">
+        <span class="tag">Stytch &middot; built, not live</span>
         <h3>Identity</h3>
-        <p>No login. One shared key, embedded in the page; any holder can view any household. Fine
-           for synthetic data with no owner &mdash; not fine the day a real balance is behind it.</p>
+        <p>A <b>verified Stytch session</b> resolves to our user; a <b>membership graph</b> decides
+           which households that user may touch, so every route <b>authorizes the household against
+           membership</b> &mdash; a valid session naming a household it does not belong to is refused.
+           The shared key is retired. Built and proven against a real Postgres; not yet deployed
+           (needs the Stytch project wired and the demo&rsquo;s read-only session baked in).</p>
       </div>
     </div>
   </div>
@@ -570,20 +598,26 @@
       <div class="box">
         <span class="tag">Firebase Hosting</span>
         <h3>resfi web app</h3>
-        <p>Decision feed, spending view, explain view, household switcher. A window, not a control
-           panel: users read, and cannot change anything.</p>
+        <p>Decision feed, spending view, explain view, household switcher &mdash; and now its
+           <b>first write screens</b>: a settings screen for the guardrails and a &ldquo;confirm your
+           cards&rdquo; attestation. No longer only a window; a signed-in owner can change things,
+           the demo visitor still only reads.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not built</span>
         <h3>Onboarding</h3>
-        <p>Sign-up, bank-link flow, and the card-completeness attestation the engine already
-           requires before it will move a dollar.</p>
+        <p>Sign-up and the customer bank-link flow &mdash; the next rung. The card-completeness
+           attestation the engine requires before it will move a dollar is <b>now built</b> (its own
+           box, right); what remains here is getting a new customer signed in and connected.</p>
       </div>
-      <div class="box todo">
-        <span class="tag">Not built</span>
-        <h3>Settings &amp; controls</h3>
-        <p>The guardrails the engine reads but no screen yet writes: buffer floor, sweep caps,
-           blackout windows, pause, and disconnect.</p>
+      <div class="box proven">
+        <span class="tag">Built, not live</span>
+        <h3>Settings &amp; attestation</h3>
+        <p>The guardrails the engine reads now have a <b>write path</b>: a settings screen writes the
+           buffer floor, sweep caps, and pause (blackout windows) as an <b>append-only, audited</b>
+           history, and a loosening change is flagged. The card-completeness <b>attestation</b> that
+           clears the money-gate is built too, in shadow. Built and proven against Postgres; not yet
+           live. Disconnect is still to come.</p>
       </div>
       <div class="box todo">
         <span class="tag">Not built</span>
@@ -652,8 +686,9 @@
       <div class="box todo">
         <span class="tag">Not built</span>
         <h3>Access &amp; audit</h3>
-        <p>Who may see or touch a household&rsquo;s data, and an immutable log of who did &mdash;
-           the operator half of the identity story the customer side also still needs.</p>
+        <p>Who may see or touch a household&rsquo;s data, and an immutable log of who did. The
+           <b>customer</b> half of the identity story is now built (membership decides access); this
+           is the <b>operator</b> half &mdash; still to come.</p>
       </div>
     </div>
   </div>
