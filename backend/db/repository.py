@@ -234,6 +234,26 @@ class Repository:
         """
         return self._all("SELECT * FROM transfers WHERE household_id = :h ORDER BY seq")
 
+    def sweeps_in_flight(self) -> Decimal:
+        """The dollars pulled from checking that have not yet settled or returned — the debit legs
+        whose latest state is `submitted` or `pending` (ticket 0043, U5).
+
+        The engine reads this as `Snapshot.sweeps_in_flight` and refuses to stack a second sweep on
+        an unsettled first (`decision-engine.md` [2.4]: "stacking is how you overdraft someone with
+        their own money"). Counts the **debit** leg only — that is the money leaving the user's
+        account; the payoff leg is downstream money already in the platform account, and counting
+        both would double the same sweep. One row per `decision_date` slot (its latest debit state),
+        so a settled or returned transition drops the slot out of the sum.
+        """
+        rows = self._all(
+            "SELECT COALESCE(SUM(amount), 0) AS total FROM ("
+            " SELECT DISTINCT ON (decision_date) amount, state FROM transfers"
+            " WHERE household_id = :h AND leg = 'debit'"
+            " ORDER BY decision_date, seq DESC"
+            ") latest WHERE state IN ('submitted', 'pending')"
+        )
+        return Decimal(rows[0]["total"])
+
     def add_transfer(
         self,
         *,

@@ -824,6 +824,7 @@ def assemble_snapshot(
     swept_this_week: Decimal = ZERO,
     days_since_last_sweep: int | None = None,
     last_sweep_amount: Decimal | None = None,
+    sweeps_in_flight: Decimal = ZERO,
     spend_quantile: float | None = SPEND_QUANTILE,
 ) -> Snapshot:
     """The `Snapshot` the engine sees on `today`, given the walk's state.
@@ -838,6 +839,12 @@ def assemble_snapshot(
     never trip `CADENCE_HOLD` — and would therefore never observe a deferral, which is precisely
     the thing the calibration has to partition on. If the engine had been running, it would have
     swept, and the cadence would have held.
+
+    `sweeps_in_flight` follows the same rule (ticket 0043, U5): the walk and replay pass `ZERO`
+    (nothing is ever in flight in a simulation), while the production caller computes it from the
+    `transfers` ledger (`Repository.sweeps_in_flight`) so an unsettled debit suppresses the next
+    sweep. Kept a parameter, not read here, because this function must stay pure over its inputs for
+    replay to grade the engine that shipped.
     """
     # Each card against **its own** ledger. Passing one balance to every card was ticket 0027's
     # bug: a $3,000 card reported the $14,000 card's balance, `_select_target` ranked them equal
@@ -874,7 +881,7 @@ def assemble_snapshot(
         income_variation=income_variation(history, today),
         history_days=(today - history.start).days + 1,
         spend_30d_high=spend_30d_high(history, today, spend_quantile),
-        sweeps_in_flight=ZERO,
+        sweeps_in_flight=sweeps_in_flight,
         swept_this_week=swept_this_week,
         days_since_last_sweep=days_since_last_sweep,
         last_sweep_amount=last_sweep_amount,
