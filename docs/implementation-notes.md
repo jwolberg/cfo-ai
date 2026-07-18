@@ -2591,3 +2591,32 @@ This makes the loop drivable end to end against Plaid **Sandbox**.
   recurring-event/income detector, i.e. turning ingested rows into a *decision*. Also still ahead of
   real accounts: KMS envelope encryption (the `PLAID_ENV=production` boot guard is hardcoded-off) and
   a Plaid **Trial plan** (real production data, ≤10 Items; verified current via Plaid docs 2026).
+
+### The Link rung, Phase 2 (start) — the recurring-stream detector (2026-07-18)
+Branch `feat/recurring-detector` (off main). The first, standalone piece of "turn ingested rows into
+a decision": the recurring-income/bill detector the PRD flags as *unbuilt* ("the recurring-income
+detector we have not built"). `backend/recurring.py`, pure and deterministic (no DB, no clock) — the
+`assemble_snapshot` discipline, so a backtest grades the same detector production runs.
+
+- **`detect_recurring(movements) -> list[RecurringStream]`**: groups signed, dated, labelled
+  `Movement`s by `(normalized merchant, sign)`, finds the ones that recur on a clean cadence with a
+  stable amount, returns them most-confident first. Output (`RecurringStream`: direction / cadence /
+  typical_amount / day_of_month / confidence) is shaped to become `PayrollSpec` / `BillSpec`.
+- **Sign convention** is the natural accounting one (+ in, − out); the adapter must **flip Plaid's**
+  (Plaid: + is an outflow). Documented at the seam so it can't be got wrong silently.
+- **Cadence**: weekly / biweekly / semimonthly / monthly off the median inter-arrival gap. Biweekly
+  vs semimonthly overlap on gap size and are told apart by gap *evenness* (biweekly is metronomic,
+  CV≈0; semimonthly alternates 13/18) — the first heuristic tried (per-month *rate*) misread six
+  biweekly paychecks over a 70-day window as semimonthly; the test caught it.
+- **Conservative by design**: <3 occurrences, no clean cadence, or low blended confidence → dropped,
+  *undetected not guessed* (an unfound stream falls through to discretionary spend, the safe
+  default). Confidence (count · gap-regularity · amount-stability) is reported, never hidden.
+- Verified: `tests/test_recurring.py` (12, no DB) — clean biweekly/monthly/weekly/semimonthly
+  detected; one-offs, two-occurrence, irregular, and charge-vs-refund all handled; confidence tracks
+  regularity and sorts. ruff clean.
+- **Still ahead in Phase 2** (the detector is the core, not the whole): spec-inference
+  (streams → `HouseholdSpec`), the `plaid_transactions` → `Movement` → `sim.History` adapter (wiring
+  `livepath.linked_history`, which needs live-assembly PR #69), and — the real gap I hit while
+  scoping — **balance/liability ingest**: transaction rows carry no account balance or card
+  APR/statement, so `opening_balance` and `CardSpec` cannot be inferred from them; a linked decision
+  needs `/accounts/balance` + `/liabilities` ingested too. That is the next unit, not this one.
