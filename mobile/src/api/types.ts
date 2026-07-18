@@ -35,6 +35,30 @@ export interface HouseholdsResponse {
   households: Household[];
 }
 
+/**
+ * A household's guardrails — the set the engine may never exceed (ticket 0052). Read via
+ * `GET /policy` to prefill the Settings screen, written via `PATCH /policy` (owner-gated). Money is
+ * text, like everywhere; `blackout_dates` is the pause surface.
+ */
+export interface Policy {
+  buffer_floor: Money;
+  max_sweep: Money;
+  max_weekly_sweep: Money;
+  min_days_between_sweeps: number;
+  blackout_dates: IsoDate[];
+}
+
+/** The body of a policy write. Same shape as `Policy` — every field is sent, so a partial edit
+ *  cannot silently drop a guardrail. */
+export type PolicyUpdate = Policy;
+
+/** The result of `POST /attest`: whether the household is now attested, and the fingerprint of the
+ *  card set it was attested against (ticket 0052). */
+export interface AttestResponse {
+  attested: boolean;
+  card_fingerprint: string;
+}
+
 /** The engine has exactly two actions. "Paid off" is a refusal carrying `no_debt`. */
 export type Action = 'sweep' | 'refuse';
 
@@ -43,6 +67,10 @@ export interface Reason {
   code: string;
   /** Rendered by `engine/explain.py`. The client never writes its own explanation. */
   text: string;
+  /** The structured fact behind the sentence, JSON-safe (ticket 0052). Lets the client act on the
+   *  reason without parsing prose — e.g. `card_coverage_incomplete` carries `coverage` and
+   *  `unmatched`, which the Attest CTA keys on. Optional: not every reason carries params. */
+  params?: Record<string, unknown>;
 }
 
 /** Where a rate came from. A 23% estimate and a reported 23% are the same number, and only this

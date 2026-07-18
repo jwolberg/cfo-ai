@@ -1,4 +1,13 @@
-"""The API key gate.
+"""The API key gate — **retired for user routes** (identity rung, KTD-8).
+
+As of ticket 0048, every user-facing route requires a verified Stytch session
+(`backend/identity/`), not this key: `household_id` is derived from membership, not trusted from the
+wire. The key is not demoted to a lingering second authority — it is simply no longer wired to any
+route. The module stays for its header/env constants (still referenced by tests and tooling) and so
+the retirement is documented where the gate used to live. Internal machine routes never used this
+key: the webhook authenticates by Plaid's signature, the sync worker/poll by service/OIDC.
+
+The text below describes the posture that has now ended, kept for the argument it records.
 
 This is a lock on a door, not an identity system. There is one demo household, its data is
 synthetic, and no request can move real money — so the key's job is to deter opportunistic

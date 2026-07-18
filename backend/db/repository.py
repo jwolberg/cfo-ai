@@ -15,6 +15,7 @@ someone forgets exactly once. There is no way to hold a `Repository` and not kno
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -47,7 +48,16 @@ class Repository:
         return self._all("SELECT * FROM cards WHERE household_id = :h ORDER BY id")
 
     def policy(self) -> dict[str, Any] | None:
-        rows = self._all("SELECT * FROM policies WHERE household_id = :h")
+        """The current guardrails — the **latest** `policy_events` row for this household (KTD-6).
+
+        Ordered by `seq`, not `created_at`: a seed transaction can write the initial event and a
+        later one in the same wall-clock instant, and the state's whole meaning is *which is latest*
+        (the `transfers.seq` lesson). Returns the projection of an append-only history, not a
+        mutable row — there is no second copy that could disagree with the audit trail.
+        """
+        rows = self._all(
+            "SELECT * FROM policy_events WHERE household_id = :h ORDER BY seq DESC LIMIT 1"
+        )
         return rows[0] if rows else None
 
     def decisions(self, start: date | None = None, end: date | None = None) -> list[dict[str, Any]]:
@@ -141,18 +151,38 @@ class Repository:
             **f,
         )
 
-    def set_policy(self, **f: Any) -> None:
+    def set_policy(
+        self,
+        *,
+        buffer_floor: Decimal,
+        max_sweep: Decimal,
+        max_weekly_sweep: Decimal,
+        min_days_between_sweeps: int,
+        blackout_dates: list[str],
+        changed_by: str | None = None,
+        loosened: bool = False,
+    ) -> None:
+        """Append a policy change (ticket 0049, KTD-6). **An INSERT, never an upsert** — the mutable
+        `policies` row was retired; the current policy is the latest event `policy()` reads.
+
+        `changed_by` is the user who made the change (NULL for the seeder's initial event);
+        `loosened` flags a change that weakened a guardrail — the audit marker the step-up retrofit
+        finds them by (KTD-9). The append-only grant means even this method cannot rewrite history:
+        a correction is another event, and `policy()` simply reads the newest.
+        """
         self._exec(
-            "INSERT INTO policies (household_id, buffer_floor, max_sweep, max_weekly_sweep,"
-            " min_days_between_sweeps, blackout_dates)"
-            " VALUES (:h, :buffer_floor, :max_sweep, :max_weekly_sweep, :min_days_between_sweeps,"
-            " :blackout_dates)"
-            " ON CONFLICT (household_id) DO UPDATE SET"
-            " buffer_floor = EXCLUDED.buffer_floor, max_sweep = EXCLUDED.max_sweep,"
-            " max_weekly_sweep = EXCLUDED.max_weekly_sweep,"
-            " min_days_between_sweeps = EXCLUDED.min_days_between_sweeps,"
-            " blackout_dates = EXCLUDED.blackout_dates",
-            **f,
+            "INSERT INTO policy_events (id, household_id, changed_by, buffer_floor, max_sweep,"
+            " max_weekly_sweep, min_days_between_sweeps, blackout_dates, loosened)"
+            " VALUES (:id, :h, :changed_by, :buffer_floor, :max_sweep, :max_weekly_sweep,"
+            " :min_days_between_sweeps, :blackout_dates, :loosened)",
+            id=f"pe_{uuid.uuid4().hex}",
+            changed_by=changed_by,
+            buffer_floor=buffer_floor,
+            max_sweep=max_sweep,
+            max_weekly_sweep=max_weekly_sweep,
+            min_days_between_sweeps=min_days_between_sweeps,
+            blackout_dates=blackout_dates,
+            loosened=loosened,
         )
 
     def add_plaid_item(
@@ -299,6 +329,57 @@ class Repository:
             idempotency_key=idempotency_key,
         )
 
+    def member_role(self, user_id: str) -> str | None:
+        """This user's role in *this* household (`owner`/`viewer`), or None if not a member.
+
+        A scoped read: RLS makes only this household's membership rows visible, so a caller can read
+        their own role and no one else's. The write dependencies gate on this — `owner` may write,
+        `viewer` may not (ticket 0047, KTD-10)."""
+        rows = self._all(
+            "SELECT role FROM household_members WHERE household_id = :h AND user_id = :u",
+            u=user_id,
+        )
+        return rows[0]["role"] if rows else None
+
+    def add_attestation(self, *, card_fingerprint: str, attested_by: str | None = None) -> None:
+        """Append a card-completeness attestation for this household (ticket 0050, KTD-7).
+
+        An INSERT, never an upsert — the append-only grant means an attestation is a new row and
+        `current_attestation()` reads the latest. `card_fingerprint` is the stable hash of the
+        attested card set; a later new card changes the current set's fingerprint and the match in
+        `attested_for` fails, dropping coverage back to `UNATTESTED` — the correct safety move."""
+        self._exec(
+            "INSERT INTO card_attestations (id, household_id, attested_by, card_fingerprint)"
+            " VALUES (:id, :h, :attested_by, :fp)",
+            id=f"att_{uuid.uuid4().hex}",
+            attested_by=attested_by,
+            fp=card_fingerprint,
+        )
+
+    def current_attestation(self) -> dict[str, Any] | None:
+        """The latest attestation for this household, or None — read by `seq`, not `created_at`."""
+        rows = self._all(
+            "SELECT * FROM card_attestations WHERE household_id = :h ORDER BY seq DESC LIMIT 1"
+        )
+        return rows[0] if rows else None
+
+    def add_membership(self, *, user_id: str, role: str) -> None:
+        """Add (or re-role) a user's membership in *this* household (ticket 0046).
+
+        A Repository method because `household_members` is HOUSEHOLD_SCOPED: the INSERT rides RLS
+        `WITH CHECK`, so a session scoped to household A cannot smuggle a membership into B — the
+        row is bound to `self.household_id` and any other value is rejected. `ON CONFLICT DO UPDATE`
+        rather than raising, so re-seeding converges and a role change is idempotent (matching
+        `set_policy`). `user_id` is a bridge FK; the household stays the tenant.
+        """
+        self._exec(
+            "INSERT INTO household_members (household_id, user_id, role)"
+            " VALUES (:h, :user_id, :role)"
+            " ON CONFLICT (household_id, user_id) DO UPDATE SET role = EXCLUDED.role",
+            user_id=user_id,
+            role=role,
+        )
+
     def add_decision(self, **f: Any) -> None:
         self._exec(
             "INSERT INTO decisions (id, household_id, day, action, amount, target_card_id,"
@@ -348,3 +429,72 @@ def repository(engine: Engine, household_id: str) -> Iterator[Repository]:
     """
     with engine.connect() as conn, household_scope(conn, household_id) as scoped:
         yield Repository(conn=scoped, household_id=household_id)
+
+
+# --- users: platform-level, reached ONLY by single key (ticket 0046, KTD-1) ----------
+#
+# `users` is deliberately outside `HOUSEHOLD_SCOPED` (`backend/db/models.py`): a user predates every
+# household, so there is no household to scope the query to, and these are free functions on a raw
+# connection rather than methods on the household-scoped `Repository`.
+#
+# It carries PII with no RLS backstop, so the discipline that replaces RLS is: **every read is by a
+# unique key** (`id` or `stytch_user_id`), returning at most one row. There is no "list all users"
+# function here on purpose — an unfiltered scan is exactly the cross-user PII leak a later admin
+# route could add by accident, and `tests/test_identity_schema.py` asserts this module exposes no
+# such call.
+
+
+def add_user(
+    conn: Connection, *, user_id: str, stytch_user_id: str, email: str | None = None
+) -> None:
+    """Insert a user, idempotently on `stytch_user_id` (ticket 0046).
+
+    `ON CONFLICT (stytch_user_id) DO NOTHING` makes JIT provisioning safe under the concurrent
+    first-login race: two requests bearing the same brand-new session both try to provision, and the
+    second becomes a no-op rather than a unique-violation. The caller re-reads with
+    `get_user_by_stytch_id` to obtain the row either request won.
+    """
+    conn.execute(
+        text(
+            "INSERT INTO users (id, stytch_user_id, email) VALUES (:id, :sid, :email)"
+            " ON CONFLICT (stytch_user_id) DO NOTHING"
+        ),
+        {"id": user_id, "sid": stytch_user_id, "email": email},
+    )
+
+
+def get_user_by_stytch_id(conn: Connection, stytch_user_id: str) -> dict[str, Any] | None:
+    """The one row for a Stytch user, or None. Single-key lookup — the only sanctioned user read."""
+    row = (
+        conn.execute(
+            text("SELECT * FROM users WHERE stytch_user_id = :sid"), {"sid": stytch_user_id}
+        )
+        .mappings()
+        .first()
+    )
+    return dict(row) if row else None
+
+
+def get_user_by_id(conn: Connection, user_id: str) -> dict[str, Any] | None:
+    """The one row for our user id, or None. Single-key lookup — the only other sanctioned read."""
+    row = (
+        conn.execute(text("SELECT * FROM users WHERE id = :id"), {"id": user_id}).mappings().first()
+    )
+    return dict(row) if row else None
+
+
+def households_for_user(conn: Connection, user_id: str) -> list[str]:
+    """The household ids a user belongs to, via the SECURITY DEFINER lookup (ticket 0046, ADR-0008).
+
+    The membership lookup has the same chicken-and-egg as the webhook doorbell (ADR-0005): to know
+    which household to scope to we must read `household_members`, but it is FORCE'd, so an unscoped
+    app session sees nothing in it. `households_for_user(text)` runs as its owner and reads it for
+    this one narrow purpose, returning only ids. This is the seam `authorize_household` (U2) stands
+    on: the requested `household_id` must be in this set or the route refuses.
+    """
+    rows = (
+        conn.execute(text("SELECT households_for_user(:u) AS household_id"), {"u": user_id})
+        .scalars()
+        .all()
+    )
+    return list(rows)

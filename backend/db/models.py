@@ -27,6 +27,7 @@ from __future__ import annotations
 from sqlalchemy import (
     ARRAY,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     Date,
@@ -79,6 +80,14 @@ households = Table(
     # Set when the key is destroyed. Not a soft delete — the data is genuinely unrecoverable at
     # that point; this records *when*, for the audit trail that outlives the plaintext.
     Column("deleted_at", TIMESTAMP(timezone=True), nullable=True),
+    # Whether this household is part of the public demo plane (KTD-10, ticket 0046). A `viewer`-role
+    # demo user is a member of exactly the `is_demo` households and nothing else, so the public
+    # bundle reaches the demo with no login while never touching a real household; and Plaid
+    # link-exchange refuses an `is_demo` household, so a real bank item can never attach to the demo
+    # plane. Default false: a real household is never a demo one by omission. Set true by the seeder
+    # on synthetic households (`backend/seed.py`), backfilled true in migration 0011 for the ones
+    # already seeded.
+    Column("is_demo", Boolean, nullable=False, server_default=text("false")),
 )
 
 accounts = Table(
@@ -149,15 +158,32 @@ cards = Table(
     ),  # 28: every month has one
 )
 
-policies = Table(
-    "policies",
+# The append-only guardrail history — the source of record for a household's policy (ticket 0049,
+# the identity rung's U4, KTD-6). It **replaces** the old mutable `policies` row: policy is
+# safety-critical and the whole codebase's identity is append-only auditability, so a change is a
+# new event and the current policy is the latest one, read by `seq` (not `created_at`, which a seed
+# transaction can tie on — the `transfers.seq` lesson). `Repository.policy()` projects it; nothing
+# keeps a second mutable copy that could disagree.
+#
+# Append-only is a **grant** (SELECT + INSERT only, migration 0012), not a convention — like
+# `plaid_transactions` and `transfers`. `changed_by` is the user who made the change (NULL for a
+# seeded/initial event); `loosened` marks a change that weakened a guardrail, the audit marker the
+# deferred step-up retrofit finds them by (KTD-9).
+policy_events = Table(
+    "policy_events",
     metadata,
+    Column("id", Text, primary_key=True),
+    # Monotonic order — `policy()` reads the latest by this, never by `created_at`.
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
     Column(
         "household_id",
         Text,
         ForeignKey("households.id", ondelete="CASCADE"),
-        primary_key=True,
+        nullable=False,
     ),
+    # The actor. FK to the platform `users` table, ON DELETE SET NULL so a shredded user's audit
+    # trail survives with the actor nulled rather than the history erased.
+    Column("changed_by", Text, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
     Column("buffer_floor", MONEY, nullable=False),
     Column("max_sweep", MONEY, nullable=False),
     Column("max_weekly_sweep", MONEY, nullable=False),
@@ -165,7 +191,12 @@ policies = Table(
     # is a policy value and not a constant.
     Column("min_days_between_sweeps", Integer, nullable=False, server_default=text("7")),
     Column("blackout_dates", ARRAY(Date), nullable=False, server_default=text("'{}'")),
-    CheckConstraint("min_days_between_sweeps >= 0", name="ck_policies_spacing_nonneg"),
+    Column("loosened", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("buffer_floor >= 0", name="ck_policy_events_buffer_nonneg"),
+    CheckConstraint("max_sweep >= 0", name="ck_policy_events_max_sweep_nonneg"),
+    CheckConstraint("max_weekly_sweep >= 0", name="ck_policy_events_weekly_nonneg"),
+    CheckConstraint("min_days_between_sweeps >= 0", name="ck_policy_events_spacing_nonneg"),
 )
 
 # Partitioned by month on `day` from the first migration. Free at zero rows; a migration
@@ -446,36 +477,135 @@ transfers = Table(
 )
 
 
+# A real, verified user — the identity every route was missing (ticket 0046, the identity rung,
+# `docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md`, ADR-0008).
+#
+# **Deliberately NOT household-scoped** (see `PLATFORM_TABLES` and `HOUSEHOLD_SCOPED` below). A user
+# exists before any household and independent of all of them — the same posture as the raw webhook
+# store (ADR-0005) and the FBO funding account. So there is no `household_id` here, no RLS policy,
+# and it is outside the forced set. Its exclusion is asserted, not incidental
+# (`tests/test_schema.py`, `tests/test_identity_schema.py`).
+#
+# It carries PII (`email`) with no RLS backstop, so the application reaches it **only by single-key
+# lookup** — `get_user_by_stytch_id` / `get_user_by_id` in `backend/db/repository.py`, never an
+# unfiltered scan or join. There is no `users()` list method by design, and a test enforces it.
+#
+# `id` is ours and stable — the identifier the deferred Plaid Link rung passes to
+# `/link/token/create` as `client_user_id` (KTD-1). `stytch_user_id` is the vendor's; only the edge
+# adapter (`backend/identity/stytch.py`) knows it, and a provider swap re-keys only that column.
+users = Table(
+    "users",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("stytch_user_id", Text, nullable=False, unique=True),
+    Column("email", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    Column("deleted_at", TIMESTAMP(timezone=True), nullable=True),
+)
+
+# The many-to-many bridge between users and the households they may read or write (ticket 0046).
+# This is where "which household may this session touch?" is answered — `households_for_user` reads
+# it, and the request's `household_id` must be in that set or the route refuses (KTD-2).
+#
+# Keyed by `household_id`, so it **is** HOUSEHOLD_SCOPED and RLS-forced like every tenant table.
+# `user_id` is a bridge FK, not the tenant key — `test_no_table_carries_a_user_id` is scoped to say
+# exactly that. `role` is `owner` (may write) or `viewer` (read-only — the public demo principal,
+# KTD-10); it is the one role distinction the rung ships.
+household_members = Table(
+    "household_members",
+    metadata,
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column(
+        "user_id",
+        Text,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    ),
+    Column("role", Text, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+    CheckConstraint("role IN ('owner', 'viewer')", name="ck_household_members_role"),
+)
+
+
+# The append-only record of a user's card-completeness attestation (ticket 0050, U5, KTD-7). The
+# engine refuses to sweep a household whose card set it cannot be sure is complete; this is the row
+# that clears that gate (the 0016 money-gate). `card_fingerprint` is a stable hash of the attested
+# card identities — coverage is COMPLETE only while it matches the household's *current* cards, so a
+# newly appearing card silently invalidates a stale attestation. Append-only (SELECT + INSERT grant,
+# migration 0013), like `policy_events` and `transfers`; `current_attestation()` reads the latest by
+# `seq`. It only ever moves UNATTESTED → COMPLETE — `derive_portfolio` keeps UNMATCHED_PAYMENT
+# overriding regardless.
+card_attestations = Table(
+    "card_attestations",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("seq", BigInteger, Identity(always=True), nullable=False),
+    Column(
+        "household_id",
+        Text,
+        ForeignKey("households.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("attested_by", Text, ForeignKey("users.id", ondelete="SET NULL"), nullable=True),
+    Column("card_fingerprint", Text, nullable=False),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
+)
+
+
+# Tables that are deliberately NOT scoped by household, each for a named and tested reason. `users`
+# is platform-level (a user predates any household, KTD-1); `plaid_webhooks` is item-keyed, not
+# household-keyed (ADR-0005). Naming them here makes each exclusion an asserted decision rather than
+# an omission — `tests/test_schema.py` checks a scoped table did not quietly land in this set and
+# vice versa.
+PLATFORM_TABLES: tuple[str, ...] = (
+    "users",
+    "plaid_webhooks",
+)
+
 # Every table whose rows belong to exactly one household. RLS goes on each, the repository scopes
-# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` is deliberately
-# NOT here (ADR-0005): a webhook names an item, not a household.
+# each, and ticket 0021's IDOR suite proves both — independently. `plaid_webhooks` and `users` are
+# deliberately NOT here (see `PLATFORM_TABLES`): a webhook names an item, and a user predates every
+# household.
 HOUSEHOLD_SCOPED: tuple[str, ...] = (
     "accounts",
     "cards",
-    "policies",
+    "policy_events",
     "decisions",
     "snapshots",
     "spend_projections",
     "plaid_items",
     "plaid_transactions",
     "transfers",
+    "household_members",
+    "card_attestations",
 )
 
 __all__ = [
     "HOUSEHOLD_SCOPED",
     "MONEY",
+    "PLATFORM_TABLES",
     "RATE",
     "RLS_VAR",
     "accounts",
+    "card_attestations",
     "cards",
     "decisions",
+    "household_members",
     "households",
     "metadata",
     "plaid_items",
     "plaid_transactions",
     "plaid_webhooks",
-    "policies",
+    "policy_events",
     "snapshots",
     "spend_projections",
     "transfers",
+    "users",
 ]

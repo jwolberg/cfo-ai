@@ -75,7 +75,11 @@ def db(db_engine: Engine) -> Iterator[Connection]:
             # what governs them instead. The cost lands right here: `TRUNCATE households CASCADE`
             # does not reach either, and a fixture that assumed otherwise leaves rows behind and
             # fails the *next* test with a count from a webhook it never sent.
-            conn.execute(text("TRUNCATE households, decisions, plaid_webhooks CASCADE"))
+            #
+            # `users` is named for the same reason (ticket 0046): it is platform-level, not
+            # household-scoped, so `households CASCADE` never reaches it. Truncating it CASCADEs to
+            # `household_members` (which FKs it), clearing the membership graph both ways.
+            conn.execute(text("TRUNCATE households, decisions, plaid_webhooks, users CASCADE"))
         yield conn
 
 

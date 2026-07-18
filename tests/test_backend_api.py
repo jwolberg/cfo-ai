@@ -26,13 +26,19 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from backend import artifact as art
-from backend.auth import API_KEY_ENV, API_KEY_HEADER
-from backend.seed import household_id_for, seed_all
+from backend.auth import API_KEY_ENV
+from backend.identity import stytch
+from backend.identity.deps import get_verifier
+from backend.seed import REVIEWER_USER_STYTCH_ID, household_id_for, seed_all
 from tests.conftest import requires_db
 
 pytestmark = requires_db
 
 KEY = "test-key-not-a-real-one"
+# The reviewer is an `owner` member of every seeded household (`backend/seed.py`, KTD-10), so it is
+# the natural principal for the API suite: it can read and write every demo household. A stubbed
+# verifier (below) maps this token to the reviewer's Stytch id — the real-Stytch path is U7's gate.
+REVIEWER_TOKEN = "reviewer-session-token"
 
 # The demo household, by the id the seeder derives. Archetype A is the oracle here for the third
 # time: `0019` proved the walk did not drift, `0023` proved the seeder wrote what the walk decided,
@@ -62,17 +68,33 @@ def seeded(db_engine: Engine) -> None:
     seed_all(db_engine)
 
 
+def _reviewer_verifier():
+    """A stub verifier: the reviewer token resolves to the reviewer's Stytch id; anything else is
+    refused exactly as a real bad session would be. The real-Stytch decode path is U7's gate."""
+
+    def verify(token: str):
+        if token == REVIEWER_TOKEN:
+            return REVIEWER_USER_STYTCH_ID, {}
+        raise stytch.StytchVerificationError("stub: unknown token")
+
+    return verify
+
+
 @pytest.fixture
 def client(seeded: None) -> Iterator[TestClient]:
     from backend.main import app
 
+    app.dependency_overrides[get_verifier] = _reviewer_verifier
     with TestClient(app) as c:
         yield c
+    app.dependency_overrides.pop(get_verifier, None)
 
 
 @pytest.fixture
 def auth() -> dict[str, str]:
-    return {API_KEY_HEADER: KEY}
+    """A verified reviewer session. The cutover (ticket 0048) replaced the shared X-API-Key with a
+    Stytch bearer session; the reviewer is an owner of every demo household."""
+    return {"Authorization": f"Bearer {REVIEWER_TOKEN}"}
 
 
 @pytest.fixture(scope="session")
@@ -108,15 +130,32 @@ class TestStartup:
         with TestClient(app) as c:
             assert c.get("/health").status_code == 200
 
-    def test_a_missing_api_key_stops_the_service_coming_up(
+    def test_a_missing_shared_key_no_longer_stops_the_service(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """An accidentally-public endpoint is not a default worth having."""
+        """The shared key is retired for user routes (ticket 0048, KTD-8). Its startup gate is gone:
+        the service comes up without `RESFI_API_KEY` because no route consumes it any more. What
+        replaced it as the startup contract is the Stytch secret guard (next test)."""
         monkeypatch.delenv(API_KEY_ENV, raising=False)
 
         from backend.main import app
 
-        with pytest.raises(RuntimeError, match=API_KEY_ENV), TestClient(app):
+        with TestClient(app) as c:
+            assert c.get("/health").status_code == 200
+
+    def test_a_live_stytch_env_without_a_managed_secret_stops_the_service(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The new startup contract, and proven *wired* through the real lifespan — not merely
+        defined. `STYTCH_ENV=live` means the Stytch secret mints sessions for real users; until
+        it is managed, the boot is refused (KTD-4), the same shape as the Plaid token guard.
+        """
+        monkeypatch.setenv("STYTCH_ENV", "live")
+
+        from backend.db.session import StytchSecretWouldLeak
+        from backend.main import app
+
+        with pytest.raises(StytchSecretWouldLeak), TestClient(app):
             pass  # pragma: no cover
 
     def test_a_missing_anthropic_key_stops_the_service_coming_up(
@@ -216,13 +255,17 @@ class TestHealth:
 
 
 class TestAuth:
-    def test_no_key_is_refused(self, client: TestClient) -> None:
+    """After the identity cutover (ticket 0048) the gate is a verified Stytch session, not the
+    shared key. A missing or invalid bearer is `401`; the valid-but-non-member case is `403` and
+    lives in `tests/test_route_authz.py`."""
+
+    def test_no_session_is_refused(self, client: TestClient) -> None:
         assert client.get(f"/households/{DEMO}/decisions").status_code == 401
 
-    def test_a_wrong_key_is_refused(self, client: TestClient) -> None:
+    def test_an_invalid_session_is_refused(self, client: TestClient) -> None:
         assert (
             client.get(
-                f"/households/{DEMO}/decisions", headers={API_KEY_HEADER: "wrong"}
+                f"/households/{DEMO}/decisions", headers={"Authorization": "Bearer wrong"}
             ).status_code
             == 401
         )
@@ -230,7 +273,9 @@ class TestAuth:
     def test_absence_and_error_are_indistinguishable(self, client: TestClient) -> None:
         """A caller who guesses wrong learns nothing about whether they guessed at all."""
         missing = client.get(f"/households/{DEMO}/decisions")
-        wrong = client.get(f"/households/{DEMO}/decisions", headers={API_KEY_HEADER: "wrong"})
+        wrong = client.get(
+            f"/households/{DEMO}/decisions", headers={"Authorization": "Bearer wrong"}
+        )
 
         assert missing.status_code == wrong.status_code
         assert missing.json() == wrong.json()
@@ -390,7 +435,7 @@ class TestExplain:
         assert response.status_code == 404
         assert response.json()["error"] == "no_record"
 
-    def test_narration_still_needs_a_key(self, client: TestClient) -> None:
+    def test_narration_still_needs_a_session(self, client: TestClient) -> None:
         assert client.get(f"/households/{DEMO}/decisions/2026-03-02/explain").status_code == 401
 
 
@@ -622,11 +667,16 @@ class TestSpend:
         assert {c["card_id"] for c in demo["cards"]} == {"card_demo"}
         assert "card_demo" not in {c["card_id"] for c in other["cards"]}
 
-    def test_an_unknown_household_is_a_404(self, client: TestClient, auth: dict[str, str]) -> None:
+    def test_a_non_member_household_is_a_403(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """After the identity cutover (ticket 0048) a household the caller is not a member of —
+        which includes one that does not exist — is a `403`, indistinguishable from either
+        (KTD-2). The old shared-key posture returned a `404` here because any key could name any
+        household; that is precisely what changed."""
         response = client.get("/households/hh_not_a_household/spend", headers=auth)
 
-        assert response.status_code == 404
-        assert response.json()["error"] == "no_household"
+        assert response.status_code == 403
 
 
 class TestTheDemoSpendSurfaceDidNotMove:
@@ -724,16 +774,21 @@ class TestTheHouseholdList:
         assert client.get("/households").status_code == 401
 
 
-class TestAnUnknownHousehold:
-    """A 404 — not a 500, and emphatically not an empty 200."""
+class TestANonMemberHousehold:
+    """A `403` — not a 500, not an empty 200, and (after ticket 0048) not a 404 either.
 
-    def test_decisions_for_a_household_we_have_nothing_on(
+    A household the caller is not a member of is refused, and a household that does not exist is
+    refused *the same way* — the caller cannot tell which by the response (KTD-2). The reviewer is a
+    member of every seeded household, so `hh_not_a_household` is both non-member and nonexistent —
+    the point being that those are one answer.
+    """
+
+    def test_decisions_for_a_non_member_household(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:
         response = client.get("/households/hh_not_a_household/decisions", headers=auth)
 
-        assert response.status_code == 404
-        assert response.json()["error"] == "no_household"
+        assert response.status_code == 403
 
     def test_it_is_not_an_empty_two_hundred(self, client: TestClient, auth: dict[str, str]) -> None:
         """`decisions: []` would say this household exists and the engine decided nothing for it.
@@ -744,17 +799,19 @@ class TestAnUnknownHousehold:
         assert "decisions" not in response.json()
 
     def test_the_assistant_refuses_it_too(self, client: TestClient, auth: dict[str, str]) -> None:
+        """The body-supplied household id is authorized against membership like a path id (ticket
+        0048), so it is refused the same `403`."""
         response = client.post(
             "/assistant/message",
             headers=auth,
             json={"household_id": "hh_not_a_household", "message": "hi", "history": []},
         )
 
-        assert response.status_code == 404
+        assert response.status_code == 403
 
-    def test_an_unknown_household_still_needs_a_key(self, client: TestClient) -> None:
-        """Auth before existence: a caller without a key must not be able to probe which
-        households exist by reading the difference between a 401 and a 404."""
+    def test_a_non_member_household_still_needs_a_session(self, client: TestClient) -> None:
+        """Auth before membership: a caller without a session gets `401`, not `403`, so they cannot
+        probe which households exist by reading the difference."""
         assert client.get("/households/hh_not_a_household/decisions").status_code == 401
 
 

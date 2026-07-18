@@ -68,6 +68,26 @@ from sim.household import History, HouseholdSpec, generate
 # becomes a story — every row would claim to have been decided by a version that no longer exists.
 ENGINE_VERSION = "0-unversioned"
 
+# The two seeded identity principals (ticket 0046, KTD-10). These are the deployed-surface
+# mitigation, not just a test fixture: after the shared key retires (U3), the public demo runs on
+# the DEMO principal and a reviewer runs on the REVIEWER one.
+#
+# - **DEMO is a `viewer`** — the public, read-only demo principal. A visitor reaches the demo bundle
+#   with no login and can read every `is_demo` household and write none. Its `stytch_user_id` is a
+#   fixed sentinel because there is no real Stytch user behind the public session.
+# - **REVIEWER is an `owner`** — a dev/reviewer who may exercise the write paths (settings,
+#   attestation) against the demo households, and who (being a member of all of them) still sees the
+#   HouseholdPicker.
+#
+# Both are members of every seeded (synthetic, `is_demo`) household — see `_seed_memberships`.
+DEMO_USER_ID = "user_demo_viewer"
+DEMO_USER_STYTCH_ID = "stytch-demo-viewer"
+DEMO_USER_EMAIL = "demo@cfo-ai.example"
+
+REVIEWER_USER_ID = "user_reviewer_owner"
+REVIEWER_USER_STYTCH_ID = "stytch-reviewer-owner"
+REVIEWER_USER_EMAIL = "reviewer@cfo-ai.example"
+
 
 class SeedError(RuntimeError):
     """A household could not be seeded. Raised at the boundary, before anything is written."""
@@ -121,8 +141,17 @@ def seed(
     # transaction as everything it owns.
     with engine.begin() as conn:
         _reset_household(conn, household_id, archetype)
+        # The two identity principals exist independent of any household, so they are provisioned on
+        # the unscoped connection here (ticket 0046, KTD-10). Idempotent, so every archetype's seed
+        # run converges on the same two rows.
+        _provision_demo_users(conn)
 
     with repository(engine, household_id) as repo:
+        # The memberships that make this synthetic household reachable — the demo `viewer` and the
+        # reviewer `owner`. Written through the scoped repository so RLS `WITH CHECK` binds them to
+        # this household, exactly like every other scoped write.
+        _seed_memberships(repo)
+
         store = PostgresSnapshotStore(repo.conn)
 
         sweeps = refusals = 0
@@ -174,11 +203,43 @@ def _reset_household(conn: Connection, household_id: str, archetype: str) -> Non
     # so it is deleted explicitly — forgetting it would leave a previous run's decisions attached to
     # a household that had been rewritten underneath them.
     conn.execute(text("DELETE FROM decisions WHERE household_id = :h"), {"h": household_id})
+    # DELETE cascades to household_members (FK ON DELETE CASCADE), so re-seeding converges on the
+    # memberships too rather than accumulating stale ones.
     conn.execute(text("DELETE FROM households WHERE id = :h"), {"h": household_id})
+    # `is_demo = true`: every seeded household is synthetic and belongs to the public demo plane
+    # (ticket 0046, KTD-10). A real household is created elsewhere and is never a demo one.
     conn.execute(
-        text("INSERT INTO households (id, archetype) VALUES (:h, :a)"),
+        text("INSERT INTO households (id, archetype, is_demo) VALUES (:h, :a, true)"),
         {"h": household_id, "a": archetype},
     )
+
+
+def _provision_demo_users(conn: Connection) -> None:
+    """Provision the demo `viewer` and reviewer `owner` users, idempotently (ticket 0046, KTD-10).
+
+    On the unscoped connection because `users` is platform-level (not HOUSEHOLD_SCOPED). Through
+    `add_user`, which is `ON CONFLICT (stytch_user_id) DO NOTHING`, so calling this once per
+    archetype converges on exactly two rows.
+    """
+    from backend.db.repository import add_user
+
+    add_user(conn, user_id=DEMO_USER_ID, stytch_user_id=DEMO_USER_STYTCH_ID, email=DEMO_USER_EMAIL)
+    add_user(
+        conn,
+        user_id=REVIEWER_USER_ID,
+        stytch_user_id=REVIEWER_USER_STYTCH_ID,
+        email=REVIEWER_USER_EMAIL,
+    )
+
+
+def _seed_memberships(repo: Repository) -> None:
+    """Make this household reachable by the demo `viewer` and the reviewer `owner` (ticket 0046).
+
+    Idempotent (`add_membership` upserts the role), so a re-seed converges. The demo user is a
+    `viewer` — read-only, the public principal — and the reviewer is an `owner` who may write.
+    """
+    repo.add_membership(user_id=DEMO_USER_ID, role="viewer")
+    repo.add_membership(user_id=REVIEWER_USER_ID, role="owner")
 
 
 def _write_decision(repo: Repository, w: Any, snapshot_ref: str) -> None:

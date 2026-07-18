@@ -7,10 +7,15 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 
 import App from './App';
-import { DEMO_HOUSEHOLD, getDecisions, getHouseholds, getSpend } from './src/api/client';
+import { getDecisions, getHouseholds, getSpend } from './src/api/client';
 import { colors } from './src/theme';
 
 jest.mock('./src/api/client');
+
+// The id the seeder derives for archetype A. Was `client.DEMO_HOUSEHOLD` until the identity cutover
+// (ticket 0051) removed the baked default; the app now learns its household from `GET /households`,
+// so the test names the demo id itself.
+const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
 
 const decisions = getDecisions as jest.MockedFunction<typeof getDecisions>;
 const spend = getSpend as jest.MockedFunction<typeof getSpend>;

@@ -2332,3 +2332,175 @@ The write half, built end to end in shadow mode (no production money moves). Six
 
 Full suite: 636 passed, 5 skipped (the two transfer-sandbox gates + the Plaid sandbox gate + a
 deferred removed-transaction subtest).
+
+---
+
+## The identity rung (plan 2026-07-17-003, tickets 0046–0053)
+
+Started 2026-07-18. Building the identity precondition every route was missing — a verified user, a
+membership graph, and `household_id` derived from the session — plus the first write paths.
+
+### Ticket-numbering drift (build a ticket list)
+The plan targets tickets `0046–0053`. Ticket **files** on disk stopped at `0038` (the transport
+rung, 0034–0038). The sweep rung (plan 002) **reserved** `0039–0045` in its plan text but never wrote
+the ticket markdown — so those numbers are taken but unfiled. Followed the plan: identity is
+`0046–0053`, which is collision-free. The `0039–0045` gap belongs to the sweep rung, not this one.
+(Also: my note that tickets live in `.TerMinal/backlog` is wrong — that dir is empty; the real store
+is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a different repo entirely.)
+
+### U1 / 0046 — identity schema, membership lookup, ADR-0008 (done 2026-07-18)
+- **`users` access is single-key by construction, not just by convention.** The PII guard KTD-1 asks
+  for is implemented as: no `users()` list method exists anywhere, only `get_user_by_id` /
+  `get_user_by_stytch_id`, and `tests/test_identity_schema.py` asserts the module exposes no
+  list/scan function. That is the strongest form of the guard the plan sketched.
+- **`add_user` is `ON CONFLICT (stytch_user_id) DO NOTHING`** — this is the JIT concurrent-first-login
+  race the plan flagged as an FYI, closed at the primitive rather than deferred: two requests bearing
+  the same new session both provision; the second is a no-op; the caller re-reads.
+- **`is_demo` is backfilled true for `archetype IS NOT NULL`** in migration 0011, so the deployed demo
+  households become demo-plane members without a re-seed (mirrors U4's policy_events backfill logic).
+- **Decision — `PLATFORM_TABLES` tuple added to `models.py`.** Rather than only a comment, the
+  deliberately-unscoped tables (`users`, `plaid_webhooks`) are named in a tuple so the exclusion is
+  machine-checkable: a test asserts it is disjoint from `HOUSEHOLD_SCOPED`. Chose this over a bare
+  comment because "asserted, not incidental" was the explicit requirement.
+- **`test_no_table_carries_a_user_id` relaxed precisely**, not loosened: any table with `user_id` must
+  also carry `household_id`, and the only such table is the `household_members` bridge. A future data
+  table sneaking in a `user_id` tenant key still fails it.
+- Verified against real Postgres 17: migration up/down/up clean from 0001; full suite **661 passed,
+  5 skipped** (the 5 are the real-vendor sandbox gates — Plaid + transfers + Stytch-to-come — which
+  skip loudly without creds). CI does not lint `alembic/`, so the migration's long comment lines are
+  house-style, matching 0005/0007.
+
+### U2 / 0047 — Stytch adapter + current_user / authorize_household (done 2026-07-18)
+- **`backend/identity/` isolates the vendor.** `stytch.py` is the only file that names Stytch;
+  `deps.py` consumes an opaque `Verifier` callable (defaulted to `stytch.verify`, overridable via
+  FastAPI `dependency_overrides` in tests). A provider swap touches `stytch.py` + the mobile SDK.
+- **Verification mirrors the Plaid webhook JWT path** (local, offline, JWKS by `kid`), with the two
+  KTD-4 differences made real: RS256 pinned (alg-confusion refused before any key fetch), and the
+  `kid` cache is **TTL-evicting** (10 min) rather than never-evict — with a direct test that ages a
+  cache entry past the TTL and asserts a refetch. A rotated/revoked signing key stops being trusted
+  in a bounded window.
+- **Decision — the owner role is read *inside the scope*, not from the definer function.**
+  `households_for_user` returns only ids (ADR-0008 froze that). Rather than widen it or add a second
+  definer function, `authorize_household_owner` opens the scoped repo and reads
+  `repo.member_role(user_id)` — RLS makes exactly the caller's own membership row visible. Cheaper and
+  keeps the definer surface returning nothing but ids.
+- **Two connections per authorized request** (membership check unscoped, then scoped repo) — the
+  plan's logged FYI, accepted: RLS still binds the scoped work; the single-connection optimisation is
+  a follow-up, not a correctness issue.
+- **Stytch shape is the documented one, flagged for U7.** `iss = stytch.com/<project_id>`,
+  `aud = [<project_id>]`, `sub =` the user id. The plan's Deferred Notes budget for ≥1 vendor-reality
+  correction against the real sandbox — if live tokens disagree, `stytch.py` is the only file to fix.
+- **Secret guard** (`assert_stytch_secret_safe_at_rest`) mirrors the Plaid/transfer at-rest guards but
+  triggers on `STYTCH_ENV=live` (first real project), NOT money-on — identity goes live before money.
+  Wired into the lifespan in U3.
+- Full suite: **681 passed, 6 skipped** (the 6th is the new loud Stytch-sandbox JWKS gate — no creds
+  here). `test_identity_deps.py` proves the decode path against a generated RSA keypair (no network),
+  so "rejected before any DB touch" is exercised, not asserted.
+
+### U3 / 0048 — API cutover to session-derived, membership-authorized household (done 2026-07-18)
+- **Every household route now hangs on `authorize_household`** (yielding the scoped repo), so the
+  path id is an authorized selector, not a trusted assertion. `GET /households` scopes its listing to
+  the caller's memberships (`readpath.list_households(only=...)`; empty membership → empty list, not
+  "all"). `POST /assistant/message` authorizes its *body* id by hand — the other IDOR the plan named.
+- **Semantic change, deliberate and flagged:** a non-member household (which includes a nonexistent
+  one) is now **403**, indistinguishable from "doesn't exist" (KTD-2). It used to be 404. Updated the
+  existing `TestAnUnknownHousehold` → `TestANonMemberHousehold` accordingly. A *member* whose
+  household has no data still gets 404 (readpath.NoSuchHousehold). 401 (no session) precedes 403, so
+  existence can't be probed by an unauthenticated caller.
+- **The shared key is retired, not demoted.** `expected_key()` left the lifespan; nothing wires
+  `require_api_key` any more. Replaced the startup gate with `assert_stytch_secret_safe_at_rest()`.
+  `auth.py` keeps its constants + a retirement note. The "missing API key stops startup" test became
+  "a missing shared key no longer stops startup" + a new "live Stytch env is refused" test (wired,
+  driven through the real lifespan).
+- **link_exchange dropped `household_id` from the wire** and derives the caller's single non-demo
+  owned household: 0 or >1 → 409 (the ambiguity the deferred Link UI resolves), an is_demo-only user
+  → 403 (a real item can't touch the demo plane), a viewer → 403. Direct fix to the rung's premise.
+- **401s are indistinguishable** (missing vs invalid session return one identical body) — preserved
+  the property the shared-key gate had.
+- New `tests/test_route_authz.py`: the valid-but-non-member refusal on every route, membership-scoped
+  listing, and the demo viewer reading a demo household. Full suite **696 passed, 6 skipped**.
+- **Owner-gated write refusal (PATCH /policy, POST /attest) is asserted at the dep level in U2's
+  tests** but the routes themselves land in U4/U5 — the route-level viewer-write-403 test lands with
+  them.
+
+### U4 / 0049 — settings write path, append-only policy_events (done 2026-07-18)
+- **`policy_events` replaces the mutable `policies` table outright** (KTD-6's honest form — no second
+  copy that can disagree). Migration 0012 creates it (append-only grant: SELECT+INSERT), **backfills
+  one event per existing policies row**, then DROPs `policies`. `downgrade()` recreates `policies` and
+  repopulates it from the latest event per household, so the reversal loses nothing either. Verified
+  up/down/up clean from zero.
+- **`policy()` reads the latest by `seq`, not `created_at`** (the transfers.seq tie lesson).
+  `set_policy` is now an INSERT with `changed_by` + `loosened`; the seeder's call is unchanged (both
+  default). `two_households` IDOR fixture switched from a `policies` row to a `policy_events` row, so
+  the leak test stays non-vacuous.
+- **PATCH /households/{id}/policy** is owner-gated (viewer → 403, non-member → 403, no session → 401),
+  validates before appending (buffer≥0, max_sweep≥MIN_SWEEP, weekly≥single, spacing 0–90, plus
+  UserPolicy.__post_init__) — a 422 writes no row — and flags a **loosening** change distinctly
+  (KTD-9): lower floor, higher cap, or shorter spacing vs. the current policy.
+- Added PATCH to the CORS allow-methods (the deployed web build needs it).
+- **Shadow caveat kept honest in code + ticket:** nothing reads `Repository.policy()` into `decide()`
+  for a live household yet (demo uses a hardcoded UserPolicy, readpath serves frozen snapshots), so
+  this proves write + audit + latest-read, not a re-decided sweep — the live-assembly path is the
+  plan's named, open Prerequisite. Full suite **709 passed, 6 skipped**.
+
+### U5 / 0050 — attestation write path, the 0016 money-gate in shadow (done 2026-07-18)
+- **`card_attestations` (append-only, migration 0013)** + `Repository.add_attestation` /
+  `current_attestation` (latest by seq). `backend/attestation.py`: `card_fingerprint` (a stable,
+  set-based, collision-resistant hash — separator-joined sorted-unique ids) and `attested_for(repo)`
+  (True only while the latest attestation's fingerprint matches the household's *current* cards).
+- **Deviation-with-reason (KTD-7 said "assemble_snapshot reads the attestation"):** `assemble_snapshot`
+  must stay a pure function of its inputs so `replay.py` grades the shipped engine (the same reason
+  `sweeps_in_flight` is passed in, stated in its docstring). So `attested` is a **parameter**
+  (default True → walk/replay/seeder unchanged, regression oracle preserved) computed by
+  `attested_for` and passed by a live caller. The hardcoded `attested=True` at precompute.py:878 is
+  replaced with the param. This honors KTD-7's intent (attestation drives the gate) without breaking
+  purity — documented in the assemble_snapshot docstring.
+- **POST /households/{id}/attest** is owner-gated (viewer/non-member 403, no session 401),
+  fingerprints the current cards, appends, and reports coverage.
+- **Four-layer test** so "the gate clears end to end" rests on none alone: fingerprint properties;
+  repo append + `attested_for` invalidation (a **new card silently drops coverage** — the KTD-7 safety
+  point); `derive_portfolio` coverage transitions (UNMATCHED_PAYMENT overrides attestation); and the
+  `decide()` money-gate itself (UNATTESTED → CARD_COVERAGE_INCOMPLETE, COMPLETE clears it).
+- Same shadow caveat as U4 (readpath serves frozen snapshots) — write + invalidation proven, not a
+  re-decided live sweep. Full suite **727 passed, 6 skipped**; migration up/down/up clean from zero.
+
+### U6a / 0051 — mobile session auth cutover (done 2026-07-18, verified to tsc+jest)
+Per the user's call (2026-07-18): mobile built and verified to tsc + jest; a real on-device Stytch
+sign-in and the deployed web build are not exercisable here, so those stay flagged gaps (like U7).
+- **The baked `EXPO_PUBLIC_API_KEY`/`X-API-Key` is gone.** `src/api/session.ts` is the one place the
+  session token lives: **SecureStore on native** (Keychain/Keystore, never AsyncStorage, never
+  logged), and the **pre-seeded demo session** (`EXPO_PUBLIC_DEMO_SESSION`) on web for the public
+  demo plane (KTD-10). A real stored token wins over the demo one. `client.ts` sends
+  `Authorization: Bearer <token>`; a missing token fails closed (no auth header → backend 401).
+- **`DEMO_HOUSEHOLD` default is removed.** `App` bootstraps the household from `GET /households`
+  (membership-scoped): loading → spinner, empty → **NoHousehold** screen (not blank, not signup),
+  else the first membership. The picker renders only when there's a choice (>1) — a single-membership
+  customer sees none; the reviewer still does. `HouseholdPicker` is now presentational (App owns the
+  list; the picker no longer fetches).
+- **Deferred, flagged:** the Stytch Expo sign-in UI (magic link / OTP) is the seam `signInWithToken`
+  exposes — wiring the SDK and running it on a device needs a real Stytch project + simulator. Not
+  faked; documented in `session.ts`. `expo-secure-store` installed (app.json plugin added).
+- Verified: `tsc --noEmit` clean; jest **74 passed** (10 suites) including new session + NoHousehold
+  + rewritten client/picker/App tests. `expo install` used for the SDK (respects the Expo v57 pin).
+
+### U6b / 0052 — mobile Settings + Attestation screens (done 2026-07-18, verified to tsc+jest)
+- **Settings.tsx** (modal over PATCH /policy): prefilled from a **new GET /policy** endpoint (a
+  spawned addition — the screen needs the current guardrails and only `buffer_floor` leaked via the
+  feed; owner-gate is on the write, any member may read). Inline per-field validation mirrors U4's
+  bounds (no write on an invalid edit), a **saving** state, an **explicit "Saved"**, the server's 422
+  surfaced inline, and a viewer told they lack permission. **Pause** is a confirm-then-add over
+  `blackout_dates`, each day listed and individually removable.
+- **Attest.tsx** (modal over POST /attest): two distinct states — *unattested* confirms and clears
+  the gate; *unmatched_payment* is a **named dead end** (no in-app fix this rung, points to support),
+  not a silent write failure (KTD-7).
+- **Feed CTA:** `DecisionFeedItem` renders a "Confirm your cards" button on a `card_coverage_incomplete`
+  refusal, opening Attest with the coverage sub-state. That sub-state reaches the client via a second
+  spawned addition: **reason `params` now cross the wire** (`decision_json` serializes them JSON-safe;
+  the mobile `Reason` type gains optional `params`) — the coverage/unmatched were computed all along
+  and simply never serialized. Without this the dead-end would be unreachable (the built-never-
+  exercised trap).
+- **Spawned additions filed as done-in-scope** (both needed for the screens to actually work): GET
+  /policy, and reason params on the decisions wire.
+- Verified: mobile `tsc` clean, jest **88 passed** (12 suites); backend **731 passed, 9 skipped**
+  (GET /policy tests added; the 9 skips are the vendor gates incl. U7's 3). Same on-device caveat as
+  U6a — the Stytch sign-in and a real device run are the flagged, unexercised pieces.

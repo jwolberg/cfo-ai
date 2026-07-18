@@ -34,7 +34,7 @@ import {
 
 import { ApiError, getDecisions } from '../api/client';
 import type { Decision, DecisionsResponse } from '../api/types';
-import { DecisionFeedItem } from '../components/DecisionFeedItem';
+import { DecisionFeedItem, type CoverageRefusal } from '../components/DecisionFeedItem';
 import { formatMoney, formatMoneyRounded } from '../format';
 import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, shadow, space, type } from '../theme';
 
@@ -47,6 +47,8 @@ interface Props {
   /** Which household's feed. Owned by `App.tsx` — see its note on why this is not local state. */
   householdId: string;
   onExplain: (decision: Decision) => void;
+  /** Open Attest from a coverage-incomplete refusal in the feed (ticket 0052). */
+  onAttest?: (refusal: CoverageRefusal) => void;
 }
 
 /** The list's own top padding, which sits above the hero inside the scrolled content. */
@@ -66,7 +68,7 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
-export function Dashboard({ householdId, onExplain }: Props) {
+export function Dashboard({ householdId, onExplain, onAttest }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
 
@@ -133,7 +135,7 @@ export function Dashboard({ householdId, onExplain }: Props) {
         style={styles.scroll}
         ListHeaderComponent={<Header summary={summary} onHeroLayout={onHeroLayout} />}
         ListEmptyComponent={<Empty />}
-        renderItem={({ item }) => <DecisionFeedItem decision={item} onPress={onExplain} />}
+        renderItem={({ item }) => <DecisionFeedItem decision={item} onPress={onExplain} onAttest={onAttest} />}
         onScroll={onScroll}
         scrollEventThrottle={16}
       />

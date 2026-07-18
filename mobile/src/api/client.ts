@@ -5,15 +5,14 @@
  * that matters for the UI — a bounded timeout. No screen constructs a fetch of its own, so
  * there is exactly one place where a request can be made without a deadline, and it doesn't.
  *
- * ## The API key is public, and that is the accepted trade
+ * ## Authenticated by a Stytch session, not a baked key (ticket 0051, U6a)
  *
- * `EXPO_PUBLIC_*` variables are inlined into the bundle at build time. The key below ships
- * inside the app and anyone who inspects it can read it — that is not an oversight, it is a
- * property of every public client, which cannot hold a secret. The key's job is to deter
- * opportunistic traffic (a crawler that found the bare Cloud Run URL), not to resist a
- * determined reader. What actually bounds the damage when it leaks is the rate cap on the
- * one endpoint that costs money (`backend/assistant.py`) and the fact that the data is
- * synthetic and read-only. See `backend/auth.py` for the same note from the other side.
+ * There used to be one `EXPO_PUBLIC_API_KEY` inlined into the bundle here — readable by anyone who
+ * inspected the app. It is gone. Every request now carries a **verified Stytch session** as
+ * `Authorization: Bearer …`, read from `session.ts` (SecureStore on native, the pre-seeded demo
+ * session on web). The token is never logged. `household_id` is no longer a client-side default: it
+ * is derived from the caller's membership (`GET /households`) and passed explicitly, because the
+ * backend authorizes it against the session (a non-member is refused, `KTD-2`).
  *
  * ## Failures are values, not surprises
  *
@@ -23,18 +22,21 @@
  * being distinguishable from `network`, and the explain modal depends on `no_record` being
  * an answer rather than an error.
  */
+import { getSessionToken } from './session';
 import type {
   AssistantResponse,
+  AttestResponse,
   DecisionsResponse,
   ExplainResponse,
   HouseholdsResponse,
   IsoDate,
+  Policy,
+  PolicyUpdate,
   SpendResponse,
   Turn,
 } from './types';
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
-const API_KEY = process.env.EXPO_PUBLIC_API_KEY ?? '';
 
 /**
  * How long the user stares at a spinner before we admit defeat (R13).
@@ -57,6 +59,7 @@ export type ApiErrorKind =
   | 'network'
   | 'unauthorized'
   | 'no_record'
+  | 'validation'
   | 'server'
   | 'malformed';
 
@@ -64,6 +67,9 @@ export class ApiError extends Error {
   constructor(
     readonly kind: ApiErrorKind,
     message: string,
+    /** For `validation` (a 422): the backend's `detail` — the list of guardrail problems the
+     *  Settings screen surfaces inline (ticket 0052). Undefined for every other kind. */
+    readonly detail?: unknown,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -74,13 +80,18 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
 
+  // The session token, attached as a bearer credential. A missing token means the request goes out
+  // unauthenticated and the backend answers 401 — surfaced below as `unauthorized`, the same as a
+  // rejected session — so a signed-out app fails closed rather than leaking a request without auth.
+  const token = await getSessionToken();
+
   let response: Response;
   try {
     response = await fetch(`${BASE_URL}${path}`, {
       ...init,
       signal: controller.signal,
       headers: {
-        'X-API-Key': API_KEY,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'Content-Type': 'application/json',
         ...init.headers,
       },
@@ -108,6 +119,19 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
     throw new ApiError('no_record', 'No decision on record for that day');
   }
 
+  if (response.status === 422) {
+    // A guardrail write that failed validation (ticket 0052). Carry the backend's `detail` so the
+    // Settings screen can show it inline rather than as a generic failure. A malformed body here
+    // just yields an empty detail — still a validation error, still not a write.
+    let detail: unknown;
+    try {
+      detail = ((await response.json()) as { detail?: unknown }).detail;
+    } catch {
+      detail = undefined;
+    }
+    throw new ApiError('validation', 'The change was rejected', detail);
+  }
+
   if (!response.ok) {
     throw new ApiError('server', `The service returned ${response.status}`);
   }
@@ -120,28 +144,19 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
 }
 
 /**
- * Which household the app is looking at.
+ * Every household **this user** may switch to — their memberships, and nothing else.
  *
- * A constant, for now, and deliberately not a hidden default inside `request()`: the routes are
- * household-scoped as of ticket 0024, and this is the app admitting it reads exactly one of them
- * rather than pretending the dimension does not exist. Ticket 0025 replaces this with a picker —
- * `GET /households` already lists all four with labels.
- *
- * The demo's own household, by the id `backend/seed.py` derives from the archetype name.
- */
-export const DEMO_HOUSEHOLD = 'hh_demo_biweekly';
-
-/**
- * Every household this demo can show, with a label a human can pick between.
- *
- * The only call with no household in it, because it is the one you make before you have one.
+ * The only call with no household in it, because it is the one you make before you have one. Since
+ * the identity cutover (ticket 0048) it is membership-scoped on the backend: a signed-in user sees
+ * their own household(s), the demo `viewer` sees the demo ones, and there is no baked
+ * `DEMO_HOUSEHOLD` default any more — the app learns which household to read from this list (U6a).
  */
 export function getHouseholds(): Promise<HouseholdsResponse> {
   return request<HouseholdsResponse>('/households');
 }
 
 /** The served window: the feed (newest first) and the summary stats above it. */
-export function getDecisions(householdId: string = DEMO_HOUSEHOLD): Promise<DecisionsResponse> {
+export function getDecisions(householdId: string): Promise<DecisionsResponse> {
   return request<DecisionsResponse>(`/households/${householdId}/decisions`);
 }
 
@@ -155,8 +170,35 @@ export function getDecisions(householdId: string = DEMO_HOUSEHOLD): Promise<Deci
  * arbitrary card as "your card". Both are fixed, which is what closes 0025's Spending tab for
  * all four households instead of one.
  */
-export function getSpend(householdId: string = DEMO_HOUSEHOLD): Promise<SpendResponse> {
+export function getSpend(householdId: string): Promise<SpendResponse> {
   return request<SpendResponse>(`/households/${householdId}/spend`);
+}
+
+/** The household's current guardrails, to prefill the Settings screen (ticket 0052). */
+export function getPolicy(householdId: string): Promise<Policy> {
+  return request<Policy>(`/households/${householdId}/policy`);
+}
+
+/**
+ * Write the guardrails (the product's first user-driven write). Owner-only on the backend; a viewer
+ * or non-member gets `unauthorized`, an invariant violation gets a `validation` ApiError carrying the
+ * per-field problems. Every field is sent, so a partial edit cannot silently drop a guardrail.
+ */
+export function updatePolicy(householdId: string, body: PolicyUpdate): Promise<Policy> {
+  return request<Policy>(`/households/${householdId}/policy`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Attest that the household's current cards are all of them — clearing the coverage money-gate
+ * (ticket 0052). Owner-only. The backend fingerprints the current cards; a later new card
+ * invalidates it. It never clears an `unmatched_payment` coverage state — that is a dead end the
+ * Attest screen names rather than a write it fakes.
+ */
+export function attest(householdId: string): Promise<AttestResponse> {
+  return request<AttestResponse>(`/households/${householdId}/attest`, { method: 'POST' });
 }
 
 /**
@@ -166,10 +208,7 @@ export function getSpend(householdId: string = DEMO_HOUSEHOLD): Promise<SpendRes
  * costs one scoped query, which is why the most-viewed text in the product is also the
  * one thing that cannot hallucinate.
  */
-export function getExplanation(
-  date: IsoDate,
-  householdId: string = DEMO_HOUSEHOLD,
-): Promise<ExplainResponse> {
+export function getExplanation(date: IsoDate, householdId: string): Promise<ExplainResponse> {
   return request<ExplainResponse>(`/households/${householdId}/decisions/${date}/explain`);
 }
 
@@ -188,7 +227,7 @@ export function getExplanation(
 export function askAssistant(
   message: string,
   history: Turn[],
-  householdId: string = DEMO_HOUSEHOLD,
+  householdId: string,
 ): Promise<AssistantResponse> {
   return request<AssistantResponse>(
     '/assistant/message',
