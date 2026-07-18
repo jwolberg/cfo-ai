@@ -1,39 +1,43 @@
-"""POST /plaid/link/exchange — a public_token becomes a stored Item.
+"""POST /plaid/link/exchange — a public_token becomes a stored Item, pinned to *your own* household.
 
-This is this backend's **first write path from the outside** (`POST /assistant/message` writes
-nothing). It carries `Depends(require_api_key)` like every other route, so only the trusted internal
-caller reaches it — there is no end-user identity yet (Clerk lands with the first real token).
+The direct fix to the premise that opened the identity rung: "Plaid won't work without a real authed
+user." Before the cutover this route trusted a `household_id` in the request body under the shared
+key — any caller could pin an item anywhere (`tests/test_idor.py`'s standing caveat). Now:
 
-**On `household_id`.** The plan says it is "fixture-supplied by the internal caller ... never read
-from the request body" ([5.3]). There is no owner column and no `users` table, so an item is pinned
-to a hand-picked household as a fixture, not a design. Here that fixture *is* the
-API-key-authenticated caller's choice: the same trust model every other route runs under (the
-shared key lets any
-caller name any household — `tests/test_idor.py` is explicit that the mechanism is real and the
-identity is not). The row is still written through `repository()`, so RLS `WITH CHECK` binds it to
-the named household and a mismatch cannot smuggle a row elsewhere. A real end-user flow would derive
-`household_id` from the authenticated session instead of trusting the caller — that is the deferral,
-not a hole this rung opened.
+- there is **no `household_id` on the wire** to smuggle. The target is derived from the verified
+  session's membership (identity rung, KTD-2/KTD-8);
+- it **refuses an `is_demo` household** outright, so a real bank item can never attach to the public
+  demo plane (KTD-10) — the two planes cannot cross;
+- linking is an **owner** action, so the demo `viewer` cannot reach it even for its own demo
+  household.
+
+The customer Link UI and onboarding (signup → create household → link) are the *next* rung; this
+rung fixes the identity coupling so that rung has a stable per-user id to build on. Until then a
+user's
+linkable household is the single non-demo household they own; zero or many is a `409`, the ambiguity
+the deferred Link UI will resolve by passing an explicit target.
 """
 
 from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from backend.auth import require_api_key
-from backend.db.repository import repository
+from backend.db.repository import households_for_user, repository
+from backend.identity.deps import User, current_user
 from backend.plaid.deps import get_engine, get_plaid_client
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
 
 
 class LinkExchangeRequest(BaseModel):
+    # No `household_id`: a user links to *their own* household, derived from the session. There is
+    # nothing here to point at someone else's data.
     public_token: str
-    household_id: str
     institution_id: str | None = None
 
 
@@ -42,9 +46,59 @@ class LinkExchangeResponse(BaseModel):
     household_id: str
 
 
-@router.post("/link/exchange", dependencies=[Depends(require_api_key)])
+def _linkable_household(engine: Engine, user: User) -> str:
+    """The single non-demo household this user owns, or a `4xx` explaining why not.
+
+    Resolves the caller's memberships (the SECURITY DEFINER lookup), drops `is_demo` households — a
+    real item must never land on the demo plane (KTD-10) — and requires exactly one remaining. Zero
+    means there is nowhere real to link yet (onboarding is the next rung); more than one is the
+    ambiguity the deferred Link UI resolves by naming the target. Ownership is then confirmed under
+    the scope, so a `viewer` cannot link even to a household they can read.
+    """
+    with engine.connect() as conn:
+        allowed = households_for_user(conn, user.id)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="No household to link a bank to yet.",
+            )
+        rows = (
+            conn.execute(
+                text("SELECT id, is_demo FROM households WHERE id = ANY(:ids)"),
+                {"ids": allowed},
+            )
+            .mappings()
+            .all()
+        )
+
+    non_demo = [r["id"] for r in rows if not r["is_demo"]]
+    if not non_demo:
+        # Every household this user belongs to is a demo one — a real bank cannot attach there.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="A real bank cannot be linked to a demo household.",
+        )
+    if len(non_demo) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ambiguous target household; the Link flow will name it.",
+        )
+
+    household_id = non_demo[0]
+    with repository(engine, household_id) as repo:
+        if repo.member_role(user.id) != "owner":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Linking a bank requires an owner of the household.",
+            )
+    return household_id
+
+
+@router.post("/link/exchange")
 def link_exchange(
     body: LinkExchangeRequest,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
     engine: Annotated[Engine, Depends(get_engine)],
     client: Annotated[Any, Depends(get_plaid_client)],
 ) -> LinkExchangeResponse:
@@ -52,14 +106,16 @@ def link_exchange(
         ItemPublicTokenExchangeRequest,
     )
 
+    household_id = _linkable_household(engine, user)
+
     exchange = client.item_public_token_exchange(
         ItemPublicTokenExchangeRequest(public_token=body.public_token)
     )
-    with repository(engine, body.household_id) as repo:
+    with repository(engine, household_id) as repo:
         repo.add_plaid_item(
             item_id=f"pi-{exchange.item_id}",
             plaid_item_id=exchange.item_id,
             access_token=exchange.access_token,
             institution_id=body.institution_id,
         )
-    return LinkExchangeResponse(item_id=exchange.item_id, household_id=body.household_id)
+    return LinkExchangeResponse(item_id=exchange.item_id, household_id=household_id)

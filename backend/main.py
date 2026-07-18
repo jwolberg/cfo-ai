@@ -49,7 +49,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Path, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -63,15 +63,16 @@ from backend import assistant, readpath
 # defined; the *file* that module reads and writes is a test fixture (`0031`) and this process
 # never opens it. Importing the names rather than the module is what keeps that visible.
 from backend.artifact import DayRecord, Summary
-from backend.auth import expected_key, require_api_key
-from backend.db.repository import repository
+from backend.db.repository import Repository, repository
 from backend.db.session import (
     assert_plaid_tokens_safe_at_rest,
     assert_rls_binds,
+    assert_stytch_secret_safe_at_rest,
     assert_transfer_credentials_safe_at_rest,
     make_engine,
 )
 from backend.db.snapshots import PostgresSnapshotStore
+from backend.identity.deps import User, authorize_household, current_user, households_for
 from backend.plaid import link, sync, webhook
 from backend.spend import CardObligations, SpendProjection
 from backend.transfer.funding import assert_transfer_funding_configured
@@ -97,7 +98,11 @@ def allowed_origins() -> list[str]:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Load and validate everything the service needs, or refuse to start."""
-    expected_key()  # before anything else: a public endpoint is the worse failure
+    # The shared API key is retired for user routes (identity rung, KTD-8): those now require a
+    # verified Stytch session (`backend/identity/`). What replaces the old `expected_key()` startup
+    # gate is the Stytch secret guard — refuse a `STYTCH_ENV=live` boot until the secret is managed.
+    # No-op in `test` (the default), exactly as the Plaid/transfer guards no-op in sandbox/shadow.
+    assert_stytch_secret_safe_at_rest()
 
     # Reachable, migrated, and — the part a ping would miss — connected as a role that RLS
     # actually binds for. See the module docstring.
@@ -157,19 +162,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# The Plaid transport rung (tickets 0034-0038). Two routes under `/plaid`: the webhook doorbell
-# (public, authenticated by Plaid's signature — it does NOT carry our API key) and the Link exchange
-# (internal, `Depends(require_api_key)` like everything else). Registered as routers so the route
-# logic lives in `backend/plaid/`, not here.
+# The Plaid transport rung (tickets 0034-0038). Routes under `/plaid`: the webhook doorbell (public,
+# authenticated by Plaid's signature — it carries no session), the sync worker/poll (internal,
+# service/OIDC auth), and the Link exchange — which after the identity cutover requires a verified
+# session and links to the caller's *own* household (`backend/plaid/link.py`), no longer a body id.
+# Registered as routers so the route logic lives in `backend/plaid/`, not here.
 app.include_router(webhook.router)
 app.include_router(link.router)
 app.include_router(sync.router)
 
 
-# The household id travels in the path and is bound to both scoping layers in one place
-# (`repository()`), which is what stops them disagreeing. Every route below that touches a
-# household's data goes through it — there is no other way to reach a row.
-HouseholdId = Annotated[str, Path(description="Which household. `GET /households` lists them.")]
+# The household id travels in the path, and `authorize_household` (identity rung) turns it into an
+# *authorized selector*: the dependency verifies the session, confirms membership, and yields a
+# repository already bound to both scoping layers (`repository()`) — so a route body never sees a
+# household the caller did not earn. `assistant_message` is the one exception (its id is in the
+# body) and authorizes it by hand.
 
 
 def _window(request: Request, household_id: str) -> readpath.ServedWindow:
@@ -342,32 +349,42 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/households", dependencies=[Depends(require_api_key)])
-async def households(request: Request) -> dict[str, Any]:
-    """Every household the demo can be switched to.
+@app.get("/households")
+async def households(
+    request: Request, user: Annotated[User, Depends(current_user)]
+) -> dict[str, Any]:
+    """The households **this user** may switch to — their memberships, and nothing else.
 
-    **The one query that is not household-scoped**, because it is the query you ask before you have
-    a household to scope to. It returns ids and labels and nothing else: no balances, no decisions,
-    nothing an id alone should buy. Everything past this point goes through the repository and RLS.
+    It has no path `household_id` to authorize against, so unlike every other route it does not use
+    `authorize_household`; it resolves the caller's memberships directly and lists only those
+    (identity rung, KTD-2). A single-membership user sees one; the reviewer (a member of every demo
+    household) still sees the picker. It returns ids and labels and nothing an id alone should buy.
 
-    Any API key may list, and select, any household. That is a demo posture and `USERS.md` §1 says
-    so plainly — these households are synthetic and have no owner to authenticate as. Clerk arrives
-    with Plaid, and the IDOR suite is real in the meantime, which is worth exactly as much as the
-    identity feeding it.
+    This is the cutover from the old posture, where any shared key could list — and select — *every*
+    household (`tests/test_idor.py`'s standing caveat). A non-member household is now simply not in
+    the list, and is `403`'d if named directly.
     """
+    allowed = households_for(request, user)
     with request.app.state.db.connect() as conn:
-        found = readpath.list_households(conn)
+        found = readpath.list_households(conn, only=allowed)
 
     return {"households": [{"id": h.id, "archetype": h.archetype, "label": h.label} for h in found]}
 
 
-@app.get("/households/{household_id}/decisions", dependencies=[Depends(require_api_key)])
-async def decisions(request: Request, household_id: HouseholdId) -> Any:
-    """The served window, newest first — the order the feed reads in."""
+@app.get("/households/{household_id}/decisions")
+async def decisions(
+    repo: Annotated[Repository, Depends(authorize_household)],
+) -> Any:
+    """The served window, newest first — the order the feed reads in.
+
+    `authorize_household` has already verified the session and confirmed membership; it yields a
+    scoped repository, so the household id in the path is now an *authorized selector*, not a
+    trusted assertion (KTD-2). A valid session naming a non-member household never reaches here.
+    """
     try:
-        window = _window(request, household_id)
+        window = readpath.load_window(repo, PostgresSnapshotStore(repo.conn))
     except readpath.NoSuchHousehold:
-        return no_household(household_id)
+        return no_household(repo.household_id)
 
     return {
         "window": {
@@ -383,8 +400,8 @@ async def decisions(request: Request, household_id: HouseholdId) -> Any:
     }
 
 
-@app.get("/households/{household_id}/spend", dependencies=[Depends(require_api_key)])
-async def spend(request: Request, household_id: HouseholdId) -> Any:
+@app.get("/households/{household_id}/spend")
+async def spend(repo: Annotated[Repository, Depends(authorize_household)]) -> Any:
     """What the household spends, and what their cards are about to take.
 
     **Every card, and this household's.** Ticket `0031` — the route that used to read the committed
@@ -412,12 +429,11 @@ async def spend(request: Request, household_id: HouseholdId) -> Any:
     totals below are sums of money and never of dates.
     """
     try:
-        with repository(request.app.state.db, household_id) as repo:
-            surface = readpath.load_spend_surface(repo, PostgresSnapshotStore(repo.conn))
+        surface = readpath.load_spend_surface(repo, PostgresSnapshotStore(repo.conn))
     except readpath.NoSuchHousehold:
-        return no_household(household_id)
+        return no_household(repo.household_id)
     except readpath.NoSpendProjection:
-        return no_spend_projection(household_id)
+        return no_spend_projection(repo.household_id)
 
     return {
         "as_of": surface.as_of.isoformat(),
@@ -483,11 +499,10 @@ def _card_spend_json(card: CardObligations, projection: SpendProjection) -> dict
     }
 
 
-@app.get(
-    "/households/{household_id}/decisions/{day}/explain",
-    dependencies=[Depends(require_api_key)],
-)
-async def explain_decision(request: Request, household_id: HouseholdId, day: str) -> Any:
+@app.get("/households/{household_id}/decisions/{day}/explain")
+async def explain_decision(
+    repo: Annotated[Repository, Depends(authorize_household)], day: str
+) -> Any:
     """Why the engine did what it did on `day`, in plain language. No LLM in this path.
 
     This is the whole of R4. `engine/explain.py` already turns the decision's reason codes
@@ -510,8 +525,7 @@ async def explain_decision(request: Request, household_id: HouseholdId, day: str
     except ValueError:
         return no_record(day)
 
-    with repository(request.app.state.db, household_id) as repo:
-        record = readpath.decision_on(repo, PostgresSnapshotStore(repo.conn), when)
+    record = readpath.decision_on(repo, PostgresSnapshotStore(repo.conn), when)
 
     if record is None:
         return no_record(day)
@@ -543,8 +557,12 @@ class AssistantRequest(BaseModel):
     history: list[Turn] = Field(default_factory=list, max_length=40)
 
 
-@app.post("/assistant/message", dependencies=[Depends(require_api_key)])
-async def assistant_message(body: AssistantRequest, request: Request) -> Any:
+@app.post("/assistant/message")
+async def assistant_message(
+    body: AssistantRequest,
+    request: Request,
+    user: Annotated[User, Depends(current_user)],
+) -> Any:
     """A follow-up question about a decision. The only path in the service that costs money.
 
     The reply is whatever survives the verification guard (`backend/assistant.py`) — a
@@ -552,11 +570,23 @@ async def assistant_message(body: AssistantRequest, request: Request) -> Any:
     says which, so the client can render a caught hallucination and a timeout differently
     even when their copy reads alike.
 
-    The window is loaded **scoped**, and handed to the model as the only decisions that exist.
-    That is the same guarantee the guard already gives one level down — the model may not assert a
-    figure it did not fetch — arriving one level up: it cannot fetch another household's figure to
-    assert in the first place.
+    **The household id is in the body, not the path**, so `authorize_household` (which reads a Path
+    param) cannot gate it — this route authorizes it by hand instead. Before the cutover this was
+    the *other* caller-trusted household id: a valid session could name any household in the body
+    and read its decisions. Now the id must be in the caller's memberships, or it is refused exactly
+    as a path id would be — otherwise it would be the one un-fixed IDOR after cutover (KTD-2).
+
+    The window is loaded **scoped**, and handed to the model as the only decisions that exist. That
+    is the same guarantee the guard already gives one level down — the model may not assert a figure
+    it did not fetch — arriving one level up: it cannot fetch another household's figure to assert
+    in the first place.
     """
+    if body.household_id not in households_for(request, user):
+        # A 403 indistinguishable from any other non-member refusal, exactly as authorize_household
+        # gives on a path id: naming a household you do not belong to reveals nothing about whether
+        # it exists. This closes the body-id IDOR the cutover would otherwise leave.
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your household.")
+
     try:
         window = _window(request, body.household_id)
     except readpath.NoSuchHousehold:

@@ -71,21 +71,20 @@ def current_user(
     Order matters: verification happens first and touches no database, so an invalid session is a
     `401` before any row is written. Only a *verified* `stytch_user_id` reaches provisioning.
     """
+    # One 401, identical for an absent header and an invalid token: a caller who guesses wrong
+    # learns nothing about whether they guessed at all (the property `backend/auth.py` held).
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing or invalid session.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     if credentials is None or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing bearer session token.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise unauthorized
 
     try:
         stytch_user_id, claims = verifier(credentials.credentials)
     except stytch.StytchVerificationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired session.",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise unauthorized from exc
 
     engine = request.app.state.db
     with engine.connect() as conn, conn.begin():

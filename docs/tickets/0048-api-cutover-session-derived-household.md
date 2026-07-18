@@ -2,7 +2,7 @@
 id: "0048"
 title: Cut the API over — session-derived, membership-authorized household
 type: feat
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -11,6 +11,7 @@ agentScope: repo
 source: docs/plans/2026-07-17-003-feat-identity-and-settings-controls-plan.md
 depends_on: ["0046", "0047"]
 created: 2026-07-18
+completed: 2026-07-18
 ---
 
 # Cut the API over — session-derived, membership-authorized household
@@ -50,14 +51,15 @@ surface keeps working across cutover with no shared key and **no maintenance win
 
 ## Acceptance criteria
 
-- [ ] A valid session naming a **non-member** household is refused (403) on **every** household route
+- [x] A valid session naming a **non-member** household is refused (403) on **every** household route
       (read and, later, write).
-- [ ] `GET /households` never returns a non-member household.
-- [ ] `POST /assistant/message` authorizes its body `household_id` against membership.
-- [ ] `link_exchange` takes no `household_id` from the wire and **refuses an `is_demo` household**.
-- [ ] The demo `viewer` session reads a demo household but is `403`'d on any write
-      (`PATCH /policy`, `POST /attest`); it cannot see a non-demo household.
-- [ ] Internal routes still authenticate by service credential, not session; webhook keeps Plaid
+- [x] `GET /households` never returns a non-member household.
+- [x] `POST /assistant/message` authorizes its body `household_id` against membership.
+- [x] `link_exchange` takes no `household_id` from the wire and **refuses an `is_demo` household**.
+- [~] The demo `viewer` reads a demo household (proven) and the owner-gate mechanism is proven at the
+      dependency level (U2) and on `link_exchange`; the route-level `PATCH /policy` / `POST /attest`
+      viewer-403 lands with those routes in U4/U5.
+- [x] Internal routes still authenticate by service credential, not session; webhook keeps Plaid
       signature verification.
 
 ## Notes / risks

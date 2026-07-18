@@ -98,15 +98,28 @@ _LABELS = {
 }
 
 
-def list_households(conn: Connection) -> list[Household]:
-    """Every household, for the switcher.
+def list_households(conn: Connection, only: list[str] | None = None) -> list[Household]:
+    """The households in `only` (a caller's memberships), for the switcher — or every household.
 
-    Deliberately **not** scoped: it is the one query that cannot be, because it is the query you
-    ask *before* you have a household to scope to. It returns ids and labels and nothing else —
-    no balances, no decisions, nothing that an id alone should not buy you. Everything past this
-    point goes through the repository and RLS.
+    Not RLS-scoped: `households` is the tenant registry, the one table you read *before* you have a
+    household to scope to. Isolation is applied here instead by `only`, the caller's membership set
+    resolved in `GET /households` (identity rung, KTD-2) — the route never passes an id the session
+    did not earn. `only=None` keeps the unfiltered listing for internal callers (the seeder, the
+    nightly poll) that enumerate every household by design. An **empty** `only` returns nothing — a
+    user with no memberships sees no households, which is the correct answer, not "all of them".
+
+    It returns ids and labels and nothing else — no balances, no decisions, nothing that an id alone
+    should not buy you. Everything past this point goes through the repository and RLS.
     """
-    rows = conn.execute(text("SELECT id, archetype FROM households ORDER BY id")).all()
+    if only is None:
+        rows = conn.execute(text("SELECT id, archetype FROM households ORDER BY id")).all()
+    elif not only:
+        return []
+    else:
+        rows = conn.execute(
+            text("SELECT id, archetype FROM households WHERE id = ANY(:ids) ORDER BY id"),
+            {"ids": only},
+        ).all()
     return [Household(household_id=r.id, archetype=r.archetype) for r in rows]
 
 

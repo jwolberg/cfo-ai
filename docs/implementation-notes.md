@@ -2396,3 +2396,29 @@ is `docs/tickets/NNNN-slug.md`, and the harness ticket tool is scoped to a diffe
 - Full suite: **681 passed, 6 skipped** (the 6th is the new loud Stytch-sandbox JWKS gate — no creds
   here). `test_identity_deps.py` proves the decode path against a generated RSA keypair (no network),
   so "rejected before any DB touch" is exercised, not asserted.
+
+### U3 / 0048 — API cutover to session-derived, membership-authorized household (done 2026-07-18)
+- **Every household route now hangs on `authorize_household`** (yielding the scoped repo), so the
+  path id is an authorized selector, not a trusted assertion. `GET /households` scopes its listing to
+  the caller's memberships (`readpath.list_households(only=...)`; empty membership → empty list, not
+  "all"). `POST /assistant/message` authorizes its *body* id by hand — the other IDOR the plan named.
+- **Semantic change, deliberate and flagged:** a non-member household (which includes a nonexistent
+  one) is now **403**, indistinguishable from "doesn't exist" (KTD-2). It used to be 404. Updated the
+  existing `TestAnUnknownHousehold` → `TestANonMemberHousehold` accordingly. A *member* whose
+  household has no data still gets 404 (readpath.NoSuchHousehold). 401 (no session) precedes 403, so
+  existence can't be probed by an unauthenticated caller.
+- **The shared key is retired, not demoted.** `expected_key()` left the lifespan; nothing wires
+  `require_api_key` any more. Replaced the startup gate with `assert_stytch_secret_safe_at_rest()`.
+  `auth.py` keeps its constants + a retirement note. The "missing API key stops startup" test became
+  "a missing shared key no longer stops startup" + a new "live Stytch env is refused" test (wired,
+  driven through the real lifespan).
+- **link_exchange dropped `household_id` from the wire** and derives the caller's single non-demo
+  owned household: 0 or >1 → 409 (the ambiguity the deferred Link UI resolves), an is_demo-only user
+  → 403 (a real item can't touch the demo plane), a viewer → 403. Direct fix to the rung's premise.
+- **401s are indistinguishable** (missing vs invalid session return one identical body) — preserved
+  the property the shared-key gate had.
+- New `tests/test_route_authz.py`: the valid-but-non-member refusal on every route, membership-scoped
+  listing, and the demo viewer reading a demo household. Full suite **696 passed, 6 skipped**.
+- **Owner-gated write refusal (PATCH /policy, POST /attest) is asserted at the dep level in U2's
+  tests** but the routes themselves land in U4/U5 — the route-level viewer-write-403 test lands with
+  them.
