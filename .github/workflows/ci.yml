@@ -123,9 +123,9 @@ jobs:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/cfo_ai_test
         run: |
           set -euxo pipefail
-          alembic upgrade head
-          alembic downgrade base
-          alembic upgrade head
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
 
   mobile:
     runs-on: ubuntu-latest
