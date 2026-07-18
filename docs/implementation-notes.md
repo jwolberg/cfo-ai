@@ -2521,3 +2521,39 @@ outside the repo; never committed/logged). **4 passed.**
   attestation writes land and are attributed to the real user id (audited); two real users mutually
   invisible. Without creds it skips loudly (CI: 4 skipped) — so CI proves it *can* run, prod proves it
   *did*. Full suite: **731 passed, 10 skipped** (no creds); gate **4 passed** (with creds).
+
+### 0056 — the live-assembly path: BUILT (2026-07-18)
+Closes the named live-assembly Prerequisite of the identity rung (and, before it, the sweep rung) —
+the honest close of the `[~]` shadow caveats in `0049`/`0050`. A write now changes the next decision.
+
+- **Scope decision (asked, answered "seam + guarded route").** No linked household exists yet, and a
+  seeded demo household's `History` is **not persisted** (`seed.py` generates it in-memory and stores
+  only decisions/snapshots/the spend projection), so a demo household *cannot* be re-assembled from
+  rows — and re-serving one through a live decode would re-grade the shipped engine. So this builds
+  the pure seam and a guarded route; its first real consumer arrives with the deferred Link rung.
+- **The change to the engine path is exactly one parameter.** `walk()` gains `attested: bool = True`,
+  threaded into each day's `assemble_snapshot`. The three simulation callers (`build`/`replay`/seeder)
+  keep the default, so the regression oracle is byte-identical — asserted directly
+  (`test_livepath.py::TestTheDefaultPreservesTheOracle`) and by the 96 unchanged `test_precompute`/
+  `test_spend` cases. `assemble_snapshot` stays pure; the live values are *passed in*, as
+  `sweeps_in_flight` already is.
+- **The seam** (`backend/livepath.py`): `live_decision(repo, history, today)` reads
+  `Repository.policy()` → `UserPolicy` and `attested_for(repo)` → bool, walks the history with those,
+  returns the `today` `WalkDay`. `served_record()` was lifted out of `build()` so the `WalkDay →
+  DayRecord` mapping is shared, not a third copy. `today = history.end` (the last day with data), so
+  the decision is deterministic — no wall clock.
+- **Whose history? Deferred, honestly.** `backend/plaid/__init__.py` says ingest "stops one seam short
+  of `assemble_snapshot()`" — there is no `plaid_transactions` → `History` adapter yet. So
+  `linked_history(repo)` is a stub that raises `NoLinkedHistory`, and the route `409`s `no_linked_data`
+  until it lands. `live_decision` takes the `History` as an input precisely so that day only
+  `linked_history` changes.
+- **The route** `GET /households/{id}/live-decision` is guarded: a **frozen** demo household `409`s
+  `frozen_household` (→ `/decisions`); a **linked** one `409`s `no_linked_data`. Discriminated by
+  `Repository.archetype()` (a `NULL` archetype is a linked household; `households` has no RLS so a
+  scoped repo reads it).
+- **Verification.** All four ACs proven against the real engine/walk/livepath (only the Postgres repo
+  stubbed, since there is no local DB): high `buffer_floor` REFUSEs where low SWEEPs on the same day;
+  unattested REFUSEs `CARD_COVERAGE_INCOMPLETE` where attested SWEEPs; an `UNMATCHED_PAYMENT` REFUSEs
+  even with a current attestation (the override holds). The 7 DB-backed tests in `test_livepath.py`
+  skip locally (no Postgres) and run on CI's fresh-migrated DB. Full suite **442 passed, 306 skipped**;
+  ruff clean.

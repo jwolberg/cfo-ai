@@ -47,6 +47,21 @@ class Repository:
     def cards(self) -> list[dict[str, Any]]:
         return self._all("SELECT * FROM cards WHERE household_id = :h ORDER BY id")
 
+    def archetype(self) -> str | None:
+        """This household's archetype, or `None` for a real (linked) household — the column's own
+        meaning (`backend/readpath.py:Household.label`). The live-assembly path (ticket 0056) reads
+        it to tell a **frozen** seeded demo household, served from stored snapshots, from a
+        **linked** one that must be re-decided from its current policy and attestation.
+
+        Readable under the scoped repo because `households` carries no RLS — it is the tenant
+        registry (`add_plaid_item`'s note), the one table read before there is a household to scope
+        to. A `None` return is a **linked** household (or, before `authorize_household` has run, a
+        missing one); the live route only reaches here past membership authorization, so there the
+        household exists and `None` means linked.
+        """
+        rows = self._all("SELECT archetype FROM households WHERE id = :h")
+        return rows[0]["archetype"] if rows else None
+
     def policy(self) -> dict[str, Any] | None:
         """The current guardrails — the **latest** `policy_events` row for this household (KTD-6).
 
