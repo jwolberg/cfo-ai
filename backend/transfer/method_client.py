@@ -33,9 +33,23 @@ BASE_URLS = {
     "production": "https://production.methodfi.com",
 }
 
+# Pin the API version so a Method-side default change can't silently reshape a response under us.
+# (Method's own examples send this header; the value is the dated version the client was built to.)
+METHOD_VERSION = "2026-03-30"
+
 
 class MethodConfigError(RuntimeError):
     """The client was asked for an environment that does not exist."""
+
+
+class MethodApiError(RuntimeError):
+    """A non-2xx from Method, carrying the **response body** — Method explains a 400 in the body
+    (`{success:false, message:…}`), and `raise_for_status` throws that away. Surfacing it is the
+    difference between a diagnosable smoke run and a bare status code."""
+
+    def __init__(self, status_code: int, method: str, url: str, body: str) -> None:
+        self.status_code = status_code
+        super().__init__(f"{status_code} {method} {url} — {body}")
 
 
 class MethodHttpClient:
@@ -61,7 +75,10 @@ class MethodHttpClient:
         # `transport` is a test seam (an `httpx.MockTransport`); None in production is the network.
         self._http = httpx.Client(
             base_url=base_url,
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Method-Version": METHOD_VERSION,
+            },
             timeout=timeout,
             transport=transport,
         )
@@ -111,11 +128,68 @@ class MethodHttpClient:
 
     def ping(self) -> int:
         """A cheap authenticated read (`GET /entities`) — a connectivity/auth check. Returns the
-        HTTP status; raises `httpx.HTTPStatusError` on 4xx/5xx so a bad key surfaces as a 401, not
-        a silent empty list."""
+        HTTP status; raises `MethodApiError` (with the body) on 4xx/5xx so a bad key surfaces as a
+        401 with Method's reason, not a silent empty list."""
         resp = self._http.get("/entities")
-        resp.raise_for_status()
+        if resp.is_error:
+            raise MethodApiError(
+                resp.status_code, resp.request.method, str(resp.request.url), resp.text
+            )
         return resp.status_code
+
+    # --- dev fixtures: build a payable entity → source → destination ----------------
+    #
+    # A payment needs a platform `source` and a card `destination`, and neither exists on a fresh
+    # account. In **dev** (mocked) these can be built from the API: create an entity, attach an ACH
+    # account as the source, and run Connect to *discover* the entity's liability accounts (a
+    # liability cannot be created directly — "case-by-case, contact your CSM" — but Connect surfaces
+    # the mocked ones dev seeds). Harmless in any env; only the smoke script/gate call them.
+
+    def create_entity(self, *, first_name: str = "Test", last_name: str = "Payer") -> str:
+        """`POST /entities` — a minimal individual. Returns the entity id (`ent_…`)."""
+        data = _data(
+            self._http.post(
+                "/entities",
+                json={
+                    "type": "individual",
+                    "individual": {"first_name": first_name, "last_name": last_name},
+                },
+            )
+        )
+        return data["id"]
+
+    def create_ach_source(
+        self, *, holder_id: str, routing: str, number: str, account_type: str = "checking"
+    ) -> str:
+        """`POST /accounts` with an `ach` block — a depository account to pay FROM. Returns
+        `acc_…`."""
+        data = _data(
+            self._http.post(
+                "/accounts",
+                json={
+                    "holder_id": holder_id,
+                    "ach": {"routing": routing, "number": number, "type": account_type},
+                },
+            )
+        )
+        return data["id"]
+
+    def connect_entity(self, entity_id: str) -> list[str]:
+        """`POST /entities/{id}/connect` — discover the entity's liability accounts. Returns the
+        `accounts` array (the `acc_…` ids Connect found), which is empty for an entity dev seeds no
+        liabilities for."""
+        data = _data(self._http.post(f"/entities/{entity_id}/connect", json={}))
+        return list(data.get("accounts", []))
+
+    def list_accounts(self) -> list[dict[str, Any]]:
+        """`GET /accounts` — every account on the API key. Used to reuse a source/destination that
+        already exists rather than minting a new one each run."""
+        return list(_data(self._http.get("/accounts")))
+
+    def get_account(self, account_id: str) -> dict[str, Any]:
+        """`GET /accounts/{id}` — one account, to read its `type` (a payment destination must be a
+        `liability`)."""
+        return _data(self._http.get(f"/accounts/{account_id}"))
 
     def close(self) -> None:
         self._http.close()
@@ -129,8 +203,12 @@ class MethodHttpClient:
 
 def _data(resp: httpx.Response) -> Any:
     """The `data` out of Method's `{success, data, message}` envelope — or the flat body if a
-    response is not wrapped. Raises on a non-2xx first, so an error body never reads as data."""
-    resp.raise_for_status()
+    response is not wrapped. Raises `MethodApiError` (with the body) on a non-2xx first, so an error
+    body never reads as data and the vendor's explanation is never swallowed."""
+    if resp.is_error:
+        raise MethodApiError(
+            resp.status_code, resp.request.method, str(resp.request.url), resp.text
+        )
     body = resp.json()
     if isinstance(body, dict) and "data" in body:
         return body["data"]

@@ -13,7 +13,11 @@ import json
 import httpx
 import pytest
 
-from backend.transfer.method_client import MethodConfigError, MethodHttpClient
+from backend.transfer.method_client import (
+    MethodApiError,
+    MethodConfigError,
+    MethodHttpClient,
+)
 
 
 def _client(handler) -> MethodHttpClient:
@@ -116,9 +120,12 @@ def test_simulate_posts_status_to_the_dev_endpoint() -> None:
     assert seen["body"] == {"status": "posted"}
 
 
-def test_a_4xx_raises_rather_than_returning_a_bad_body() -> None:
+def test_a_4xx_raises_with_the_response_body() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"success": False, "message": "unauthorized"})
 
-    with _client(handler) as client, pytest.raises(httpx.HTTPStatusError):
+    with _client(handler) as client, pytest.raises(MethodApiError) as exc:
         client.ping()
+    # The vendor's explanation is carried, not thrown away — a 401 shows *why*.
+    assert exc.value.status_code == 401
+    assert "unauthorized" in str(exc.value)
