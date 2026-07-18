@@ -76,6 +76,35 @@
                padding-left: 1.15rem; }
   .lede-list li { margin: 0 0 0.6rem; padding-left: 0.15rem; }
   .lede-list li::marker { color: var(--go-rule); }
+
+  /* --- the dated updates log (header) ----------------------------------- */
+  /* Updates group three deep: by date, then by category within a date, then the change itself.
+     A date is a small ruled header (a mini section divider); a category is a mono kicker in the
+     --kicker voice; each change hangs off a faint left rule so the grouping reads at a glance. */
+  .updates { margin: 0 0 1.5rem; }
+  .update-day { margin: 0 0 1.9rem; }
+  .update-day:last-child { margin-bottom: 0; }
+  .update-date {
+    font: 700 .78rem/1 var(--mono);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--go-bar);
+    margin: 0 0 1.1rem;
+    padding-bottom: .55rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .update-item { margin: 0 0 1.1rem; padding-left: 1rem; border-left: 2px solid var(--rule); }
+  .update-item:last-child { margin-bottom: 0; }
+  .update-cat {
+    display: block;
+    font: 600 .7rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--kicker);
+    margin-bottom: .45rem;
+  }
+  .update-item p { margin: 0; font-size: 1rem; line-height: 1.55; color: var(--muted); max-width: 62ch; }
+  .update-item p strong, .update-item p b { color: var(--ink); font-weight: 600; }
   .thesis {
     border-left: 4px solid var(--stop);
     padding: .3rem 0 .3rem 1rem;
@@ -372,28 +401,65 @@
     Status as of 18 July 2026. Where each piece of the path from a bank login to money actually
     moving stands today:
   </p>
-  <ul class="lede-list">
-    <li><strong>The core is built and deployed</strong> &mdash; the decision engine, the database,
-      the API, and the app &mdash; and the harness that measures it is live too: a grader that scores
-      each decision against what actually happened, still running only on synthetic data.</li>
-    <li>The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook
-      doorbell, and a cursored sync that lands transactions in a table &mdash; is <b>built and proven
-      end-to-end against Plaid Sandbox</b>, but not deployed.</li>
-    <li>What still stands between a real bank login and a decision is the <b>recurring-event
-      detector</b> (it needs real data to build against).</li>
-    <li>The <b>payment rail</b> that moves the money is <b>built in shadow</b> &mdash; a two-leg
-      design (ACH debit, then a card payoff) behind a provider port &mdash; but it <b>moves
-      nothing</b>: the saga runs and writes its ledger while <code>submit()</code> is a logged no-op,
-      not yet proven against the live vendor sandboxes.</li>
-    <li><b>New &mdash; identity, and the first write path.</b> A <b>verified user (Stytch)</b>, a
-      <b>membership graph</b> that scopes every route to the households a user may touch, and the
-      product&rsquo;s <b>first user-driven writes</b> &mdash; a settings screen for the guardrails and
-      the card-completeness attestation that clears the engine&rsquo;s money-gate &mdash; are now
-      <b>built</b>. The backend is proven against a real Postgres; the baked shared key is retired.
-      Not yet deployed: it needs a Stytch project wired and the demo&rsquo;s read-only session baked
-      in, and the customer sign-in and bank-link flow are the next rung. Still no real money and no
-      real bank.</li>
-  </ul>
+  <p class="lede" style="margin-bottom:1rem">
+    <strong>The core is built and deployed</strong> &mdash; the decision engine, the database, the
+    API, and the app &mdash; and the harness that measures it is live too: a grader that scores each
+    decision against what actually happened, still running only on synthetic data. What still stands
+    between a real bank login and a decision is the <b>recurring-event detector</b> (it needs real
+    data to build against).
+  </p>
+
+  <div class="updates">
+    <div class="update-day">
+      <h3 class="update-date">18 July 2026</h3>
+      <div class="update-item">
+        <span class="update-cat">Identity &amp; access</span>
+        <p>A <b>verified user (via Stytch)</b> and a <b>membership graph</b> that scopes every route to
+           the households a user may touch: every route now <b>authorizes the household against
+           membership</b>, and the baked shared key is retired. Built and proven against a real
+           Postgres &mdash; not yet deployed (it needs a Stytch project wired and the demo&rsquo;s
+           read-only session baked in).</p>
+      </div>
+      <div class="update-item">
+        <span class="update-cat">Customer controls &middot; first write path</span>
+        <p>The product&rsquo;s <b>first user-driven writes</b> &mdash; a settings screen for the
+           guardrails and the card-completeness attestation that clears the engine&rsquo;s
+           money-gate &mdash; are now <b>built</b>, each append-only and audited. Customer sign-in and the bank-link flow are the next rung.</p>
+      </div>
+    </div>
+
+    <div class="update-day">
+      <h3 class="update-date">17 July 2026</h3>
+      <div class="update-item">
+        <span class="update-cat">Ingest &middot; Plaid transport</span>
+        <p>The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook
+           doorbell, and a cursored sync that lands transactions in a table &mdash; is <b>built and
+           proven end-to-end against Plaid Sandbox</b>, but not deployed.</p>
+      </div>
+      <div class="update-item">
+        <span class="update-cat">Act &middot; payment rail</span>
+        <p>The <b>payment rail</b> that moves the money is <b>built in shadow</b> &mdash; a two-leg
+           design behind a single <code>TransferProvider</code> port. The <b>debit leg</b> pulls the
+           surplus from checking over ordinary ACH (<b>Plaid Transfer</b>, debiting the item the
+           ingest rung already linked; <b>Increase</b> is the swappable backup, ADR-0007). The
+           <b>payoff leg</b> lands that money on a card at someone else&rsquo;s issuer &mdash; which
+           plain ACH cannot route &mdash; through a biller-payoff API (<b>Method</b>, which reaches
+           any issuer). But the rail <b>moves nothing</b>: the saga runs and writes its ledger while
+           <code>submit()</code> is a logged no-op, not yet proven against the live Plaid Transfer,
+           Increase, and Method sandboxes.</p>
+      </div>
+    </div>
+
+    <div class="update-day">
+      <h3 class="update-date">14 July 2026</h3>
+      <div class="update-item">
+        <span class="update-cat">Core &middot; first live release</span>
+        <p>The first release: the <b>deterministic decision engine</b>, the API, and the customer
+           <b>app</b> &mdash; published live to Firebase Hosting so the product had a link. Graded
+           against synthetic household data.</p>
+      </div>
+    </div>
+  </div>
   <p class="lede">
     This is a few days into a large, complex build, and the scope ahead is almost
     certainly bigger than what stands today. Read this as real progress on the hard middle, not as a
@@ -428,26 +494,16 @@
 <div class="callout go" style="margin-top:0">
   <p>Built and deployed at <strong><a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a>.</strong>
   Two screens of the customer app and the explain modal, running live against the API and the
-  database &mdash; and, in code, the app&rsquo;s <b>first write screens</b> (settings and card
-  attestation) behind a real Stytch session, not yet deployed. The <b>payment rail</b> (the
-  sweep-execution rung) is <b>built in shadow</b> behind a provider port, but <b>no mechanism for
-  moving real funds is turned on</b>: <code>submit()</code> is a logged no-op, there is no Plaid
-  link, and no live vendor call. Everything below the API is real and runs; nothing yet touches an
-  actual bank account.</p>
+  database.</p>
   <p>Codebase: <a href="https://github.com/jwolberg/cfo-ai">github.com/jwolberg/cfo-ai</a>
   is private, so the repository links on this page need access assigned.</p>
 </div>
 
 <p class="lede" style="margin:1.5rem 0">
-  The path from the bank connection to the money actually moving. The core in the middle which
-  decides, stores, serves, and the customer-facing app is built and deployed. <b>The ends are
-  not deployed,</b> and the reason differs at each: one is the next problem, the other &mdash;
-  moving money &mdash; was deliberately unchosen and is now <b>built in shadow</b> (the two-leg rail
-  below), moving nothing until it is proven against the live vendors and turned on.
-  Below those, the additional surfaces a live money-moving service will need &mdash; onboarding, an
-  operator console, and observability &mdash; are scoped here but not yet built. The customer
-  <b>controls</b> (settings and the card attestation) and the <b>identity</b> beneath them are now
-  built in code, not yet live.
+  The same path, as a map: from the bank connection down to the money actually moving, plus the
+  operator and observability surfaces a live money-moving service needs beneath it. The dated log
+  above is the narrative &mdash; here each box says where that piece stands, drawn by <b>shape, not
+  colour</b>, per the legend:
 </p>
 
 <div class="legend">
@@ -634,14 +690,22 @@
     <div class="lane-label">Act</div>
     <div class="lane-boxes">
       <div class="box proven">
-        <span class="tag">Plaid Transfer · shadow</span>
+        <span class="tag">Plaid Transfer / Increase · shadow</span>
         <h3>Debit leg &mdash; built in shadow</h3>
-        <p>Pull the surplus from checking into a funding account <em>we</em> hold (<b>Plaid
+        <p>Pull the surplus from checking into the funding account <em>we</em> hold (<b>Plaid
            Transfer</b>, debiting the item already linked; Increase is a backup &mdash; ADR-0007).
            The saga, ledger, and idempotency guard are built and tested; <code>submit()</code> moves
            nothing. Default timing is <b>wait-for-clear</b>: the payoff waits for this debit to
-           settle. Holding money in transit is an <b>FBO commitment</b> (Reg E, reconciliation,
-           likely an MTL), gated behind turning it on.</p>
+           settle.</p>
+      </div>
+      <div class="box proven">
+        <span class="tag">FBO · shadow</span>
+        <h3>Funding account &mdash; the FBO</h3>
+        <p>The custodial account the money <b>transits</b>: the debit lands here, the payoff pays the
+           card <em>from</em> it (Method&rsquo;s source must be a platform account &mdash; a
+           user&rsquo;s checking cannot be). Platform-owned, one per tenant. This is the <b>FBO
+           commitment</b> &mdash; Reg E, reconciliation, likely an MTL &mdash; the heaviest compliance
+           in the system. A live boot <b>refuses to start</b> until it is configured.</p>
       </div>
       <div class="box proven">
         <span class="tag">Method · shadow</span>
@@ -651,12 +715,7 @@
            the same port; unproven against the live sandbox until the hard gate runs, and moving
            nothing until then.</p>
       </div>
-      <div class="box todo">
-        <span class="tag">Not scoped</span>
-        <h3>TreasuryDirect</h3>
-        <p>Sweep idle cash to T-bills &mdash; the &ldquo;invest-more&rdquo; half of the product
-           above. See the note below.</p>
-      </div>
+      
       <div class="box todo">
         <span class="tag">Not built</span>
         <h3>Notifications</h3>
@@ -723,33 +782,26 @@
 </div>
 
 <div class="callout">
-  <p><strong>Both ends are now built in code; neither is live.</strong> <b>Source</b> is the
-  next problem, and it is now partly solved: the <b>Plaid ingest transport is built and proven
+  <p>The <b>Plaid ingest transport is built and proven
   against Sandbox</b> &mdash; token exchange, the webhook doorbell, and cursored sync all land rows
   in a table. What remains is deploying it, a customer link screen, and the piece Sandbox can&rsquo;t
   help build: a <b>recurring-event detector</b> that turns raw transactions into paychecks and bills.
   Without it there are no forecast events, so a linked household would still produce no decision at
   all &mdash; which is why the transport rung deliberately stops one seam short of the forecast.</p>
-  <p><b>Act</b> was unbuilt <em>deliberately</em>, and as of 2026-07-17 it is <b>built in shadow</b>
-  (the sweep-execution rung, U1&ndash;U6). Moving money is two legs, not one. The <b>debit leg</b>
+  <p><b>Act</b>, and as of 2026-07-17 it is <b>built in shadow</b>. Moving money is two legs, not one. The <b>debit leg</b>
   pulls from checking &mdash; ordinary ACH (Increase). The <b>payoff leg</b> has to land that money
   on a card at <em>someone else&rsquo;s</em> issuer, which plain ACH cannot route; the channel that
-  reaches any issuer is a <b>biller-payoff API</b> (Method). Because that API pays only from an
-  account <em>we</em> hold, the design <b>commits to holding funds in transit</b> &mdash; the FBO
-  posture the docs say to avoid, taken on knowingly. The saga, the append-only ledger, the
+  reaches any issuer is a <b>biller-payoff API</b> (Method). Method can only pay the card from an
+  account <em>we</em> hold, so the money must pass <em>through</em> us &mdash; meaning we <b>hold
+  customer funds mid-transfer</b>. That custody role (an <b>FBO</b> account: Reg E, reconciliation,
+  likely an MTL) is exactly what the docs said to avoid, taken on knowingly. The saga, the append-only ledger, the
   idempotency guard, the webhook trust boundary, and the <code>SWEEP_IN_FLIGHT</code> feedback are
   all built and tested. Three honest caveats remain: <b>distribution can still delete the choice</b>
   (embed with a bank or issuer and the partner owns the rail, and the custody); <b>the rail is
   unproven against the live vendors</b> until the sandbox hard gate runs (it skips loudly today); and
   <b>the code moves nothing</b> &mdash; <code>submit()</code> is a logged no-op, and no dollar moves
   until a measured tail-risk number and the compliance posture are both real.</p>
-  <p><strong>On TreasuryDirect.</strong> It is the &ldquo;invest what&rsquo;s freed up&rsquo;&rdquo;
-  half of the product statement, and it appears nowhere in the codebase. One document needs
-  correcting before it is built: <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/prd.md">prd.md</a> &sect;4.2 still lists
-  <b>Investments</b> as explicitly <b>out of scope</b>. It is also a different bet, not an extension
-  of this one &mdash; today&rsquo;s engine ranks a sweep by the debt&rsquo;s interest rate, because
-  paying down a 23% card beats any risk-free yield. Sweeping to T-bills only makes sense once the
-  expensive debt is gone, which is the downstream half the product statement describes.</p>
+  
 </div>
 
 <h3 class="subhead">The deployed tech stack</h3>
