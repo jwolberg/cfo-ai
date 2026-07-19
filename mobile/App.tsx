@@ -156,8 +156,12 @@ export default function App() {
         <Dashboard
           key={`${household}-${feedEpoch}`}
           householdId={household}
+          // A linked household (`archetype === null`, e.g. one created via onboarding and connected
+          // through Plaid) is decided live; a seeded demo household reads the graded feed.
+          linked={households.find((h) => h.id === household)?.archetype === null}
           onExplain={setExplaining}
           onAttest={setAttestFor}
+          onGetStarted={() => setSettingsOpen(true)}
         />
       </View>
       <View style={[styles.screen, tab === 'spending' ? null : styles.hidden]}>

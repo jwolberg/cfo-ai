@@ -142,6 +142,18 @@ export interface DecisionsResponse {
   decisions: Decision[];
 }
 
+/**
+ * `GET /households/{id}/live-decision` — a *linked* household re-decided from its current policy
+ * and attestation (ticket 0056). One decision for `today` (the last day we have Plaid data for),
+ * not a graded window: there is no `summary`/`window` because nothing has been walked over time.
+ * The `decision` itself is the same {@link Decision} shape the feed renders (both come from the
+ * backend's one `decision_json`).
+ */
+export interface LiveDecisionResponse {
+  today: IsoDate;
+  decision: Decision;
+}
+
 export interface ExplainResponse extends Decision {
   /** The engine's own sentences, in order. No LLM was involved in producing these. */
   narration: string[];

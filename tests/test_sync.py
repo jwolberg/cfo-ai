@@ -21,7 +21,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from backend.plaid.deps import get_oidc_verifier, get_plaid_client
-from backend.plaid.sync import run_sync
+from backend.plaid.sync import refresh_item, run_sync
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -293,3 +293,81 @@ class TestTheWorkerRouteIsGatedByOidc:
         assert response.status_code == 200
         assert response.json()["added"] == 1
         assert len(_txn_rows(db, "item-a")) == 1
+
+
+# --- refresh_item: transactions AND the account-state half, composed at the trigger boundary -----
+
+
+class _AccountResp:
+    def __init__(self, d: dict) -> None:
+        self._d = d
+
+    def to_dict(self) -> dict:
+        return self._d
+
+
+class RefreshClient(FakeSyncClient):
+    """Transactions plus a working balance fetch. Liabilities is absent (the Item was linked with
+    only `transactions`), so `/liabilities/get` raises — `ingest_account_state` degrades to
+    balances-only, exactly as in production."""
+
+    def accounts_balance_get(self, request):
+        return _AccountResp(
+            {
+                "accounts": [
+                    {
+                        "account_id": "acct-1",
+                        "name": "Checking",
+                        "official_name": None,
+                        "type": "depository",
+                        "subtype": "checking",
+                        "balances": {
+                            "current": 1000.0,
+                            "available": 950.0,
+                            "iso_currency_code": "USD",
+                        },
+                    }
+                ]
+            }
+        )
+
+    def liabilities_get(self, request):
+        exc = plaid.ApiException(status=400)
+        exc.body = json.dumps(
+            {"error_code": "PRODUCTS_NOT_SUPPORTED", "error_type": "INVALID_INPUT"}
+        )
+        raise exc
+
+
+class BrokenBalanceClient(FakeSyncClient):
+    """Transactions sync fine, but the balance fetch blows up — the fail-soft case."""
+
+    def accounts_balance_get(self, request):
+        raise RuntimeError("plaid balance blip")
+
+
+class TestRefreshItem:
+    def test_it_syncs_transactions_and_refreshes_balances(self, db, app_engine: Engine) -> None:
+        _arrange_item(db, "alice", "item-a")
+        client = RefreshClient({None: _Page(added=[_added("t1")], has_more=False)})
+        result = refresh_item(app_engine, "item-a", client)
+        assert (result.sync.status, result.sync.added) == ("ok", 1)
+        assert (result.accounts.status, result.accounts.accounts) == ("ok", 1)
+        assert result.accounts.liabilities == 0, "liabilities absent → balances-only, not a failure"
+        assert len(_txn_rows(db, "item-a")) == 1
+
+    def test_a_balance_failure_is_fail_soft_and_the_transactions_still_land(
+        self, db, app_engine: Engine
+    ) -> None:
+        _arrange_item(db, "alice", "item-a")
+        client = BrokenBalanceClient({None: _Page(added=[_added("t1")], has_more=False)})
+        result = refresh_item(app_engine, "item-a", client)
+        assert result.sync.added == 1, "a balance blip must not fail the transaction sync"
+        assert result.accounts.status == "error"
+        assert len(_txn_rows(db, "item-a")) == 1
+
+    def test_a_failed_sync_skips_the_refresh(self, db, app_engine: Engine) -> None:
+        _arrange_item(db, "alice", "item-a", cursor="c-0")
+        result = refresh_item(app_engine, "item-a", LoginRequiredClient())
+        assert result.sync.status == "login_required"
+        assert result.accounts.status == "login_required", "nothing fresh to read on a failed sync"

@@ -23,6 +23,7 @@ Redelivery is a no-op by construction: a second run from the stored cursor retur
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,9 +38,12 @@ from sqlalchemy.engine import Engine
 from backend.db.repository import Repository, repository
 from backend.db.session import household_scope
 from backend.identity.deps import User, current_user
+from backend.plaid.accounts import IngestResult, ingest_account_state
 from backend.plaid.deps import get_engine, get_oidc_verifier, get_plaid_client
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,21 @@ class SyncResult:
     added: int = 0
     modified: int = 0
     removed: int = 0
+
+
+@dataclass(frozen=True)
+class RefreshResult:
+    """One item brought fully current: its transactions *and* its balances/card terms.
+
+    The two ingests are deliberately separate modules (`sync.py` records what a household *did*,
+    `accounts.py` records what is *true now*), but every trigger wants both — a linked household is
+    undecidable with only one. `refresh_item` composes them at the trigger boundary so no caller
+    can forget the account-state half (the gap that left `/live-decision` unreachable through the
+    web Link flow: it drove only `/transactions/sync`, so `plaid_accounts` never populated).
+    """
+
+    sync: SyncResult
+    accounts: IngestResult
 
 
 class _LoginRequired(Exception):
@@ -165,6 +184,27 @@ def run_sync(engine: Engine, plaid_item_id: str, client: Any) -> SyncResult:
         return SyncResult("login_required")
 
 
+def refresh_item(engine: Engine, plaid_item_id: str, client: Any) -> RefreshResult:
+    """Bring one item fully current: sync its transactions, then refresh its balances/card terms.
+
+    The account-state half is **fail-soft**: transactions are the priority, and a stumble in
+    `/accounts/balance/get` (a Plaid blip, or an Item still warming up) must not fail the sync or,
+    for the poll backstop, poison the whole batch — the balances refresh on the next cycle. This
+    mirrors `ingest_account_state`'s own posture, which already degrades to "balances only" when the
+    `liabilities` product is absent. A transaction sync that itself failed
+    (`login_required`/`unknown_item`) skips the refresh: there is nothing fresh to read.
+    """
+    sync = run_sync(engine, plaid_item_id, client)
+    if sync.status != "ok":
+        return RefreshResult(sync=sync, accounts=IngestResult(sync.status))
+    try:
+        accounts = ingest_account_state(engine, plaid_item_id, client)
+    except Exception:  # noqa: BLE001 — fail-soft: never let the balance refresh fail the sync
+        log.warning("account-state refresh failed for %s; balances not updated", plaid_item_id)
+        accounts = IngestResult("error")
+    return RefreshResult(sync=sync, accounts=accounts)
+
+
 def run_poll(engine: Engine, client: Any) -> list[SyncResult]:
     """Sync every item, for every household, regardless of webhooks — the reconciliation backstop.
 
@@ -180,7 +220,7 @@ def run_poll(engine: Engine, client: Any) -> list[SyncResult]:
     for household_id in household_ids:
         with engine.connect() as conn, household_scope(conn, household_id) as scoped:
             item_ids.extend(Repository(conn=scoped, household_id=household_id).plaid_item_ids())
-    return [run_sync(engine, item_id, client) for item_id in item_ids]
+    return [refresh_item(engine, item_id, client).sync for item_id in item_ids]
 
 
 # --- the two triggers, both behind the OIDC gate ------------------------------------------------
@@ -201,12 +241,15 @@ async def sync_worker(
     plaid_item_id = body.get("plaid_item_id")
     if not plaid_item_id:
         return Response(status_code=status.HTTP_400_BAD_REQUEST)
-    result = run_sync(engine, plaid_item_id, client)
+    refreshed = refresh_item(engine, plaid_item_id, client)
+    result = refreshed.sync
     return {
         "status": result.status,
         "added": result.added,
         "modified": result.modified,
         "removed": result.removed,
+        "accounts": refreshed.accounts.accounts,
+        "liabilities": refreshed.accounts.liabilities,
     }
 
 
@@ -244,11 +287,15 @@ def sync_now(
     household_id = _linkable_household(engine, user)
     with repository(engine, household_id) as repo:
         item_ids = repo.plaid_item_ids()
-    results = [run_sync(engine, plaid_item_id, client) for plaid_item_id in item_ids]
+    results = [refresh_item(engine, plaid_item_id, client) for plaid_item_id in item_ids]
     return {
         "household_id": household_id,
         "items_synced": len(results),
-        "added": sum(r.added for r in results),
-        "modified": sum(r.modified for r in results),
-        "removed": sum(r.removed for r in results),
+        "added": sum(r.sync.added for r in results),
+        "modified": sum(r.sync.modified for r in results),
+        "removed": sum(r.sync.removed for r in results),
+        # The account-state half — the balances and card terms `build_linked_history` reads. Without
+        # these the linked household stays undecidable, which is the gap this route now closes.
+        "accounts": sum(r.accounts.accounts for r in results),
+        "liabilities": sum(r.accounts.liabilities for r in results),
     }

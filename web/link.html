@@ -94,7 +94,8 @@
               log("Syncing transactions…");
               const s = await api("POST", "/plaid/sync/now");
               log(`Sync: ${s.items_synced} item(s), +${s.added} added / ${s.modified} modified / ${s.removed} removed.`, "ok");
-              log("Done — transactions are now in plaid_transactions.", "ok");
+              log(`Balances: ${s.accounts} account(s), ${s.liabilities} card term(s) refreshed.`, "ok");
+              log("Done — transactions in plaid_transactions, balances + card terms in plaid_accounts.", "ok");
             } catch {}
           },
           onExit: (err) => { if (err) log("Link exited: " + JSON.stringify(err), "err"); },

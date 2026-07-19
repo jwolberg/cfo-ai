@@ -2682,3 +2682,78 @@ existed for.
 - Added `Repository.plaid_transactions()` (added-rows reader). Verified vs real Postgres:
   `tests/test_linkedpath.py` (4) — the loop assembles + decides, and refuses on thin data. Full
   suite **777 passed, 10 skipped**; ruff clean.
+
+### Wiring gap: the web Link flow never ingested account state (2026-07-18)
+Found while dogfooding the link→decision loop locally against real Plaid Sandbox (branch off main,
+after #75). `ingest_account_state` — which populates `plaid_accounts`/`plaid_liabilities`, the exact
+rows `build_linked_history` reads — was called from **no route and no worker**, only from
+`tests/test_plaid_accounts.py`. The web page (`web/link.html`) drives only `/plaid/sync/now`, which
+ran `/transactions/sync` alone. So a household linked through the UI got transactions but no
+balances or card terms, and `GET /live-decision` was **unreachable** through the browser flow — it
+needs a depository account to fund from and a card to decide about, and both come from account state.
+
+- **Fix**: added `refresh_item(engine, item, client)` in `backend/plaid/sync.py` — `run_sync` then
+  `ingest_account_state`, composed at the trigger boundary (the two ingests stay separate modules:
+  transactions = what a household *did*, account state = what is *true now*). Routed all three
+  triggers through it: `/sync/now` (the browser path — the required fix), `/sync/worker`, and
+  `run_poll` (so production balances don't go stale either). `/sync/now` and `/sync/worker` now
+  return `accounts`/`liabilities` counts.
+- **Fail-soft**, deliberately: a balance-fetch stumble must not fail the transaction sync or poison
+  the poll batch — balances refresh next cycle. Mirrors `ingest_account_state`'s own liabilities
+  degrade-to-balances-only posture. A failed sync (`login_required`/`unknown_item`) skips the
+  refresh — nothing fresh to read.
+- **Proven**: `tests/test_sync.py::TestRefreshItem` (happy path, fail-soft, skip-on-failed-sync) and
+  `tests/test_link_loop.py` extended to assert accounts + liabilities land. Also verified live: after
+  the fix, `POST /plaid/sync/now` on the real linked household returned `accounts: 12`.
+- **Two follow-ups surfaced, not fixed here** (scope kept to the wiring): (1) the link token
+  requests only `products=[transactions]`, so `/liabilities/get` raises and cards fall back to
+  `apr_source=estimated` — add `liabilities` to the link products for real card terms. (2) A freshly
+  linked household has no `policy_events`, so `/live-decision` returns `no_household` until the owner
+  sets guardrails (`PATCH /policy`) — decide whether linking should seed a default policy.
+
+### Mobile: show a linked household's live decision in the app (2026-07-18)
+Dogfooding follow-on to the link→decision loop. The mobile feed only ever read `GET /decisions`
+(the seeded graded window); nothing consumed `GET /live-decision`, so a linked (Plaid-connected)
+household could not be shown in the app at all. Added the path:
+
+- `mobile/src/api/types.ts`: `LiveDecisionResponse = { today, decision }` (the `decision` is the same
+  `Decision` shape the feed already renders — both come from the backend's one `decision_json`).
+- `mobile/src/api/client.ts`: `getLiveDecision(householdId)`.
+- `mobile/src/screens/Dashboard.tsx`: a `linked` prop selects the source. A linked household fetches
+  `/live-decision` and renders a single `DecisionFeedItem` (reused as-is) — **no hero/paydown/summary**,
+  because those are stats over a graded window a linked household doesn't have. `App.tsx` passes
+  `linked = household.archetype === null`, matching the backend's own gate (`live_decision` 409s a
+  demo/archetype household; `/decisions` 409s a linked one).
+- Verified: `Dashboard.test.tsx` (reads live-decision not the feed, renders the card, no hero) +
+  typecheck; 89 mobile tests pass. Ran end to end in the browser (`expo start --web`) against the
+  local API showing the real Sandbox-linked household `hh_d49bb…`'s refuse decision.
+
+**Known degradations for a linked household (noted, not fixed):** the Spend tab (`/spend`) and the
+"why" explain modal (`/decisions/{day}/explain`) are seeded-only and 404 for a purely-linked
+household — they render their own error states. Live equivalents are follow-ups.
+
+**Dev-auth finding + workaround.** The Stytch `session_jwt` lives exactly **5 minutes** (decoded:
+exp−iat=300s) while the session lasts 3h, and **no refresh mechanism is built** (the "+ refresh"
+half of KTD-4). A token baked into the web bundle 401s after 5 min. For local browsing, added
+`scripts/dev_auth_proxy.py` (dev-only, localhost): re-mints the dogfood JWT and injects
+`Authorization` on every forwarded request, so the browser session never expires. Expo points at the
+proxy (`EXPO_PUBLIC_API_URL=http://localhost:8010`). This same 5-min/no-refresh gap, plus no web
+sign-in (0055 native-only) and the security hole of baking an owner token into a public build, is
+why the **production** goal is blocked — see the deploy discussion, not a code change here.
+
+### The Spend tab, live for a linked household (2026-07-18)
+Dogfooding: the app's Spending tab showed "We couldn't load your spending" for the linked household.
+`GET /spend` (`readpath.load_spend_surface`) reads a persisted `decisions` row + a seeded
+`spend_projection`, neither of which a linked household has → 404. Added the live path, reusing
+exactly what the seeder does (`backend/seed.py:_write_spend_projection`):
+
+- `backend/livepath.py:live_spend(repo, history)` — `live_decision` to today's snapshot, then
+  `derive_spend_projection(history, today, snapshot.portfolio)` + `assemble(snapshot, projection)`.
+  Same `SpendSurface` the seeded path yields. Takes `history` (built once by the route via
+  `linked_history`), mirroring `live_decision`, which also makes it testable with a demo `_history()`.
+- `backend/main.py` `GET /spend`: branches on `repo.archetype() is None` — a linked household gets
+  the live surface, a demo one the frozen surface exactly as before. **No mobile change** (the JSON
+  shape is identical, so `getSpend`/the Spending screen work unchanged).
+- Verified live (`/spend` → 200, 2 Plaid cards with real statement balances + reserves) and by
+  `tests/test_livepath.py::TestLiveSpendSurface`; 42 tests pass in the livepath/spend/linkedpath
+  sweep, ruff clean. The explain-on-tap modal is still seeded-only — a separate follow-up.

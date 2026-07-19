@@ -32,23 +32,34 @@ import {
   View,
 } from 'react-native';
 
-import { ApiError, getDecisions } from '../api/client';
-import type { Decision, DecisionsResponse } from '../api/types';
+import { ApiError, getDecisions, getLiveDecision } from '../api/client';
+import type { Decision, DecisionsResponse, IsoDate } from '../api/types';
 import { DecisionFeedItem, type CoverageRefusal } from '../components/DecisionFeedItem';
-import { formatMoney, formatMoneyRounded } from '../format';
+import { formatDateShort, formatMoney, formatMoneyRounded } from '../format';
 import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, shadow, space, type } from '../theme';
 
 type State =
   | { status: 'loading' }
   | { status: 'ready'; data: DecisionsResponse }
+  // A *linked* household (ticket 0056): one live decision for `today`, no graded window.
+  | { status: 'ready-live'; today: IsoDate; decision: Decision }
   | { status: 'failed'; kind: ApiError['kind'] };
 
 interface Props {
   /** Which household's feed. Owned by `App.tsx` — see its note on why this is not local state. */
   householdId: string;
+  /**
+   * A *linked* household (`archetype === null`) is decided live from its current Plaid data through
+   * `GET /live-decision` — one decision, no window. A seeded/demo household reads the graded feed
+   * (`GET /decisions`). App.tsx knows which from the household's `archetype`, and the backend
+   * enforces the same split (a demo household `409`s live-decision, a linked one `409`s /decisions).
+   */
+  linked?: boolean;
   onExplain: (decision: Decision) => void;
   /** Open Attest from a coverage-incomplete refusal in the feed (ticket 0052). */
   onAttest?: (refusal: CoverageRefusal) => void;
+  /** Open the setup surface (Settings) from a linked household's "get started" status panel. */
+  onGetStarted?: () => void;
 }
 
 /** The list's own top padding, which sits above the hero inside the scrolled content. */
@@ -68,7 +79,7 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
-export function Dashboard({ householdId, onExplain, onAttest }: Props) {
+export function Dashboard({ householdId, linked, onExplain, onAttest, onGetStarted }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
 
@@ -96,7 +107,13 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
     // 0025 exists to avoid — and it is worse than a spinner precisely because it looks fine.
     setState({ status: 'loading' });
     try {
-      setState({ status: 'ready', data: await getDecisions(householdId) });
+      if (linked) {
+        // A linked household has no graded window — just today's live decision from its Plaid data.
+        const live = await getLiveDecision(householdId);
+        setState({ status: 'ready-live', today: live.today, decision: live.decision });
+      } else {
+        setState({ status: 'ready', data: await getDecisions(householdId) });
+      }
     } catch (error) {
       // The timeout lives in the client, not here (`REQUEST_TIMEOUT_MS`), so there is no
       // path to a spinner that spins forever — the request always resolves one way or the
@@ -104,7 +121,7 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
       const kind = error instanceof ApiError ? error.kind : 'network';
       setState({ status: 'failed', kind });
     }
-  }, [householdId]);
+  }, [householdId, linked]);
 
   useEffect(() => {
     void load();
@@ -121,6 +138,18 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
 
   if (state.status === 'failed') {
     return <Unreachable onRetry={load} />;
+  }
+
+  if (state.status === 'ready-live') {
+    return (
+      <LiveDecision
+        today={state.today}
+        decision={state.decision}
+        onExplain={onExplain}
+        onAttest={onAttest}
+        onGetStarted={onGetStarted}
+      />
+    );
   }
 
   const { summary, decisions } = state.data;
@@ -273,6 +302,98 @@ function Empty() {
   );
 }
 
+/**
+ * A linked household's live decision (ticket 0056). It has no graded *window*, so no
+ * interest-avoided/streak rollup and no paydown bar — those summarise days of realized sweeps a
+ * linked household hasn't had yet. In that hero's place sits a **status panel** that tells the
+ * household where they stand instead of showing a hollow $0 reward: either "nothing owed" or "here's
+ * what paying down early could do — get started". Below it, "today" and the single decision card
+ * (which carries the Attest CTA on a coverage refusal, exactly as in the feed).
+ *
+ * The "why" tap (`onExplain`) has no live backend yet — `/decisions/{day}/explain` reads seeded rows
+ * — so tapping opens the modal's own error state; a live explanation is a follow-up.
+ */
+function LiveDecision({
+  today,
+  decision,
+  onExplain,
+  onAttest,
+  onGetStarted,
+}: {
+  today: IsoDate;
+  decision: Decision;
+  onExplain: (decision: Decision) => void;
+  onAttest?: (refusal: CoverageRefusal) => void;
+  /** Open the setup surface (Settings) from the "get started" CTA on the status panel. */
+  onGetStarted?: () => void;
+}) {
+  return (
+    <View style={styles.shell}>
+      <View style={styles.list}>
+        <Text style={styles.greeting}>Your money, working.</Text>
+        <StatusHero decision={decision} onGetStarted={onGetStarted} />
+        <Text style={styles.feedLabel}>Today · {formatDateShort(today)}</Text>
+        <DecisionFeedItem decision={decision} onPress={onExplain} onAttest={onAttest} />
+      </View>
+    </View>
+  );
+}
+
+/**
+ * The status panel that stands in for the reward hero before a household has any realized paydown.
+ * Two states, keyed on whether there is debt to pay down at all:
+ *
+ * - **Nothing owed** — no card is costing them interest. A win worth saying out loud, not a blank.
+ * - **Debt, not yet working** — the opportunity, framed with their real balance, and a CTA into
+ *   setup. This is the honest replacement for a "$0 beaten out of the bank" hero on a just-linked
+ *   household: nothing has swept *yet*, so we point forward instead of celebrating a zero.
+ *
+ * `paid_off` and `debt_balance` come straight off the live decision — no summary needed.
+ */
+function StatusHero({
+  decision,
+  onGetStarted,
+}: {
+  decision: Decision;
+  onGetStarted?: () => void;
+}) {
+  const owesInterest = !decision.paid_off && Number(decision.debt_balance) > 0;
+
+  if (!owesInterest) {
+    return (
+      <View style={styles.heroCard}>
+        <Text style={styles.heroLabel}>Your debt</Text>
+        <Text style={styles.paidOff}>No interest to pay 🎉</Text>
+        <Text style={styles.heroFoot}>
+          Nothing is costing you interest right now. We&apos;ll keep watch and tell you if that
+          changes.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.heroCard}>
+      <Text style={styles.heroLabel}>You could be saving</Text>
+      <Text style={styles.heroValue}>{formatMoney(decision.debt_balance)}</Text>
+      <Text style={styles.heroFoot}>
+        is sitting on high-interest cards. Move spare cash to the priciest one early and you pay less
+        interest — automatically, once you&apos;re set up.
+      </Text>
+      {onGetStarted ? (
+        <Pressable
+          onPress={onGetStarted}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.heroCta, pressed && styles.pressed]}
+          testID="get-started-cta"
+        >
+          <Text style={styles.heroCtaLabel}>Get started</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
 function Unreachable({ onRetry }: { onRetry: () => void }) {
   return (
     <View style={styles.centered}>
@@ -362,6 +483,19 @@ const styles = StyleSheet.create({
   heroLabel: { ...type.label, color: '#8FBFB4' },
   heroValue: { fontSize: 38, fontWeight: '700', color: '#FFFFFF', marginTop: space.xs },
   heroFoot: { ...type.small, color: '#8FBFB4', marginTop: space.xs },
+
+  // The "get started" CTA on the status panel. Blue on the deep-green hero — the one call to action,
+  // set apart from the reversed-out text around it.
+  heroCta: {
+    marginTop: space.lg,
+    minHeight: MIN_TAP_TARGET,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandBlue,
+  },
+  heroCtaLabel: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
 
   paidOff: { ...type.heading, color: '#FFFFFF', marginTop: space.lg },
 

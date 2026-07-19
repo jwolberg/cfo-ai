@@ -18,9 +18,10 @@ import { Dashboard } from './Dashboard';
 jest.mock('../api/client', () => ({
   ...jest.requireActual('../api/client'),
   getDecisions: jest.fn(),
+  getLiveDecision: jest.fn(),
 }));
 
-const { getDecisions } = jest.requireMock('../api/client');
+const { getDecisions, getLiveDecision } = jest.requireMock('../api/client');
 
 function decision(over: Partial<Decision> = {}): Decision {
   return {
@@ -63,7 +64,10 @@ function body(over: Partial<DecisionsResponse> = {}): DecisionsResponse {
   };
 }
 
-beforeEach(() => getDecisions.mockReset());
+beforeEach(() => {
+  getDecisions.mockReset();
+  getLiveDecision.mockReset();
+});
 
 describe('the dashboard', () => {
   it('opens straight onto the decisions — no login, no onboarding', async () => {
@@ -235,5 +239,65 @@ describe('the dashboard', () => {
     await fireEvent.press(screen.getByText('Paid $400.00'));
 
     expect(onExplain).toHaveBeenCalledWith(expect.objectContaining({ date: '2026-05-30' }));
+  });
+});
+
+describe('a linked household (live decision)', () => {
+  const LINKED = 'hh_linked_real';
+
+  it('reads /live-decision, not the graded feed, and renders the single decision card', async () => {
+    getLiveDecision.mockResolvedValue({
+      today: '2026-07-13',
+      decision: decision({
+        date: '2026-07-13',
+        action: 'refuse',
+        amount: '0.00',
+        reason_codes: ['card_behavior_unknown'],
+        reasons: [{ code: 'card_behavior_unknown', text: "We've not yet seen enough statements." }],
+      }),
+    });
+
+    await render(<Dashboard householdId={LINKED} linked onExplain={jest.fn()} />);
+
+    // The live decision's own card renders...
+    await waitFor(() => expect(screen.getByText('No payment today')).toBeTruthy());
+    expect(screen.getByText("We've not yet seen enough statements.")).toBeTruthy();
+    // ...from the live endpoint, not the seeded window (which is never fetched for a linked one).
+    expect(getLiveDecision).toHaveBeenCalledWith(LINKED);
+    expect(getDecisions).not.toHaveBeenCalled();
+    // and none of the window-summary rollup hero, which a linked household has no data for.
+    expect(screen.queryByText('Card paid down')).toBeNull();
+    expect(screen.queryByText('Beaten the bank out of')).toBeNull();
+  });
+
+  it('shows a "you could be saving" status panel with a get-started CTA when there is debt', async () => {
+    const onGetStarted = jest.fn();
+    getLiveDecision.mockResolvedValue({
+      today: '2026-07-13',
+      decision: decision({ action: 'refuse', paid_off: false, debt_balance: '5701.24' }),
+    });
+
+    await render(
+      <Dashboard householdId={LINKED} linked onExplain={jest.fn()} onGetStarted={onGetStarted} />,
+    );
+
+    await waitFor(() => expect(screen.getByText('You could be saving')).toBeTruthy());
+    // the real balance, framed as opportunity — not a fabricated "savings" figure
+    expect(screen.getByText('$5,701.24')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('get-started-cta'));
+    expect(onGetStarted).toHaveBeenCalled();
+  });
+
+  it('celebrates when there is no debt to pay down — and offers no CTA', async () => {
+    getLiveDecision.mockResolvedValue({
+      today: '2026-07-13',
+      decision: decision({ action: 'refuse', paid_off: true, debt_balance: '0.00' }),
+    });
+
+    await render(<Dashboard householdId={LINKED} linked onExplain={jest.fn()} onGetStarted={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('No interest to pay 🎉')).toBeTruthy());
+    expect(screen.queryByTestId('get-started-cta')).toBeNull();
+    expect(screen.queryByText('You could be saving')).toBeNull();
   });
 });

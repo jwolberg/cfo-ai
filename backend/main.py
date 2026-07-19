@@ -584,12 +584,25 @@ async def spend(repo: Annotated[Repository, Depends(authorize_household)]) -> An
     three cards that argument gets stronger, not weaker — the cards do not close together — so the
     totals below are sums of money and never of dates.
     """
-    try:
-        surface = readpath.load_spend_surface(repo, PostgresSnapshotStore(repo.conn))
-    except readpath.NoSuchHousehold:
-        return no_household(repo.household_id)
-    except readpath.NoSpendProjection:
-        return no_spend_projection(repo.household_id)
+    # A linked household has no persisted decision or seeded projection — its spend surface is built
+    # live from its Plaid `History`, the same reuse `GET /live-decision` makes (ticket 0056/0057). A
+    # seeded/demo household reads the frozen surface, exactly as before. Both yield the identical
+    # `SpendSurface`, so everything below is shared.
+    if repo.archetype() is None:
+        try:
+            history = livepath.linked_history(repo)
+            surface = livepath.live_spend(repo, history)
+        except livepath.NoLinkedHistory:
+            return no_linked_data(repo.household_id)
+        except livepath.NoLivePolicy:
+            return no_household(repo.household_id)
+    else:
+        try:
+            surface = readpath.load_spend_surface(repo, PostgresSnapshotStore(repo.conn))
+        except readpath.NoSuchHousehold:
+            return no_household(repo.household_id)
+        except readpath.NoSpendProjection:
+            return no_spend_projection(repo.household_id)
 
     return {
         "as_of": surface.as_of.isoformat(),
