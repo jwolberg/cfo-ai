@@ -63,7 +63,7 @@ from backend import assistant, livepath, readpath
 # defined; the *file* that module reads and writes is a test fixture (`0031`) and this process
 # never opens it. Importing the names rather than the module is what keeps that visible.
 from backend.artifact import DayRecord, Summary
-from backend.attestation import attested_for, card_fingerprint
+from backend.attestation import attested_for, card_fingerprint, current_card_ids
 from backend.db.repository import (
     Repository,
     create_household,
@@ -828,7 +828,7 @@ async def attest(
     frozen demo still serves precomputed snapshots, so the attestation bites for a linked household,
     not the demo. `UNMATCHED_PAYMENT` stays unoverridable either way — `tests/test_livepath.py`.)*
     """
-    fingerprint = card_fingerprint(c["id"] for c in repo.cards())
+    fingerprint = card_fingerprint(current_card_ids(repo))
     repo.add_attestation(card_fingerprint=fingerprint, attested_by=user.id)
     return {"attested": attested_for(repo), "card_fingerprint": fingerprint}
 

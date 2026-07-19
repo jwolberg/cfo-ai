@@ -19,10 +19,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from backend.attestation import card_fingerprint
+from backend.attestation import attested_for, card_fingerprint, current_card_ids
 from backend.db.repository import repository
 from backend.livepath import NoLinkedHistory, linked_history, live_decision
-from engine.models import Action, AprSource
+from engine.models import Action, AprSource, CoverageState
 from sim.household import PayCadence
 from tests.conftest import requires_db
 
@@ -120,10 +120,10 @@ def linked(db, app_engine: Engine):
         )
         _accounts(repo, checking_balance="3200.00")
         _seed_transactions(repo)
-        # Attest the household so coverage can clear (a linked household has no engine `cards` rows,
-        # so this attests the current — empty — set; it clears UNATTESTED, and the card-payment txn
-        # maps to a known card so nothing is an UNMATCHED_PAYMENT).
-        repo.add_attestation(card_fingerprint=card_fingerprint(c["id"] for c in repo.cards()))
+        # Attest the household's **linked** card set (its Plaid credit account, via
+        # `current_card_ids`) so coverage can clear — a linked household has no engine `cards` rows,
+        # and the card-payment txn maps to that same card so nothing is an UNMATCHED_PAYMENT.
+        repo.add_attestation(card_fingerprint=card_fingerprint(current_card_ids(repo)))
     return HH
 
 
@@ -147,12 +147,17 @@ class TestTheLinkedLoop:
 
     def test_live_decision_runs_end_to_end_on_linked_data(self, linked, app_engine: Engine) -> None:
         with repository(app_engine, HH) as repo:
+            # The linked card set is attestable now (reconciled: `current_card_ids` reads the Plaid
+            # credit account, not the empty engine `cards` table).
+            assert attested_for(repo) is True
             history = linked_history(repo)
             decided = live_decision(repo, history, history.end)
 
         # A real decision, from real ingested data — a sweep or an honest refusal, never a crash.
         assert decided.decision.action in (Action.SWEEP, Action.REFUSE)
         assert decided.decision.reasons  # it explains itself
+        # The attestation cleared coverage — not stuck at UNATTESTED on a linked household.
+        assert decided.snapshot.portfolio.coverage is CoverageState.COMPLETE
         # The card the engine saw carries the reported rate, not the 0.23 estimate.
         card = decided.snapshot.portfolio.cards[0]
         assert card.apr == Decimal("0.2399")
