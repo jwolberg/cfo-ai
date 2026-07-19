@@ -401,14 +401,6 @@
     Status as of 18 July 2026. Where each piece of the path from a bank login to money actually
     moving stands today:
   </p>
-  <p class="lede" style="margin-bottom:1rem">
-    <strong>The core is built and deployed</strong> &mdash; the decision engine, the database, the
-    API, and the app &mdash; and the harness that measures it is live too: a grader that scores each
-    decision against what actually happened, still running only on synthetic data. What still stands
-    between a real bank login and a decision is the <b>recurring-event detector</b> (it needs real
-    data to build against).
-  </p>
-
   <div class="updates">
     <div class="update-day">
       <h3 class="update-date">18 July 2026</h3>
@@ -426,10 +418,39 @@
            guardrails and the card-completeness attestation that clears the engine&rsquo;s
            money-gate &mdash; are now <b>built</b>, each append-only and audited. Customer sign-in and the bank-link flow are the next rung.</p>
       </div>
+      <div class="update-item">
+        <span class="update-cat">Onboarding &middot; connect a bank</span>
+        <p>The <b>bank-link loop</b> now runs end to end against <b>Plaid Sandbox</b>: a signed-in
+           user <b>creates a household</b>, mints a Link token, and links a bank, and the
+           transactions land in Postgres. The two pieces that turn those rows into a decision are
+           built alongside it &mdash; a <b>recurring-income/bill detector</b> and the <b>balance and
+           card-terms ingest</b> a decision needs. What remains is the assembler that feeds a linked
+           household into a live decision. Sandbox-proven; real accounts still need envelope
+           encryption for the tokens and a Plaid production plan.</p>
+      </div>
+      <div class="update-item">
+        <span class="update-cat">Act &middot; payment rail, payoff leg</span>
+        <p>The payoff leg&rsquo;s <b>live client (Method)</b> is <b>built and connected to
+           Method&rsquo;s dev API</b> &mdash; the first of the rail&rsquo;s vendors to leave shadow
+           for a real endpoint. Creating the paying entity and its funding account works against dev;
+           the one piece left is the <b>card destination</b>, gated by an org-level consent Method
+           enables per account. Still mocked money and still not the live rail &mdash; but the
+           <code>submit()</code> no-op now has a real client behind it, ready for the sandbox gate.</p>
+      </div>
     </div>
 
     <div class="update-day">
       <h3 class="update-date">17 July 2026</h3>
+      <div class="update-item">
+        <span class="update-cat">Store &middot; Postgres on Neon</span>
+        <p>The database moved onto <b>managed Postgres (Neon)</b> and is <b>built and live</b>, with
+           four households &times; 90 days landed on it. The move off SQLite was a prerequisite for
+           moving money safely: <b>household isolation is enforced by the database itself</b> &mdash;
+           a Postgres role the service is pinned to, so it refuses to start if it could bypass the
+           per-<code>household_id</code> boundary &mdash; and money is stored as <code>NUMERIC</code>,
+           not float. Neon gives a hosted, deployable Postgres that scales to zero between runs, so the
+           live core has a real database under it rather than a local file.</p>
+      </div>
       <div class="update-item">
         <span class="update-cat">Ingest &middot; Plaid transport</span>
         <p>The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook
@@ -455,8 +476,12 @@
       <div class="update-item">
         <span class="update-cat">Core &middot; first live release</span>
         <p>The first release: the <b>deterministic decision engine</b>, the API, and the customer
-           <b>app</b> &mdash; published live to Firebase Hosting so the product had a link. Graded
-           against synthetic household data.</p>
+           <b>app</b> &mdash; published live to Firebase Hosting so the product had a link.
+           <strong>The core is built and deployed</strong> &mdash; the decision engine, the database, the
+           API, and the app &mdash; and the harness that measures it is live too: a grader that scores each
+           decision against what actually happened, still running only on synthetic data. 
+          </p>
+           
       </div>
     </div>
   </div>
@@ -551,11 +576,13 @@
         <p>Pending&rarr;posted matching, internal-transfer detection. Silent corruption if wrong
            &mdash; and Sandbox data can&rsquo;t validate it, so it waits for real data.</p>
       </div>
-      <div class="box todo">
-        <span class="tag">Not built</span>
+      <div class="box">
+        <span class="tag">Built</span>
         <h3>Recurring-event detector</h3>
-        <p>Finds paychecks and bills inside raw transactions. <b>The forecast cannot run without
-           it</b> &mdash; the largest single gap between a bank login and a decision.</p>
+        <p>Finds paychecks and bills inside raw transactions &mdash; a first, deterministic cut is
+           built (cadence + amount stability), the piece the forecast cannot run without. What
+           remains is the <b>assembler</b> that threads it, with the balance and card-terms ingest,
+           into a live decision for a linked household.</p>
       </div>
       <div class="box">
         <span class="tag">Built</span>
