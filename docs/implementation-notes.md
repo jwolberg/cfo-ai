@@ -2682,3 +2682,31 @@ existed for.
 - Added `Repository.plaid_transactions()` (added-rows reader). Verified vs real Postgres:
   `tests/test_linkedpath.py` (4) — the loop assembles + decides, and refuses on thin data. Full
   suite **777 passed, 10 skipped**; ruff clean.
+
+### Wiring gap: the web Link flow never ingested account state (2026-07-18)
+Found while dogfooding the link→decision loop locally against real Plaid Sandbox (branch off main,
+after #75). `ingest_account_state` — which populates `plaid_accounts`/`plaid_liabilities`, the exact
+rows `build_linked_history` reads — was called from **no route and no worker**, only from
+`tests/test_plaid_accounts.py`. The web page (`web/link.html`) drives only `/plaid/sync/now`, which
+ran `/transactions/sync` alone. So a household linked through the UI got transactions but no
+balances or card terms, and `GET /live-decision` was **unreachable** through the browser flow — it
+needs a depository account to fund from and a card to decide about, and both come from account state.
+
+- **Fix**: added `refresh_item(engine, item, client)` in `backend/plaid/sync.py` — `run_sync` then
+  `ingest_account_state`, composed at the trigger boundary (the two ingests stay separate modules:
+  transactions = what a household *did*, account state = what is *true now*). Routed all three
+  triggers through it: `/sync/now` (the browser path — the required fix), `/sync/worker`, and
+  `run_poll` (so production balances don't go stale either). `/sync/now` and `/sync/worker` now
+  return `accounts`/`liabilities` counts.
+- **Fail-soft**, deliberately: a balance-fetch stumble must not fail the transaction sync or poison
+  the poll batch — balances refresh next cycle. Mirrors `ingest_account_state`'s own liabilities
+  degrade-to-balances-only posture. A failed sync (`login_required`/`unknown_item`) skips the
+  refresh — nothing fresh to read.
+- **Proven**: `tests/test_sync.py::TestRefreshItem` (happy path, fail-soft, skip-on-failed-sync) and
+  `tests/test_link_loop.py` extended to assert accounts + liabilities land. Also verified live: after
+  the fix, `POST /plaid/sync/now` on the real linked household returned `accounts: 12`.
+- **Two follow-ups surfaced, not fixed here** (scope kept to the wiring): (1) the link token
+  requests only `products=[transactions]`, so `/liabilities/get` raises and cards fall back to
+  `apr_source=estimated` — add `liabilities` to the link products for real card terms. (2) A freshly
+  linked household has no `policy_events`, so `/live-decision` returns `no_household` until the owner
+  sets guardrails (`PATCH /policy`) — decide whether linking should seed a default policy.

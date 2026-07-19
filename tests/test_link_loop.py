@@ -69,6 +69,16 @@ class _Page:
     has_more = False
 
 
+class _Resp:
+    """A Plaid response object: the ingest reads it through `.to_dict()`."""
+
+    def __init__(self, d: dict) -> None:
+        self._d = d
+
+    def to_dict(self) -> dict:
+        return self._d
+
+
 class FakeLoopClient:
     def link_token_create(self, request):
         return _LinkToken()
@@ -79,6 +89,59 @@ class FakeLoopClient:
     def transactions_sync(self, request):
         # One page, one added txn, on the first (cursor=None) call; empty thereafter.
         return _Page() if request.to_dict().get("cursor") is None else _EmptyPage()
+
+    def accounts_balance_get(self, request):
+        # A checking account (the funding account) and a card — what the account-state ingest the
+        # sync now also drives must land for a household to be decidable.
+        return _Resp(
+            {
+                "accounts": [
+                    {
+                        "account_id": "acct-1",
+                        "name": "Checking",
+                        "official_name": None,
+                        "type": "depository",
+                        "subtype": "checking",
+                        "balances": {
+                            "current": 1000.0,
+                            "available": 950.0,
+                            "iso_currency_code": "USD",
+                        },
+                    },
+                    {
+                        "account_id": "acct-card",
+                        "name": "Card",
+                        "official_name": None,
+                        "type": "credit",
+                        "subtype": "credit card",
+                        "balances": {
+                            "current": 500.0,
+                            "available": None,
+                            "iso_currency_code": "USD",
+                        },
+                    },
+                ]
+            }
+        )
+
+    def liabilities_get(self, request):
+        return _Resp(
+            {
+                "liabilities": {
+                    "credit": [
+                        {
+                            "account_id": "acct-card",
+                            "last_statement_balance": 500.0,
+                            "last_statement_issue_date": "2026-03-01",
+                            "minimum_payment_amount": 25.0,
+                            "next_payment_due_date": "2026-03-20",
+                            "aprs": [{"apr_type": "purchase_apr", "apr_percentage": 23.99}],
+                            "is_overdue": False,
+                        }
+                    ]
+                }
+            }
+        )
 
 
 class _EmptyPage:
@@ -145,15 +208,19 @@ def test_the_whole_loop_lands_a_transaction(client: TestClient, db) -> None:
     assert exchanged.status_code == 200
     assert exchanged.json()["household_id"] == hid
 
-    # 4 — owner-triggered sync pulls the transactions.
+    # 4 — owner-triggered sync pulls the transactions AND refreshes balances + card terms. The
+    # account-state half is what makes the linked household decidable; without it `/live-decision`
+    # is unreachable through the web flow (it drove only `/transactions/sync`).
     synced = client.post("/plaid/sync/now", headers=_auth())
     assert synced.status_code == 200
     body = synced.json()
     assert body["household_id"] == hid
     assert body["items_synced"] == 1
     assert body["added"] == 1
+    assert body["accounts"] == 2, "the sync must also refresh balances (checking + card)"
+    assert body["liabilities"] == 1, "and the card terms"
 
-    # The row actually landed, scoped to this household.
+    # The transaction row actually landed, scoped to this household.
     with db.begin():
         rows = db.execute(
             text(
@@ -164,6 +231,19 @@ def test_the_whole_loop_lands_a_transaction(client: TestClient, db) -> None:
         ).all()
     assert len(rows) == 1
     assert rows[0].plaid_transaction_id == "t-1"
+
+    # And so did the account state — the rows `build_linked_history` reads.
+    with db.begin():
+        accts = db.execute(
+            text("SELECT type, subtype FROM plaid_accounts WHERE household_id = :h"),
+            {"h": hid},
+        ).all()
+        liabs = db.execute(
+            text("SELECT count(*) FROM plaid_liabilities WHERE household_id = :h"),
+            {"h": hid},
+        ).scalar()
+    assert {r.type for r in accts} == {"depository", "credit"}
+    assert liabs == 1
 
 
 def test_sync_now_requires_a_session(client: TestClient) -> None:
