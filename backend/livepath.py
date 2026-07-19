@@ -103,9 +103,13 @@ def live_decision(repo: Repository, history: History, today: date) -> WalkDay:
 def linked_history(repo: Repository) -> History:
     """The realized `History` for a linked household — the live path's data source.
 
-    The `plaid_transactions` → `History` adapter is the deferred Link rung (see the module
-    docstring). Until it lands there is nothing to build a live decision from, so this raises
-    `NoLinkedHistory` rather than fabricating one. Kept as its own seam so the day the adapter
-    arrives, only this function changes and `live_decision()` already consumes it.
+    Delegates to `backend/linkedpath.py`, the adapter that turns the household's ingested Plaid data
+    (`plaid_transactions` + the 0014 balance/liability snapshots + `backend/recurring.py`) into a
+    `History`. It raises `NoLinkedHistory` when the data cannot support a decision — too little
+    history, no depository account, no card, no detectable income — the same signal this seam has
+    always raised, so `live_decision()` and the route need no change. The import is local, to keep
+    `livepath`↔`linkedpath` dependency one-directional (the adapter imports `NoLinkedHistory` here).
     """
-    raise NoLinkedHistory(repo.household_id)
+    from backend.linkedpath import build_linked_history
+
+    return build_linked_history(repo)

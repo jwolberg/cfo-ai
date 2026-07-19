@@ -29,7 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from backend import precompute
-from backend.attestation import attested_for, card_fingerprint
+from backend.attestation import attested_for, card_fingerprint, current_card_ids
 from backend.db.repository import repository
 from backend.identity import stytch
 from backend.identity.deps import get_verifier
@@ -206,6 +206,64 @@ class TestAttestedForAndInvalidation:
             assert attested_for(repo) is False, (
                 "a stale attestation still covered a changed card set"
             )
+
+
+# --- a LINKED household's cards are its Plaid credit accounts, not engine `cards` ----
+
+
+def _credit_account(repo, plaid_account_id: str) -> None:
+    repo.add_plaid_account(
+        plaid_item_id="item-x",
+        plaid_account_id=plaid_account_id,
+        name="Card",
+        official_name=None,
+        type="credit",
+        subtype="credit card",
+        current_balance=Decimal("1400.00"),
+        available_balance=None,
+        iso_currency_code="USD",
+    )
+
+
+class TestLinkedCardAttestation:
+    """The reconciliation: a linked household holds no engine `cards` row, so `current_card_ids`
+    (and therefore attestation) reads its Plaid credit accounts instead — otherwise it could only
+    ever attest an empty set and never clear coverage."""
+
+    def test_current_card_ids_reads_plaid_credit_accounts_when_no_engine_cards(
+        self, db, app_engine
+    ) -> None:
+        with db.begin():
+            db.execute(text("INSERT INTO households (id, archetype) VALUES (:h, NULL)"), {"h": HH})
+        with repository(app_engine, HH) as repo:
+            _credit_account(repo, "acc_card_1")
+        with repository(app_engine, HH) as repo:
+            assert current_card_ids(repo) == ["acc_card_1"]
+
+    def test_engine_cards_win_when_both_exist(self, db, app_engine) -> None:
+        with db.begin():
+            db.execute(
+                text("INSERT INTO households (id, archetype) VALUES (:h, 'test')"), {"h": HH}
+            )
+            _card(db, HH, "card-1")
+        with repository(app_engine, HH) as repo:
+            _credit_account(repo, "acc_card_1")
+        with repository(app_engine, HH) as repo:
+            assert current_card_ids(repo) == ["card-1"]
+
+    def test_attesting_a_linked_card_set_clears_and_a_new_card_invalidates(
+        self, db, app_engine
+    ) -> None:
+        with db.begin():
+            db.execute(text("INSERT INTO households (id, archetype) VALUES (:h, NULL)"), {"h": HH})
+        with repository(app_engine, HH) as repo:
+            _credit_account(repo, "acc_card_1")
+            repo.add_attestation(card_fingerprint=card_fingerprint(current_card_ids(repo)))
+        with repository(app_engine, HH) as repo:
+            assert attested_for(repo) is True  # the linked card set is attested
+            _credit_account(repo, "acc_card_2")  # a second linked card appears
+        with repository(app_engine, HH) as repo:
+            assert attested_for(repo) is False, "a new linked card did not drop coverage (KTD-7)"
 
 
 # --- the route ----------------------------------------------------------------------

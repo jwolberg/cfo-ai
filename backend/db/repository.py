@@ -231,6 +231,18 @@ class Repository:
         rows = self._all("SELECT plaid_item_id FROM plaid_items WHERE household_id = :h")
         return [r["plaid_item_id"] for r in rows]
 
+    def plaid_transactions(self) -> list[dict[str, Any]]:
+        """Every ingested transaction for this household, oldest first (ticket 0056 capstone).
+
+        `change_type = 'added'` only: the `pending → posted` reconciliation that consumes the
+        `modified`/`removed` rows is the deferred **normalize** step (`architecture.md` §3.2), so a
+        first cut reads the appends and lets a later normalizer refine them. Ordered by `date` then
+        `id` so the sequence is stable — the linked-history adapter walks it in order."""
+        return self._all(
+            "SELECT * FROM plaid_transactions WHERE household_id = :h AND change_type = 'added'"
+            " ORDER BY date, id"
+        )
+
     def add_plaid_transaction(
         self,
         *,
