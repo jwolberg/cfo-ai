@@ -29,16 +29,16 @@ api = [
     "plaid-python>=39,<40",
     "google-cloud-tasks>=2.16,<3",
     "PyJWT[crypto]>=2.8,<3",
+    # The Stytch server SDK. Session *verification* is our own local JWKS code
+    # (`backend/identity/stytch.py`) and needs only PyJWT — but `backend/identity/demo.py` uses this
+    # to MINT the public demo's read-only viewer session (`POST /demo/session`, ticket 0057), a real
+    # runtime path, so it is an `[api]` dependency, not test-only. Also in `backend/requirements.txt`.
+    "stytch>=13,<16",
 ]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
     "httpx>=0.27",  # fastapi.testclient
-    # The Stytch server SDK, used only to MINT real sessions in the identity hard gate
-    # (`tests/test_identity_sandbox.py`, ticket 0053). Verification is our own local JWKS code
-    # (`backend/identity/stytch.py`) and does not need it — this is test-only, and the gate skips
-    # loudly without Stytch credentials, so CI installs it but never exercises it.
-    "stytch>=13,<16",
     "cfo-ai[api]",
 ]
 

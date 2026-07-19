@@ -38,3 +38,10 @@ psycopg[binary]>=3.1,<4.0
 plaid-python>=39,<40
 google-cloud-tasks>=2.16,<3
 PyJWT[crypto]>=2.8,<3
+
+# The Stytch server SDK. Session *verification* is our own local JWKS code
+# (`backend/identity/stytch.py`, PyJWT above) and does not need it — but `backend/identity/demo.py`
+# uses it to MINT the public demo's read-only viewer session (`POST /demo/session`, ticket 0057), a
+# real runtime path. The import is lazy (inside the mint), so the container boots without it and
+# fails only when the route is hit — which is exactly how it shipped broken the first time.
+stytch>=13,<16

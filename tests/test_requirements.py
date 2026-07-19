@@ -42,6 +42,10 @@ DISTRIBUTION_OF = {
     "plaid": "plaid-python",
     "google": "google-cloud-tasks",
     "jwt": "pyjwt",
+    # The Stytch server SDK — imported by `backend/identity/demo.py` to mint the demo viewer session
+    # (ticket 0057). Registered here so this check *sees* it: an unregistered root is silently
+    # skipped, which is exactly how `stytch` shipped missing from the manifest the first time.
+    "stytch": "stytch",
 }
 
 # Modules the service imports at runtime. `alembic` is deliberately absent: migrations are an admin
