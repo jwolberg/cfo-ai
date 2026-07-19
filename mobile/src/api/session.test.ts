@@ -90,3 +90,43 @@ describe('the session store', () => {
     expect(setItem).toBeDefined();
   });
 });
+
+describe('the web demo session (no keychain)', () => {
+  const fetchMock = jest.fn();
+
+  beforeAll(() => {
+    Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
+    (globalThis as unknown as { fetch: unknown }).fetch = fetchMock;
+  });
+  afterAll(() => {
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
+  });
+  beforeEach(() => {
+    _resetSessionCacheForTest();
+    fetchMock.mockReset();
+    delete process.env.EXPO_PUBLIC_DEMO_SESSION;
+  });
+
+  it('fetches a read-only demo session from /demo/session when nothing is baked', async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ session_jwt: 'fetched-demo-jwt' }) });
+
+    expect(await getSessionToken()).toBe('fetched-demo-jwt');
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/demo/session'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('prefers an explicitly baked token over fetching (a pinned/dev build)', async () => {
+    process.env.EXPO_PUBLIC_DEMO_SESSION = 'baked-token';
+
+    expect(await getSessionToken()).toBe('baked-token');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is null (not a crash) when /demo/session is unreachable', async () => {
+    fetchMock.mockRejectedValue(new Error('network'));
+
+    expect(await getSessionToken()).toBeNull();
+  });
+});

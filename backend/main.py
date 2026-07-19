@@ -422,6 +422,29 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/demo/session", include_in_schema=False)
+async def demo_session() -> Any:
+    """A fresh, read-only demo **viewer** `session_jwt` for the public web app (ticket 0057).
+
+    Deliberately unauthenticated: this is how an anonymous visitor to the public demo gets a session
+    at all, replacing the baked `EXPO_PUBLIC_DEMO_SESSION` that expired after ~5 minutes. Safe by
+    construction — it only ever mints the demo *viewer*, which is refused every owner-gated write,
+    so the worst a caller can do with the returned token is read demo-plane households. The token is
+    cached and re-minted before expiry (`identity/demo.py`), so this costs ~one Stytch call per
+    5-minute window regardless of traffic. Returns `503` when the demo identity is not configured —
+    a deploy-config gap, not a request fault.
+    """
+    from backend.identity.demo import DemoSessionNotConfigured, demo_session_jwt
+
+    try:
+        return {"session_jwt": demo_session_jwt()}
+    except DemoSessionNotConfigured:
+        return JSONResponse(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content={"error": "demo_session_unconfigured"},
+        )
+
+
 @app.get("/households")
 async def households(
     request: Request, user: Annotated[User, Depends(current_user)]

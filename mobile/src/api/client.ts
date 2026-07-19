@@ -22,7 +22,7 @@
  * being distinguishable from `network`, and the explain modal depends on `no_record` being
  * an answer rather than an error.
  */
-import { getSessionToken } from './session';
+import { getSessionToken, refreshSession } from './session';
 import type {
   AssistantResponse,
   AttestResponse,
@@ -77,7 +77,12 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+async function request<T>(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = REQUEST_TIMEOUT_MS,
+  retryOnAuth = true,
+) {
   const controller = new AbortController();
   const deadline = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -110,6 +115,13 @@ async function request<T>(path: string, init: RequestInit = {}, timeoutMs = REQU
     clearTimeout(deadline);
   }
 
+  if (response.status === 401 && retryOnAuth) {
+    // The session_jwt expired mid-use (it lives ~5 minutes). Drop the cached token and retry once —
+    // on web that re-fetches a fresh read-only demo session, so a browsing session survives past the
+    // token's lifetime (ticket 0057). A second 401 is a real refusal and falls through below.
+    refreshSession();
+    return request<T>(path, init, timeoutMs, false);
+  }
   if (response.status === 401 || response.status === 403) {
     throw new ApiError('unauthorized', 'The app is not authorized to read this data');
   }

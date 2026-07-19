@@ -83,8 +83,42 @@ export async function getSessionToken(): Promise<string | null> {
     }
   }
 
-  cached = demoSession() || null;
+  // Web has no keychain. Prefer an explicitly baked token (a dev override / a pinned build), else
+  // fetch a fresh, durable **read-only demo** session from the API (ticket 0057). Fetching — rather
+  // than baking — is what survives the 5-minute session_jwt: the server re-mints, and `request`
+  // clears this cache and re-fetches on a 401, so a browsing session never dies.
+  const baked = demoSession();
+  if (baked) {
+    cached = baked;
+    return cached;
+  }
+  // Fetch a demo session only on web (the public read-only plane). A native user with no stored
+  // token is signed out — it does not silently drop onto the demo plane.
+  cached = isNative() ? null : await fetchDemoSession();
   return cached;
+}
+
+// The API base, read here (not imported from `client.ts`) to keep the client→session dependency
+// one-directional. Same default as the client.
+const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:8000';
+
+/** A fresh read-only demo viewer `session_jwt` from `POST /demo/session`, or `null` if unreachable
+ *  / unconfigured (503). Unauthenticated by design — it is how the public demo gets a session. */
+async function fetchDemoSession(): Promise<string | null> {
+  try {
+    const res = await fetch(`${API_URL}/demo/session`, { method: 'POST' });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { session_jwt?: string };
+    return body.session_jwt ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop the cached token so the next `getSessionToken` reloads it — on web that re-fetches a fresh
+ *  demo session. The client calls this on a 401 to recover from an expired token mid-session. */
+export function refreshSession(): void {
+  cached = undefined;
 }
 
 /** Store a verified session token (the Stytch sign-in seam). Persisted in SecureStore on native. */
