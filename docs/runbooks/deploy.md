@@ -283,6 +283,19 @@ gcloud run deploy "$SERVICE" \
 > is the `StytchConfigError` 500 from `[0.5]`. `RESFI_API_KEY` stays wired only for any residual
 > internal use; it authorizes no user route now. Leave `STYTCH_ENV` unset (defaults `test`).
 
+> **Transfer vendor keys (Method, Increase) — not wired yet, and here is where they go when they
+> are.** The payoff-leg key (`METHOD_API_KEY`) and the debit-leg key follow `STYTCH_SECRET` exactly:
+> stored in Secret Manager (`[4]`), added to `--set-secrets` (e.g.
+> `METHOD_API_KEY=${SECRET_METHOD_API_KEY}:latest`), never in an env-var and never on a developer's
+> machine — **locally they live in the macOS Keychain** (`local-development.md` → *Real vendor keys*),
+> and the two stores never touch. They stay **out** of the deploy today on purpose: the rail is in
+> shadow (`TRANSFER_MODE` unset → `shadow`), and `assert_transfer_credentials_safe_at_rest` *refuses
+> a `TRANSFER_MODE=live` boot* until the Method key comes from a secrets manager **and** the debit
+> credential is KMS-encrypted (both currently hardcoded off) — plus the FBO/funding accounts and the
+> Reg E/GLBA/MTL work ADR-0006 names. So: add these secrets the day `TRANSFER_MODE=live` is turned
+> on, not before. `METHOD_ENV` selects `dev`/`sandbox`/`production` (an env-var, not a secret); use
+> `dev` everywhere until the sandbox gate (`tests/test_transfer_sandbox.py`, ticket 0044) runs green.
+
 > ⚠️ **`--set-env-vars` REPLACES the whole set — it does not add to it.** The running service carries
 > `RESFI_ALLOWED_ORIGINS` as well as `PYTHONUNBUFFERED`, and a deploy passing only the latter drops
 > the CORS allowlist. The API keeps working; the **browser client silently stops being able to call

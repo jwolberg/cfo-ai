@@ -129,3 +129,37 @@ See [`neon-provisioning.md`](./neon-provisioning.md). The short version, and the
 refuses to start under it.
 
 Nothing local needs Neon. The migration is already applied there.
+
+---
+
+## Real vendor keys — the macOS Keychain, not a file
+
+The dummy keys above (`RESFI_API_KEY=local-not-real`, …) are for the test suite, which never calls a
+vendor. A **real** vendor key — a Method `sk_…`, a Stytch secret, a Plaid/Increase sandbox key — is an
+actual credential and does not belong in a shell export (it lands in history) or a plaintext file in
+`/tmp` (it sits unencrypted on disk). Keep it in the **Keychain**, encrypted at rest, and pull it in
+only for the process that needs it.
+
+Store it once (the prompting form types the value hidden, twice — nothing hits shell history):
+
+```bash
+security add-generic-password -a "$USER" -s cfo-ai-method-key -U -w
+```
+
+Use it without ever printing it — command substitution puts the value straight into the child's
+environment:
+
+```bash
+METHOD_API_KEY="$(security find-generic-password -s cfo-ai-method-key -w)" METHOD_ENV=dev \
+  .venv/bin/python scripts/method_smoke.py
+```
+
+`scripts/method_smoke.py` connects to Method's **dev** environment (all data and money mocked — the
+safe place to exercise the payoff leg) and confirms the live client (`backend/transfer/method_client.py`)
+works; it prints only `sk_…`, never the key. The same Keychain pattern fits the other vendors — one
+service name per key (`cfo-ai-stytch-secret`, `cfo-ai-plaid-secret`, …).
+
+Method environments: **dev** `https://dev.methodfi.com` (mocked, no whitelist — use this locally),
+**sandbox** `https://sandbox.methodfi.com` (real money, $1/txn, entities whitelisted via your Method
+CSM), **production**. In production the key does **not** live on any developer's machine — see
+[`deploy.md`](./deploy.md).
