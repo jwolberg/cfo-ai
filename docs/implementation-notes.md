@@ -2651,3 +2651,34 @@ which transaction rows do not carry.
   branches converge. **Still the last Phase-2 unit:** spec-inference (`RecurringStream`s + these
   snapshots → `HouseholdSpec`) + the `plaid_transactions`→`History` adapter wiring
   `livepath.linked_history` (needs live-assembly #69).
+
+### The Link rung, Phase 2 — the capstone: linked data → a decision (2026-07-18)
+Branch `feat/linked-assembly` (off main, after #69–#72 all merged). Closes the loop:
+`backend/linkedpath.py::build_linked_history` turns a linked household's ingested Plaid data
+(`plaid_transactions` + the 0014 balance/liability snapshots + the recurring detector) into a
+`sim.History`, and `livepath.linked_history` now delegates to it instead of raising. So
+`GET /live-decision` returns a **real decision** for a linked household — the thing the 0056 seam
+existed for.
+
+- **Only the decision-relevant spec is inferred.** Traced `assemble_snapshot`: it reads
+  `spec.payroll`/`spec.bills` (via `derive_cash_events` — the *future* schedule) and `spec.cards`
+  (via `derive_card`); the snapshot's spend stats come from the *history*, and balances are passed
+  in — so `spec.spend` is a placeholder and the work is payroll + bills + cards + the txn stream.
+- **Txn classification**: checking rows → `Movement`s (Plaid sign flipped), detector → PayrollSpec
+  (cadence/net_pay/first_payday) + BillSpec(s); each checking txn typed PAYROLL / CARD_PAYMENT (a
+  card-shaped merchant) / BILL (a detected recurring outflow) / DISCRETIONARY. `opening_balance` is
+  chosen so `balance_on(today)` lands on the *current* Plaid checking balance.
+- **Two honest v1 approximations, documented in the module** — the card ledger anchored at the
+  current balance (not a reconstructed cycle), and unbilled charges omitted (reserve covers the
+  closed statement). Both are the deferred **normalize** step. **Safe because it produces a decision
+  to _display_, not to move money**: a linked household is Plaid *Sandbox* and the rail is *shadow*,
+  so a first-cut error is a wrong number on a screen, never a wrong transfer.
+- **Fails to a refusal**: `NoLinkedHistory` when there's no depository account, no card, <60 days of
+  history, or no detectable income — never an invented decision.
+- One integration seam noted: `attested_for` keys on the engine `cards` table, which a linked
+  household has none of — so coverage is `UNATTESTED` until attested; the test attests the (empty)
+  set to exercise a cleared-coverage decision. Reconciling attestation with plaid-sourced cards is a
+  follow-up.
+- Added `Repository.plaid_transactions()` (added-rows reader). Verified vs real Postgres:
+  `tests/test_linkedpath.py` (4) — the loop assembles + decides, and refuses on thin data. Full
+  suite **777 passed, 10 skipped**; ruff clean.
