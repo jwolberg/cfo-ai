@@ -26,12 +26,16 @@ consumer arrives with the Link rung.
 from __future__ import annotations
 
 from datetime import date
+from typing import TYPE_CHECKING
 
 from backend.attestation import attested_for
 from backend.db.repository import Repository
 from backend.precompute import WalkDay, walk
 from engine.models import UserPolicy
 from sim.household import History
+
+if TYPE_CHECKING:
+    from backend.spend import SpendSurface
 
 
 class NoLivePolicy(LookupError):
@@ -98,6 +102,30 @@ def live_decision(repo: Repository, history: History, today: date) -> WalkDay:
     # mean `days < 1`, which the window guard above already forbids.
     assert result is not None and result.day == today
     return result
+
+
+def live_spend(repo: Repository, history: History) -> SpendSurface:
+    """The live **spend surface** for a linked household — the comprehension half of the Link rung.
+
+    The seeded `/spend` path (`readpath.load_spend_surface`) reads a persisted `decisions` row and a
+    seeded `spend_projection`, which a linked household has neither of. This builds the same surface
+    from live data instead, reusing exactly what the seeder does (`backend/seed.py`): walk the
+    linked `History` to today's snapshot, `derive_spend_projection(history, today,
+    snapshot.portfolio)`, then `assemble(snapshot, projection)`. The projection's `as_of` and the
+    snapshot's `today` are the same day by construction (both `history.end`), so `assemble`'s
+    staleness guard is satisfied.
+
+    Takes `history` as an input, as `live_decision` does — the route builds it once via
+    `linked_history(repo)` and threads it in. Raises `NoLivePolicy` (no guardrails set) through
+    `live_decision`. Local imports keep the `livepath`↔`precompute`/`spend` dependency
+    one-directional, as `linked_history` does.
+    """
+    from backend.precompute import derive_spend_projection
+    from backend.spend import assemble
+
+    day = live_decision(repo, history, history.end)
+    projection = derive_spend_projection(history, day.day, day.snapshot.portfolio)
+    return assemble(day.snapshot, projection)
 
 
 def linked_history(repo: Repository) -> History:

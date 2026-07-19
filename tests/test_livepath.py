@@ -195,6 +195,32 @@ class TestUnmatchedPaymentOverrideHolds:
         assert decided.decision.action is Action.REFUSE
 
 
+# --- the live spend surface: the comprehension half, built from live data ------------
+
+
+class TestLiveSpendSurface:
+    def test_a_linked_household_gets_a_live_spend_surface(self, db, app_engine) -> None:
+        """The `/spend` comprehension surface, built live for a linked household — no seeded
+        `decisions` row and no stored `spend_projection`, the two things
+        `readpath.load_spend_surface` needs and a linked household lacks. Proves `live_spend`
+        reuses walk → derive → assemble."""
+        history = _history()
+        _seed_household(db, app_engine, archetype=None, attest=True)
+
+        with repository(app_engine, HH) as repo:
+            surface = livepath.live_spend(repo, history)
+
+        # The surface describes the last day of the linked history, and `assemble`'s staleness guard
+        # (projection.as_of == snapshot.today) passed — both are `history.end` by construction.
+        assert surface.as_of == history.end
+        assert surface.projection.as_of == history.end
+        # A card panel per card held, with per-card obligations that sum to the totals.
+        assert len(surface.cards) >= 1
+        assert surface.statement_total == sum(
+            (c.statement_balance for c in surface.cards), Decimal("0")
+        )
+
+
 # --- the oracle: the default leaves the shipped walk unchanged ----------------------
 
 

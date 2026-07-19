@@ -2740,3 +2740,20 @@ half of KTD-4). A token baked into the web bundle 401s after 5 min. For local br
 proxy (`EXPO_PUBLIC_API_URL=http://localhost:8010`). This same 5-min/no-refresh gap, plus no web
 sign-in (0055 native-only) and the security hole of baking an owner token into a public build, is
 why the **production** goal is blocked — see the deploy discussion, not a code change here.
+
+### The Spend tab, live for a linked household (2026-07-18)
+Dogfooding: the app's Spending tab showed "We couldn't load your spending" for the linked household.
+`GET /spend` (`readpath.load_spend_surface`) reads a persisted `decisions` row + a seeded
+`spend_projection`, neither of which a linked household has → 404. Added the live path, reusing
+exactly what the seeder does (`backend/seed.py:_write_spend_projection`):
+
+- `backend/livepath.py:live_spend(repo, history)` — `live_decision` to today's snapshot, then
+  `derive_spend_projection(history, today, snapshot.portfolio)` + `assemble(snapshot, projection)`.
+  Same `SpendSurface` the seeded path yields. Takes `history` (built once by the route via
+  `linked_history`), mirroring `live_decision`, which also makes it testable with a demo `_history()`.
+- `backend/main.py` `GET /spend`: branches on `repo.archetype() is None` — a linked household gets
+  the live surface, a demo one the frozen surface exactly as before. **No mobile change** (the JSON
+  shape is identical, so `getSpend`/the Spending screen work unchanged).
+- Verified live (`/spend` → 200, 2 Plaid cards with real statement balances + reserves) and by
+  `tests/test_livepath.py::TestLiveSpendSurface`; 42 tests pass in the livepath/spend/linkedpath
+  sweep, ruff clean. The explain-on-tap modal is still seeded-only — a separate follow-up.
