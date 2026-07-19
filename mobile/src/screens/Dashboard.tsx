@@ -58,6 +58,8 @@ interface Props {
   onExplain: (decision: Decision) => void;
   /** Open Attest from a coverage-incomplete refusal in the feed (ticket 0052). */
   onAttest?: (refusal: CoverageRefusal) => void;
+  /** Open the setup surface (Settings) from a linked household's "get started" status panel. */
+  onGetStarted?: () => void;
 }
 
 /** The list's own top padding, which sits above the hero inside the scrolled content. */
@@ -77,7 +79,7 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
-export function Dashboard({ householdId, linked, onExplain, onAttest }: Props) {
+export function Dashboard({ householdId, linked, onExplain, onAttest, onGetStarted }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
 
@@ -145,6 +147,7 @@ export function Dashboard({ householdId, linked, onExplain, onAttest }: Props) {
         decision={state.decision}
         onExplain={onExplain}
         onAttest={onAttest}
+        onGetStarted={onGetStarted}
       />
     );
   }
@@ -300,31 +303,93 @@ function Empty() {
 }
 
 /**
- * A linked household's live decision (ticket 0056). There is no hero, no paydown, no streak — those
- * are summary stats over a graded *window*, and a linked household has one decision for today, not a
- * history. So this is the honest surface: the greeting, "today", and the single decision card (which
- * carries the Attest CTA on a coverage refusal, exactly as in the feed). The "why" tap (`onExplain`)
- * has no live backend yet — `/decisions/{day}/explain` reads seeded rows — so tapping opens the
- * modal's own error state; wiring a live explanation is a follow-up.
+ * A linked household's live decision (ticket 0056). It has no graded *window*, so no
+ * interest-avoided/streak rollup and no paydown bar — those summarise days of realized sweeps a
+ * linked household hasn't had yet. In that hero's place sits a **status panel** that tells the
+ * household where they stand instead of showing a hollow $0 reward: either "nothing owed" or "here's
+ * what paying down early could do — get started". Below it, "today" and the single decision card
+ * (which carries the Attest CTA on a coverage refusal, exactly as in the feed).
+ *
+ * The "why" tap (`onExplain`) has no live backend yet — `/decisions/{day}/explain` reads seeded rows
+ * — so tapping opens the modal's own error state; a live explanation is a follow-up.
  */
 function LiveDecision({
   today,
   decision,
   onExplain,
   onAttest,
+  onGetStarted,
 }: {
   today: IsoDate;
   decision: Decision;
   onExplain: (decision: Decision) => void;
   onAttest?: (refusal: CoverageRefusal) => void;
+  /** Open the setup surface (Settings) from the "get started" CTA on the status panel. */
+  onGetStarted?: () => void;
 }) {
   return (
     <View style={styles.shell}>
       <View style={styles.list}>
         <Text style={styles.greeting}>Your money, working.</Text>
+        <StatusHero decision={decision} onGetStarted={onGetStarted} />
         <Text style={styles.feedLabel}>Today · {formatDateShort(today)}</Text>
         <DecisionFeedItem decision={decision} onPress={onExplain} onAttest={onAttest} />
       </View>
+    </View>
+  );
+}
+
+/**
+ * The status panel that stands in for the reward hero before a household has any realized paydown.
+ * Two states, keyed on whether there is debt to pay down at all:
+ *
+ * - **Nothing owed** — no card is costing them interest. A win worth saying out loud, not a blank.
+ * - **Debt, not yet working** — the opportunity, framed with their real balance, and a CTA into
+ *   setup. This is the honest replacement for a "$0 beaten out of the bank" hero on a just-linked
+ *   household: nothing has swept *yet*, so we point forward instead of celebrating a zero.
+ *
+ * `paid_off` and `debt_balance` come straight off the live decision — no summary needed.
+ */
+function StatusHero({
+  decision,
+  onGetStarted,
+}: {
+  decision: Decision;
+  onGetStarted?: () => void;
+}) {
+  const owesInterest = !decision.paid_off && Number(decision.debt_balance) > 0;
+
+  if (!owesInterest) {
+    return (
+      <View style={styles.heroCard}>
+        <Text style={styles.heroLabel}>Your debt</Text>
+        <Text style={styles.paidOff}>No interest to pay 🎉</Text>
+        <Text style={styles.heroFoot}>
+          Nothing is costing you interest right now. We&apos;ll keep watch and tell you if that
+          changes.
+        </Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.heroCard}>
+      <Text style={styles.heroLabel}>You could be saving</Text>
+      <Text style={styles.heroValue}>{formatMoney(decision.debt_balance)}</Text>
+      <Text style={styles.heroFoot}>
+        is sitting on high-interest cards. Move spare cash to the priciest one early and you pay less
+        interest — automatically, once you&apos;re set up.
+      </Text>
+      {onGetStarted ? (
+        <Pressable
+          onPress={onGetStarted}
+          accessibilityRole="button"
+          style={({ pressed }) => [styles.heroCta, pressed && styles.pressed]}
+          testID="get-started-cta"
+        >
+          <Text style={styles.heroCtaLabel}>Get started</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -418,6 +483,19 @@ const styles = StyleSheet.create({
   heroLabel: { ...type.label, color: '#8FBFB4' },
   heroValue: { fontSize: 38, fontWeight: '700', color: '#FFFFFF', marginTop: space.xs },
   heroFoot: { ...type.small, color: '#8FBFB4', marginTop: space.xs },
+
+  // The "get started" CTA on the status panel. Blue on the deep-green hero — the one call to action,
+  // set apart from the reversed-out text around it.
+  heroCta: {
+    marginTop: space.lg,
+    minHeight: MIN_TAP_TARGET,
+    alignSelf: 'flex-start',
+    justifyContent: 'center',
+    paddingHorizontal: space.lg,
+    borderRadius: radius.pill,
+    backgroundColor: colors.brandBlue,
+  },
+  heroCtaLabel: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
 
   paidOff: { ...type.heading, color: '#FFFFFF', marginTop: space.lg },
 

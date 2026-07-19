@@ -161,6 +161,7 @@ export default function App() {
           linked={households.find((h) => h.id === household)?.archetype === null}
           onExplain={setExplaining}
           onAttest={setAttestFor}
+          onGetStarted={() => setSettingsOpen(true)}
         />
       </View>
       <View style={[styles.screen, tab === 'spending' ? null : styles.hidden]}>
