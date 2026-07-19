@@ -445,29 +445,9 @@
         <span class="update-cat">Store &middot; Postgres on Neon</span>
         <p>The database moved onto <b>managed Postgres (Neon)</b> and is <b>built and live</b>, with
            four households &times; 90 days landed on it. The move off SQLite was a prerequisite for
-           moving money safely: <b>household isolation is enforced by the database itself</b> &mdash;
-           a Postgres role the service is pinned to, so it refuses to start if it could bypass the
-           per-<code>household_id</code> boundary &mdash; and money is stored as <code>NUMERIC</code>,
-           not float. Neon gives a hosted, deployable Postgres that scales to zero between runs, so the
+           moving money safely: <b>household isolation is enforced by the database itself.
+             Neon gives a hosted, deployable Postgres that scales to zero between runs, so the
            live core has a real database under it rather than a local file.</p>
-      </div>
-      <div class="update-item">
-        <span class="update-cat">Ingest &middot; Plaid transport</span>
-        <p>The <b>Plaid ingest transport</b> &mdash; token exchange, a signature-verified webhook
-           doorbell, and a cursored sync that lands transactions in a table &mdash; is <b>built and
-           proven end-to-end against Plaid Sandbox</b>, but not deployed.</p>
-      </div>
-      <div class="update-item">
-        <span class="update-cat">Act &middot; payment rail</span>
-        <p>The <b>payment rail</b> that moves the money is <b>built in shadow</b> &mdash; a two-leg
-           design behind a single <code>TransferProvider</code> port. The <b>debit leg</b> pulls the
-           surplus from checking over ordinary ACH (<b>Plaid Transfer</b>, debiting the item the
-           ingest rung already linked; <b>Increase</b> is the swappable backup, ADR-0007). The
-           <b>payoff leg</b> lands that money on a card at someone else&rsquo;s issuer &mdash; which
-           plain ACH cannot route &mdash; through a biller-payoff API (<b>Method</b>, which reaches
-           any issuer). But the rail <b>moves nothing</b>: the saga runs and writes its ledger while
-           <code>submit()</code> is a logged no-op, not yet proven against the live Plaid Transfer,
-           Increase, and Method sandboxes.</p>
       </div>
     </div>
 
