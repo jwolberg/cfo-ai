@@ -2757,3 +2757,27 @@ exactly what the seeder does (`backend/seed.py:_write_spend_projection`):
 - Verified live (`/spend` → 200, 2 Plaid cards with real statement balances + reserves) and by
   `tests/test_livepath.py::TestLiveSpendSurface`; 42 tests pass in the livepath/spend/linkedpath
   sweep, ruff clean. The explain-on-tap modal is still seeded-only — a separate follow-up.
+
+### Stage 0 of the read-only demo deploy: durable demo session + demo-household import (2026-07-18)
+Ticket 0057, the buildable half (no prod impact). Two pieces, proven locally end to end:
+
+- **Durable demo session** (`backend/identity/demo.py` + `POST /demo/session`): mints a fresh
+  read-only *viewer* `session_jwt` server-side, cached and re-minted before its ~5-minute expiry, so
+  a public web session survives past the token's lifetime. Safe by construction — it only ever mints
+  the viewer, which is refused every owner-gated write, so an unauthenticated public endpoint handing
+  it out can do nothing but read demo-plane households. 503 (not 500) when unconfigured.
+- **Web fetch + refresh** (`mobile/src/api/session.ts`, `client.ts`): on web with no baked token, the
+  app fetches `/demo/session`; `client.request` clears the cache and retries once on a 401, so an
+  expired token self-heals mid-session. Native is unchanged (a signed-out native user is not dropped
+  onto the demo plane).
+- **Import** (`scripts/seed_demo_household.py`): copies a linked Sandbox household into a target DB as
+  an `is_demo`, read-only household — Plaid rows (ids remapped to synthetic values, access token
+  blanked; the demo never syncs, so prod needs no Plaid creds), a seeded policy, an attestation over
+  the copied cards, and the demo Stytch user reconciled onto the viewer membership. Idempotent.
+
+Verified locally: web app → `POST /demo/session` → `GET /households` shows the imported demo
+household → `/live-decision` + `/spend` return the real Sandbox-derived decision; `PATCH /policy` and
+`POST /attest` are **403** (structural read-only). Tests: `tests/test_demo_session.py` (cache/remint/
+config/route) + 3 new session.ts web-path tests; full backend suite green, 94 mobile tests, ruff
+clean. Stages 1–4 (Neon migrate 0004→0014, import into Neon, deploy API, deploy web) are the
+production steps, each always-ask.

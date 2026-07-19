@@ -17,5 +17,10 @@ export STYTCH_SECRET="$(security find-generic-password -s cfo-ai-stytch-secret -
 export PLAID_ENV="sandbox"
 export PLAID_CLIENT_ID="$(security find-generic-password -s cfo-ai-plaid-client-id -w)"
 export PLAID_SECRET="$(security find-generic-password -s cfo-ai-plaid-secret -w)"
+# The public demo's read-only viewer identity (ticket 0057). Local values; in prod the password is
+# a Secret Manager entry. `POST /demo/session` authenticates this Stytch user and hands out its
+# (viewer, write-nothing) session_jwt.
+export DEMO_STYTCH_EMAIL="demo-viewer@example.com"
+export DEMO_STYTCH_PASSWORD="demo-viewer-correct-horse-battery-staple-7z!"
 
 exec .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
