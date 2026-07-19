@@ -30,6 +30,7 @@ import type {
   ExplainResponse,
   HouseholdsResponse,
   IsoDate,
+  LiveDecisionResponse,
   Policy,
   PolicyUpdate,
   SpendResponse,
@@ -158,6 +159,16 @@ export function getHouseholds(): Promise<HouseholdsResponse> {
 /** The served window: the feed (newest first) and the summary stats above it. */
 export function getDecisions(householdId: string): Promise<DecisionsResponse> {
   return request<DecisionsResponse>(`/households/${householdId}/decisions`);
+}
+
+/**
+ * A *linked* household's live decision, re-decided from its current policy + attestation (ticket
+ * 0056). Only valid for a linked household (`archetype === null`); a seeded/demo household `409`s
+ * here and is read through {@link getDecisions} instead. One decision, no window — see
+ * {@link LiveDecisionResponse}.
+ */
+export function getLiveDecision(householdId: string): Promise<LiveDecisionResponse> {
+  return request<LiveDecisionResponse>(`/households/${householdId}/live-decision`);
 }
 
 /**

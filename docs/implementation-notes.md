@@ -2710,3 +2710,33 @@ needs a depository account to fund from and a card to decide about, and both com
   `apr_source=estimated` — add `liabilities` to the link products for real card terms. (2) A freshly
   linked household has no `policy_events`, so `/live-decision` returns `no_household` until the owner
   sets guardrails (`PATCH /policy`) — decide whether linking should seed a default policy.
+
+### Mobile: show a linked household's live decision in the app (2026-07-18)
+Dogfooding follow-on to the link→decision loop. The mobile feed only ever read `GET /decisions`
+(the seeded graded window); nothing consumed `GET /live-decision`, so a linked (Plaid-connected)
+household could not be shown in the app at all. Added the path:
+
+- `mobile/src/api/types.ts`: `LiveDecisionResponse = { today, decision }` (the `decision` is the same
+  `Decision` shape the feed already renders — both come from the backend's one `decision_json`).
+- `mobile/src/api/client.ts`: `getLiveDecision(householdId)`.
+- `mobile/src/screens/Dashboard.tsx`: a `linked` prop selects the source. A linked household fetches
+  `/live-decision` and renders a single `DecisionFeedItem` (reused as-is) — **no hero/paydown/summary**,
+  because those are stats over a graded window a linked household doesn't have. `App.tsx` passes
+  `linked = household.archetype === null`, matching the backend's own gate (`live_decision` 409s a
+  demo/archetype household; `/decisions` 409s a linked one).
+- Verified: `Dashboard.test.tsx` (reads live-decision not the feed, renders the card, no hero) +
+  typecheck; 89 mobile tests pass. Ran end to end in the browser (`expo start --web`) against the
+  local API showing the real Sandbox-linked household `hh_d49bb…`'s refuse decision.
+
+**Known degradations for a linked household (noted, not fixed):** the Spend tab (`/spend`) and the
+"why" explain modal (`/decisions/{day}/explain`) are seeded-only and 404 for a purely-linked
+household — they render their own error states. Live equivalents are follow-ups.
+
+**Dev-auth finding + workaround.** The Stytch `session_jwt` lives exactly **5 minutes** (decoded:
+exp−iat=300s) while the session lasts 3h, and **no refresh mechanism is built** (the "+ refresh"
+half of KTD-4). A token baked into the web bundle 401s after 5 min. For local browsing, added
+`scripts/dev_auth_proxy.py` (dev-only, localhost): re-mints the dogfood JWT and injects
+`Authorization` on every forwarded request, so the browser session never expires. Expo points at the
+proxy (`EXPO_PUBLIC_API_URL=http://localhost:8010`). This same 5-min/no-refresh gap, plus no web
+sign-in (0055 native-only) and the security hole of baking an owner token into a public build, is
+why the **production** goal is blocked — see the deploy discussion, not a code change here.

@@ -32,20 +32,29 @@ import {
   View,
 } from 'react-native';
 
-import { ApiError, getDecisions } from '../api/client';
-import type { Decision, DecisionsResponse } from '../api/types';
+import { ApiError, getDecisions, getLiveDecision } from '../api/client';
+import type { Decision, DecisionsResponse, IsoDate } from '../api/types';
 import { DecisionFeedItem, type CoverageRefusal } from '../components/DecisionFeedItem';
-import { formatMoney, formatMoneyRounded } from '../format';
+import { formatDateShort, formatMoney, formatMoneyRounded } from '../format';
 import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, shadow, space, type } from '../theme';
 
 type State =
   | { status: 'loading' }
   | { status: 'ready'; data: DecisionsResponse }
+  // A *linked* household (ticket 0056): one live decision for `today`, no graded window.
+  | { status: 'ready-live'; today: IsoDate; decision: Decision }
   | { status: 'failed'; kind: ApiError['kind'] };
 
 interface Props {
   /** Which household's feed. Owned by `App.tsx` — see its note on why this is not local state. */
   householdId: string;
+  /**
+   * A *linked* household (`archetype === null`) is decided live from its current Plaid data through
+   * `GET /live-decision` — one decision, no window. A seeded/demo household reads the graded feed
+   * (`GET /decisions`). App.tsx knows which from the household's `archetype`, and the backend
+   * enforces the same split (a demo household `409`s live-decision, a linked one `409`s /decisions).
+   */
+  linked?: boolean;
   onExplain: (decision: Decision) => void;
   /** Open Attest from a coverage-incomplete refusal in the feed (ticket 0052). */
   onAttest?: (refusal: CoverageRefusal) => void;
@@ -68,7 +77,7 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
-export function Dashboard({ householdId, onExplain, onAttest }: Props) {
+export function Dashboard({ householdId, linked, onExplain, onAttest }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
 
@@ -96,7 +105,13 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
     // 0025 exists to avoid — and it is worse than a spinner precisely because it looks fine.
     setState({ status: 'loading' });
     try {
-      setState({ status: 'ready', data: await getDecisions(householdId) });
+      if (linked) {
+        // A linked household has no graded window — just today's live decision from its Plaid data.
+        const live = await getLiveDecision(householdId);
+        setState({ status: 'ready-live', today: live.today, decision: live.decision });
+      } else {
+        setState({ status: 'ready', data: await getDecisions(householdId) });
+      }
     } catch (error) {
       // The timeout lives in the client, not here (`REQUEST_TIMEOUT_MS`), so there is no
       // path to a spinner that spins forever — the request always resolves one way or the
@@ -104,7 +119,7 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
       const kind = error instanceof ApiError ? error.kind : 'network';
       setState({ status: 'failed', kind });
     }
-  }, [householdId]);
+  }, [householdId, linked]);
 
   useEffect(() => {
     void load();
@@ -121,6 +136,17 @@ export function Dashboard({ householdId, onExplain, onAttest }: Props) {
 
   if (state.status === 'failed') {
     return <Unreachable onRetry={load} />;
+  }
+
+  if (state.status === 'ready-live') {
+    return (
+      <LiveDecision
+        today={state.today}
+        decision={state.decision}
+        onExplain={onExplain}
+        onAttest={onAttest}
+      />
+    );
   }
 
   const { summary, decisions } = state.data;
@@ -269,6 +295,36 @@ function Empty() {
   return (
     <View style={styles.card}>
       <Text style={styles.emptyText}>No decisions in this window yet.</Text>
+    </View>
+  );
+}
+
+/**
+ * A linked household's live decision (ticket 0056). There is no hero, no paydown, no streak — those
+ * are summary stats over a graded *window*, and a linked household has one decision for today, not a
+ * history. So this is the honest surface: the greeting, "today", and the single decision card (which
+ * carries the Attest CTA on a coverage refusal, exactly as in the feed). The "why" tap (`onExplain`)
+ * has no live backend yet — `/decisions/{day}/explain` reads seeded rows — so tapping opens the
+ * modal's own error state; wiring a live explanation is a follow-up.
+ */
+function LiveDecision({
+  today,
+  decision,
+  onExplain,
+  onAttest,
+}: {
+  today: IsoDate;
+  decision: Decision;
+  onExplain: (decision: Decision) => void;
+  onAttest?: (refusal: CoverageRefusal) => void;
+}) {
+  return (
+    <View style={styles.shell}>
+      <View style={styles.list}>
+        <Text style={styles.greeting}>Your money, working.</Text>
+        <Text style={styles.feedLabel}>Today · {formatDateShort(today)}</Text>
+        <DecisionFeedItem decision={decision} onPress={onExplain} onAttest={onAttest} />
+      </View>
     </View>
   );
 }
