@@ -1,11 +1,20 @@
 ---
 title: The CEO demo — the read-only public demo, told as the 0057 story
 type: demo
-status: draft
+status: superseded
+superseded_by: docs/plans/2026-07-22-001-feat-proving-the-engine-harness-and-observability-plan.md
 date: 2026-07-21
 origin: CEO asked "how much of this is AI driven code?"; the demo is the answer's evidence
 ticket: docs/tickets/0057-deployed-web-shows-a-linked-household.md
 ---
+
+> **Superseded 2026-07-22.** This plan pitched the deploy's **access-control** story as the demo.
+> That is plumbing — `docs/decision-engine.md` opens by saying the decision, not the plumbing around
+> it, is what the company lives or dies on. The demo is now the engine and the rig that proves it:
+> [`2026-07-22-001`](2026-07-22-001-feat-proving-the-engine-harness-and-observability-plan.md).
+> What survives from here: the measurement discipline (§ "Preparation owed" found a real escalation,
+> now `0058`), the Sandbox caveat, and the deploy chores — all carried into the new plan's last
+> section. Kept for the record, not to follow.
 
 # The CEO demo — the read-only public demo, told as the 0057 story
 

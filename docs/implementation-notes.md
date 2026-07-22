@@ -2832,3 +2832,33 @@ the seeded viewer nor `DEMO_STYTCH_EMAIL` — the AC is that the gate follows th
 suite green, ruff clean. **Not yet deployed**: migration `0015` has to run on Neon and the API
 redeploy has to land before the production hole is actually closed, and the junk household from the
 measurement pass still needs deleting.
+
+### The demo was pointed at the wrong thing (2026-07-22)
+The 2026-07-21 demo plan pitched the read-only deploy's **access-control** story. That is plumbing,
+and `docs/decision-engine.md` opens by saying the decision — not the plumbing around it — is what the
+company lives or dies on. Superseded by
+`docs/plans/2026-07-22-001-feat-proving-the-engine-harness-and-observability-plan.md`, which makes the
+demo the engine and the rig that proves it. The old plan is kept, marked superseded, because its
+measurement discipline is what found `0058`.
+
+Reading the rig before designing changed the proposal: the proof harness is **already largely built**
+(`sim/household.py`'s deterministic zero-inflated-lognormal generator with `as_of` slicing against
+lookahead; `outcome.py`'s four distinct facts; `replay.py` applying the sweep itself so a caller
+cannot produce a flattering shadow report; `calibrate.py`'s population sweep and `licensed()` rule,
+which has already refused a change). So the plan adds nothing to grading semantics. Three gaps only:
+
+1. **Nothing to look at** — `calibrate.report()` returns a string (`0060`).
+2. **Scenarios are shapes, not events** — seeds and spend distributions, never "income skipped a
+   cycle" or "a card appeared mid-history". Also why the flagship demo opens on a refusal: nothing in
+   the rig is designed to produce a sweep (`0059`).
+3. **The harness stops at the decision** — transfers are assumed to post same-day and succeed
+   (`0061`).
+
+The load-bearing new metric is **decision mix**. Every safety number in the rig today improves the
+more the engine refuses — breach rate falls, sweep-caused overdrafts fall, and `false_refusal_cost`
+deliberately excludes deferral codes — so an engine that silently stopped sweeping would pass every
+existing gate with perfect scores. Nothing catches that today.
+
+Tickets `0059`–`0062` filed. `0059` → `0060` is the short path to a demo-able artifact. The read-only
+deploy work is demoted to support: the site is where a scenario-seeded household renders, and `0058`
+becomes a 60-second answer if asked about security rather than the headline.
