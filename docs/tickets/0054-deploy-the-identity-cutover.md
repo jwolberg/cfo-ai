@@ -53,11 +53,29 @@ Per `deploy.md [0.5]`, deploying the new code without the setup below breaks the
 
 ## Acceptance criteria
 
-- [ ] Stytch secrets stored/wired; the service boots against them; an authed request no longer 500s.
+- [x] Stytch secrets stored/wired; the service boots against them; an authed request no longer 500s.
+      — *Measured 2026-07-21: `POST /demo/session` mints a real Stytch `session_jwt` in prod, and
+      authed `GET /households`, `/live-decision`, `/spend`, `/policy` all return 200.*
 - [ ] Migrations `0011`–`0013` applied to Neon; no already-seeded household lost its policy.
-- [ ] The public demo (`cfo-ai-1.web.app`) works **with no login** on the pre-seeded `viewer` session.
-- [ ] A non-member/invalid session is refused on the deployed API (the cutover's whole point).
+      — *Implied by the working authed reads (the identity tables exist and `/policy` answers), but
+      not directly verified against Neon. Confirm before closing.*
+- [x] The public demo (`cfo-ai-1.web.app`) works **with no login** on the pre-seeded `viewer` session.
+      — *Measured 2026-07-21: the deployed web bundle carries no baked token and fetches
+      `/demo/session`; the demo household's live decision and spend surface both render from prod.*
+- [x] A non-member/invalid session is refused on the deployed API (the cutover's whole point).
+      — *Measured 2026-07-21: a non-member `household_id` named directly is **403**; a missing token
+      and a tampered token are both **401**.*
 - [ ] `deploy.md` re-verified and dated; the demo-session mint command recorded.
+      — *Not done, and the runbook is now actively wrong: it still records the live revision as
+      `resfi-api-00003-viv` (2026-07-16), which the 0057 stage-3 deploy superseded.*
+
+## State as of 2026-07-21 (measured, not assumed)
+
+The cutover **shipped** with the 0057 read-only demo deploy (`0a8674f`, `6c0b0db`) — this ticket sat
+`open` while three of its five ACs were already true in production. It stays open on two things: the
+Neon migration confirmation, and the stale `deploy.md`. Note that the deployed cutover is **not**
+fully sound — see `0058`: `POST /households` has no plane gate, so the demo viewer can create a real
+household.
 
 ## Notes
 
