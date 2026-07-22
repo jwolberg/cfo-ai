@@ -92,6 +92,9 @@ is already spent.
       seeding (`0031`). Rotation lives in `neon-provisioning.md`; the unreachable-database symptom
       table is `deploy.md` `[5]`. What is missing is the cold-start section, which cannot be written
       before it is measured.*
+      *(2026-07-21: the precondition — "needs a real deploy" — is now met. The 0057 stage-3 deploy
+      superseded `resfi-api-00003-viv`, and prod answers authed reads. Both remaining ACs are
+      unblocked; what is left is doing the measurement, then writing the cold-start section.)*
 - [x] The deployed demo serves the four archetypes. — **Done 2026-07-16.** This was called "the
       blocker, and it is not code", and that was right: the fix was running `deploy.md` `[3]`.
       Revision `resfi-api-00003-viv` serves `demo_biweekly`, `semimonthly_portfolio`,

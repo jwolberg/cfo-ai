@@ -2781,3 +2781,26 @@ household → `/live-decision` + `/spend` return the real Sandbox-derived decisi
 config/route) + 3 new session.ts web-path tests; full backend suite green, 94 mobile tests, ruff
 clean. Stages 1–4 (Neon migrate 0004→0014, import into Neon, deploy API, deploy web) are the
 production steps, each always-ask.
+
+### Measuring the deployed read-only demo — and one hole it found (2026-07-21)
+The fail-closed check owed by the demo plan, run against `https://resfi-api-ax7jrjo2tq-uc.a.run.app`
+with a token from the unauthenticated `POST /demo/session`. Reads all answer from prod:
+`GET /households`, `/live-decision` (a real `refuse` / `card_behavior_unknown` decision), `/spend`
+(real statement balances), `/policy` — 200. Refusals hold: `PATCH /policy` **403**, `POST /attest`
+**403**, a non-member `household_id` named directly **403**, no token and a tampered token **401**.
+
+**`POST /households` returned 201.** The route depends on `current_user` alone — correctly no
+`authorize_household` (there is no household yet), but therefore no role gate, and role is the only
+thing making the viewer read-only. `create_household(..., owner_user_id=user.id)` then makes the demo
+viewer **owner** of a real (`is_demo = false`) household, which re-opens `PATCH /policy`,
+`POST /attest`, and `POST /plaid/link/exchange` on it. So `demo.py`'s "the worst a caller can do is
+read demo-plane households" and `status.html`'s "structurally read-only" are both false in prod, and
+KTD-10 holds for reads but not here. Bounded by the route being idempotent per user (one household
+total, since the viewer is one shared identity) and by prod being `PLAID_ENV=sandbox`. Filed as
+`0058`; fix is an identity-level gate on the demo plane, not a role check.
+
+The measurement created `hh_2b15ef3a51b347e3bcdaa300820b9395`, which the demo viewer's
+`GET /households` lists — so the public picker shows it until a scoped two-row delete removes it.
+Ledger reconciled the same day: `0054` had three of five ACs already true in prod (and a `deploy.md`
+that still names the superseded revision), `0026`'s two open ACs are unblocked now that a real deploy
+exists, and `0057` now records that lane C shipped and lane A is the remainder.
