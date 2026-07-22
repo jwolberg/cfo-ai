@@ -50,8 +50,25 @@ why the current demo has nothing to show but a refusal.
 **2. Scenarios are shapes, not events.** The rig varies spend distribution and seed. It does not vary
 *what happens to a household*: income skipping a cycle, a surprise annual charge, a card appearing
 mid-history, a statement landing late, a household that overdrafts on its own. Those are the days a
-sweep engine earns or loses its keep. This is also why the flagship demo household answers
-`card_behavior_unknown` — nothing in the rig is designed to produce a **sweep**.
+sweep engine earns or loses its keep.
+
+> **Corrected 2026-07-22, by running it.** This gap originally read "nothing in the rig is designed
+> to produce a **sweep**", offered as the reason the flagship demo opens on `card_behavior_unknown`.
+> That is false, and the plan's own headline metric is what disproves it. Replaying the existing
+> `SHAPES × SEEDS` population through `replay()`'s exact wiring — 1,350 graded days — gives a
+> decision mix of **10.6% `SWEEP`** (143 days), 59.7% `CADENCE_HOLD`, 20.0% `CARD_BEHAVIOR_UNKNOWN`,
+> 9.7% `NO_SURPLUS`. `DEMO_POLICY` sets `min_days_between_sweeps=7`, so the ceiling is **14.3%** and
+> the engine is running at ~74% of it; on days it was both permitted and had surplus, it swept. This
+> corroborates the seeder's own record (10 / 5 / 9 / 11 sweeps per 90 days, `DEPLOY.local.md` §3e).
+>
+> The true statement is narrower: the **linked Plaid demo household** opens on
+> `card_behavior_unknown` because it has fewer than three observed cycles — a *data* condition, not
+> a rig limitation. That changes the cost of fixing the demo's opening frame (see `0059`'s note): the
+> synthetic archetypes already sweep, so re-seeding may not need the scenario library at all.
+>
+> The gap that survives is the real one, and it is still worth building: the rig varies **shapes,
+> not events**, so no scenario exists that is *designed* to exercise a specific event and assert a
+> specific class of response.
 
 **3. The harness stops at the decision.** A decision to move $340 is graded as though the money moved,
 instantly and successfully. Transfers post late, fail, and return, and each changes the *next* day's
@@ -65,13 +82,19 @@ Named, parameterized, adversarial households layered on the existing generator. 
 designed **events**, each carrying a stated expectation about the *class* of decision it should
 produce, so the assertion is behavioural rather than "it did not crash".
 
-    steady_sweeper            — should sweep on most days (the no-decision-decision fix)
+    steady_sweeper            — should sweep on most days it is ALLOWED to (see the cadence note)
     income_skips_a_cycle      — the forecast's worst case, arriving on schedule
     surprise_annual_charge    — a tail event inside the horizon
     card_appears_midstream    — coverage changes under the engine's feet
     statement_lands_late      — the APR/obligation path with stale terms
     self_inflicted_overdraft  — the household breaches alone; the engine must not be blamed
     thin_history              — should defer, and must **stop** deferring at cycle 3
+
+> **Express every sweep expectation against cadence-eligible days, never against all graded days.**
+> `min_days_between_sweeps=7` caps the achievable rate at 14.3%, so "sweeps on a majority of graded
+> days" is unsatisfiable by construction — the only way to pass it is to change the policy, which
+> measures a different product than the one that ships. `CADENCE_HOLD` days are not the engine
+> declining to act; they are a rule the user chose, doing what it was chosen for.
 
 ### B — Observability surface (`0060`) — the piece that does not exist, and the demo
 
@@ -89,7 +112,22 @@ committed. Same discipline as `status.html`: diffable, shareable, demo-able with
 
 **Decision mix is the load-bearing new metric.** Every safety number the rig has today gets *better*
 the more the engine refuses, so a silently-dead engine that never sweeps passes all of them. Nothing
-currently catches that.
+currently catches that. (Run today it reads 10.6% sweep against a 14.3% cadence ceiling — so the
+metric's first act is to certify the engine is *alive*, not to condemn it.)
+
+**This is not purely a rendering job, and pricing it as one is the plan's biggest hidden cost.** Two
+instrumentation changes come first:
+
+- **`Graded` drops the `Decision`.** `backend/replay.py:79` carries `outcome` and `deferred: bool`
+  and nothing else, so the reason codes never reach a caller. Decision mix *by code* — the whole
+  point — needs `replay()` to carry the decision through. Small, contained, and unavoidable.
+- **`decide.py` emits a `Reason` only for gates that fire.** Several paths `return` early. So the
+  day-trace requirement "show every gate evaluated, including the ones that did not" cannot be met
+  by rendering what exists; it needs the engine to say what it considered, not only what it
+  concluded. That means editing the one module this repo most protects, for an observability
+  feature. **Prefer the cheaper form**: render the gates that fired plus the inputs each
+  non-firing gate would have read, derived outside `decide.py`. If a real trace is wanted, it is its
+  own ticket with its own risk, not a line item under a reporting change.
 
 ### C — The payment leg (`0061`)
 
@@ -115,8 +153,15 @@ Roughly ten minutes, and the through-line is *how would I know if this were wron
 3. **The population panel.** Decision mix visible, so it is demonstrably not a system that only ever
    says no — the objection the current demo invites.
 4. **A returned transfer** (once `0061` lands) and the engine reacting to it.
-5. **`licensed()` saying no.** The rig refusing a change its author wanted. This is the pitch: *I
-   built the thing that tells me when I am wrong, and it has already told me.*
+5. **`licensed()` saying no — and, better, `licensed()` having been wrong.** Two beats, and the
+   second is the stronger one. It did refuse a change its author wanted: nothing at or below
+   `q=1.0` is licensed, and the dial still ships at `None`
+   (`docs/learnings/2026-07-14-the-empirical-spend-model-is-not-a-drop-in.md`). But it *would have
+   licensed a $1.08M regression* — its two original conditions were both monotone in reserve size,
+   so tightening the dial far enough passed both, and `report()` would have announced that
+   regression as a buy-back of `$-1,078,015.78` (`implementation-notes.md`, 2026-07-14). A third
+   condition and a test now pin it. The pitch is not "my gate held" — it is *my own safety gate was
+   wrong in a way that would have shipped, and measuring it is what caught it.*
 
 **The honest limit, said out loud, unprompted:** synthetic data proves the engine is internally
 consistent, behaves as specified across shapes and events, and that changes are comparable
@@ -132,15 +177,35 @@ It stays, demoted from headline to support, and it is where the harness's conclu
   `0059` exists, the demo household should be seeded from a scenario that **sweeps**, so the public
   demo stops opening on `card_behavior_unknown`.
 - `0058` (the demo plane cannot create a real household) is fixed in code and **not yet deployed** —
-  migration `0015` on Neon, then the API redeploy. Still required before the site is shown to anyone.
+  migration `0015` on Neon, then the API redeploy. **This is not a "whenever" chore and the Sequence
+  section below is corrected to match.** The site is public and live *now*, with the escalation open,
+  so the exposure is running whether or not anyone is being shown it. It is under an hour of work.
 - The junk household `hh_2b15ef3a51b347e3bcdaa300820b9395` from the 2026-07-21 measurement pass is
-  still in Neon and still in the public picker. Delete it.
+  still in Neon and still in the public picker. **Delete it before running migration `0015`, not
+  after.** `0015`'s backfill marks a user demo only if *every* membership is to a demo household, and
+  that junk row is a non-demo household the demo viewer owns — migrate with it in place and the demo
+  viewer is backfilled `false`, `current_real_user` never fires, and the fix ships **inert** on a
+  deployment that looks fixed. Nothing in the deploy path re-asserts the flag: both seeders do
+  (`backend/seed.py:230`, `scripts/seed_demo_household.py:101`), but `scripts/deploy_prod.sh` runs
+  neither.
 - The security story becomes a **60-second answer** if asked "is it secure?" — a hole was found in my
   own deployment by testing it, and the fix closed the class rather than the instance. A good answer
   to a question; never the headline.
 
 ## Sequence
 
-`0059` → `0060` gives a demo-able artifact and is the short path. `0061` and `0062` follow. The
-deploy chores (0015 on Neon, redeploy, junk-household cleanup) are independent and can happen
-whenever — they gate showing the *site*, not the harness.
+**`0058` first** — cleanup, then `0015` on Neon, then the redeploy, then re-run the fail-closed check
+against the deployed API (`scripts/verify_demo_readonly.sh`). It is short, it is prepared, and it is
+the only item here with a live public exposure behind it. An earlier draft of this section filed it
+under "whenever", which contradicted the section above; that has been resolved in favour of the
+stricter reading.
+
+Then `0059` → `0060` for the demo-able artifact, with `0061` and `0062` following. Two notes that
+change the shape of that path:
+
+- **Re-seeding the public demo household may not need `0059` at all.** The synthetic archetypes
+  already sweep (measured above), so seeding the demo from one of them could fix the "opens on a
+  refusal" problem in hours. Try that first; if it works, `0059` is no longer on the demo's critical
+  path and becomes what it should be — a proof-rig investment, sequenced on its own merits.
+- **`0060` carries an instrumentation change before any rendering** (`Graded` must carry the
+  decision). Budget it as such.

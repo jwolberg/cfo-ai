@@ -19,9 +19,19 @@ created: 2026-07-22
 household*. So the harness measures the engine across statistical shapes and never across the events
 that actually decide whether a sweep engine earns its keep.
 
-The visible symptom: the flagship linked demo answers `card_behavior_unknown` — a refusal. Nothing in
-the rig is **designed to produce a sweep**, so the one thing a viewer most needs to see, the product
-working, is absent by construction.
+> **Corrected 2026-07-22 (measured, before building).** This ticket opened by claiming "nothing in
+> the rig is designed to produce a sweep", citing the linked demo's `card_behavior_unknown`. Running
+> the existing `SHAPES × SEEDS` population through `replay()`'s wiring — 1,350 graded days — gives
+> **10.6% `SWEEP`** (143 days), 59.7% `CADENCE_HOLD`, 20.0% `CARD_BEHAVIOR_UNKNOWN`, 9.7%
+> `NO_SURPLUS`, against a cadence ceiling of 14.3%. The rig sweeps. The linked demo household refuses
+> for a *data* reason — under three observed cycles — which is a different problem with a much
+> shorter fix. **Try re-seeding the demo from an existing archetype first**; if that clears the
+> opening frame, this ticket is off the demo's critical path and stands on its own merits as a
+> proof-rig investment.
+
+What is actually missing is events. The rig measures the engine across statistical shapes and never
+across the things that happen *to* a household, so no case exists that is designed to exercise a
+specific event and assert a specific class of response.
 
 ## What a scenario is
 
@@ -29,8 +39,9 @@ A named, parameterized household layered on the existing generator, carrying a *
 about the class of decision it should produce**. The expectation is the point: "it did not crash" is
 not a proof, and "this household should sweep on at least 60% of graded days" is.
 
-    steady_sweeper            — sweeps on most days. The no-decision-decision fix, and the demo's
-                                opening frame.
+    steady_sweeper            — sweeps on most days it is ALLOWED to sweep. The demo's opening
+                                frame. Never state this against *all* graded days: cadence
+                                (`min_days_between_sweeps=7`) caps the achievable rate at 14.3%.
     income_skips_a_cycle      — the forecast's worst case, arriving on schedule.
     surprise_annual_charge    — a tail event inside the horizon.
     card_appears_midstream    — coverage changes under the engine's feet mid-replay.
@@ -54,7 +65,10 @@ not a proof, and "this household should sweep on at least 60% of graded days" is
 
 - [ ] Each scenario is expressed as data (an event schedule), not a bespoke generator per case.
 - [ ] Each carries a machine-checkable expectation about its decision class, asserted in tests.
-- [ ] `steady_sweeper` produces sweeps on a majority of graded days — verified, not assumed.
+- [ ] `steady_sweeper` sweeps on a majority of **cadence-eligible** days — days not held by
+      `CADENCE_HOLD` — verified, not assumed. *(Was "a majority of graded days", which is
+      unsatisfiable: cadence caps the rate at 14.3%, so the only way to pass it was to change the
+      policy, which measures a different product than the one that ships.)*
 - [ ] `self_inflicted_overdraft` records `overdrafted` true and `sweep_caused_overdraft` false.
 - [ ] `thin_history` refuses with `CARD_BEHAVIOR_UNKNOWN` early and **stops** refusing by cycle 3.
 - [ ] `calibrate.measure()` runs across scenarios, not only `SpendSpec` shapes.
@@ -65,5 +79,6 @@ not a proof, and "this household should sweep on at least 60% of graded days" is
 - Spawned from the demo question "how do I prove this works without real customer data?" — the
   answer is largely built (`replay.py` + `outcome.py` + `calibrate.py`); this is one of the three
   things missing from it.
-- Once this lands, re-seed the public demo household from `steady_sweeper` so the deployed site stops
-  opening on a refusal (`0057`).
+- Re-seeding the public demo household so the site stops opening on a refusal (`0057`) is **not
+  blocked on this ticket** — see the correction above. Do it from an existing archetype first, and
+  move it to `steady_sweeper` later if the designed scenario tells a better story.
