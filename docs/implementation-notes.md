@@ -2868,3 +2868,48 @@ six writes at 403, and the three identity cases. 798 passed / 10 skipped against
 (a throwaway instance, since these tests are `requires_db` and skip loudly without one), ruff clean.
 `0058` closed.
 
+
+---
+
+## 2026-07-22 — the picker showed a reviewer a database id
+
+Found by running the demo against production, not by a test. `GET /households` returned four
+entries and one of them was the string `hh_demo_plaid`, sitting between three sentences. The
+reported symptom was "I think I should see something else in order to run the demo".
+
+**Two things were true, and only one of them was a defect.**
+
+The runsheet's pre-flight (`private/demo-runsheet.md`) says the site should land on
+`hh_demo_biweekly` and treats landing anywhere else as membership drift needing
+`grant_demo_viewer_archetypes.py`. Measured: it does land there, and the drift condition had not
+fired. `mobile/App.tsx:73` defaults to `households[0]`, `list_households` is `ORDER BY id`, and
+`hh_demo_biweekly` sorts first — confirmed against the deployed API, and confirmed the deployed
+bundle carries no baked household id and no `localStorage`, so the API list is the only input. The
+screenshot showed `hh_demo_plaid` because it had been *clicked*. The runsheet had sent its reader
+looking for `hh_demo_biweekly` in a UI that shows labels and never shows ids — so the id that *was*
+displayed read as the anomaly. Fixed by putting the id↔label mapping in the pre-flight rather than
+making the reader hold it.
+
+The real defect: `Household.label` fell through to the id for the imported-Plaid demo household.
+Its `archetype` is `NULL` and that null is **load-bearing** — `Dashboard` keys off
+`archetype === null` to take the live-decision path instead of the graded-window one — so it cannot
+be handed an archetype just to earn a name. The `label` docstring's rule ("null archetype means a
+real household, and the demo does not get to name it") was written before a household existed that
+was null *and* `is_demo`. Added that branch, and `is_demo` to the two `SELECT`s that feed it.
+
+**Chosen label: "Live Plaid data"** (user's call, over "Linked bank, two cards"). It breaks the
+parallel structure of the other three, which name a *shape* — cadence and card count. That is the
+point: this household's distinction is not its shape, it is where the numbers came from.
+
+Nothing pinned any of this, which is why it shipped. `tests/test_household_labels.py` now pins the
+copy (pure, no DB) *and* the query — the first cut of the fix had the branch and a
+`SELECT id, archetype` that could never reach it, and a property-only test would have passed while
+the picker stayed broken.
+
+**Follow-up, not built:** the "lands on `hh_demo_biweekly`" property is an emergent consequence of
+alphabetical ordering, not an asserted one. Seed a household whose id sorts before it and the demo
+opens on the wrong household with every test still green. The runsheet's check is currently the only
+thing standing between that and a live demo.
+
+Verified: 803 passed / 10 skipped against a real Postgres, ruff clean. **Not deployed** — production
+still serves the id until the API is redeployed.
