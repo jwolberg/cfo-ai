@@ -224,6 +224,10 @@ def _provision_demo_users(conn: Connection) -> None:
     from backend.db.repository import add_user
 
     add_user(conn, user_id=DEMO_USER_ID, stytch_user_id=DEMO_USER_STYTCH_ID, email=DEMO_USER_EMAIL)
+    # The demo viewer is on the demo plane, and the row says so (ticket 0058) — `add_user` defaults
+    # `is_demo` false and is DO NOTHING on re-run, so the flag is asserted here rather than assumed.
+    # Without it the seeded viewer could `POST /households` and become owner of a real one.
+    conn.execute(text("UPDATE users SET is_demo = true WHERE id = :u"), {"u": DEMO_USER_ID})
     add_user(
         conn,
         user_id=REVIEWER_USER_ID,

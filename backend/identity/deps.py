@@ -53,6 +53,11 @@ class User:
     id: str
     stytch_user_id: str
     email: str | None
+    # True when this identity lives on the public demo plane (ticket 0058). Role refuses the demo
+    # viewer every *household-scoped* write, but a route with no household to authorize against has
+    # no role to check — so the plane has to be readable off the identity itself. False by default:
+    # a JIT-provisioned real user is never a demo one by omission.
+    is_demo: bool = False
 
 
 def get_verifier() -> Verifier:
@@ -101,7 +106,36 @@ def current_user(
             user = get_user_by_stytch_id(conn, stytch_user_id)
 
     assert user is not None  # just provisioned or already present
-    return User(id=user["id"], stytch_user_id=user["stytch_user_id"], email=user["email"])
+    return User(
+        id=user["id"],
+        stytch_user_id=user["stytch_user_id"],
+        email=user["email"],
+        # `.get` rather than `[...]`: a stub verifier's fake row need not carry the column.
+        is_demo=bool(user.get("is_demo", False)),
+    )
+
+
+def current_real_user(user: Annotated[User, Depends(current_user)]) -> User:
+    """`current_user`, minus the demo plane — the gate for routes that have **no household to
+    authorize against** (ticket 0058).
+
+    `authorize_household_owner` is the write gate everywhere a `household_id` is in the path: it
+    reads the caller's role and refuses a `viewer`. But `POST /households` creates the very
+    household a role would be scoped to, and `POST /plaid/link/*` is keyed to the user rather than
+    a household, so neither has a role to check. Without this, the public demo viewer could create
+    a real household, become its owner, and re-open every write it had just been refused —
+    measured as a `201` in production on 2026-07-21.
+
+    Structural rather than configured: it reads `users.is_demo`, so a demo identity added later is
+    refused with no code change. Matching `DEMO_STYTCH_EMAIL` at request time would be the same
+    deploy-discipline safety that ticket 0057 rejected.
+    """
+    if user.is_demo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The demo session is read-only.",
+        )
+    return user
 
 
 def _claim_email(claims: dict) -> str | None:

@@ -2804,3 +2804,31 @@ The measurement created `hh_2b15ef3a51b347e3bcdaa300820b9395`, which the demo vi
 Ledger reconciled the same day: `0054` had three of five ACs already true in prod (and a `deploy.md`
 that still names the superseded revision), `0026`'s two open ACs are unblocked now that a real deploy
 exists, and `0057` now records that lane C shipped and lane A is the remainder.
+
+### Fixing 0058 — the demo plane becomes a property of the identity (2026-07-21)
+Role is per-household, so the three routes with **no `household_id` to authorize against** had no
+role to check: `POST /households` (which creates the household a role would be scoped to) and both
+Link routes (`/plaid/link/token`, `/plaid/link/exchange`, keyed to the user). Rather than
+special-casing each, the plane moved onto the identity:
+
+- **`0015_users_is_demo`** — `users.is_demo`, default false. Backfilled true for a user with at least
+  one membership, all of them to demo households. Deriving it from the membership graph keeps it out
+  of `DEMO_STYTCH_EMAIL`; an env-var comparison at request time would put the safety property back
+  into deploy discipline, which is exactly what 0057 chose lane C to avoid. `EXISTS`/`NOT EXISTS`
+  rather than a COUNT comparison so a user who is a member of nothing is *excluded*, not swept in —
+  defaulting a JIT-provisioned user to demo would lock real users out.
+- **`current_real_user`** in `identity/deps.py` — `current_user` minus the demo plane, 403 "The demo
+  session is read-only." `User.is_demo` reads with `.get(..., False)` so a test's stub row need not
+  carry the column.
+- Both seeders (`backend/seed.py`, `scripts/seed_demo_household.py`) now assert the flag on the demo
+  viewer they provision, because `add_user` is `DO NOTHING` on re-run and defaults it false.
+
+Refusing at `/plaid/link/token` (not only at `exchange`) is deliberate: `exchange` already refused a
+caller with no real household, but `token` would still have minted a Plaid link_token and burned
+quota for anyone hitting the public demo.
+
+`tests/test_demo_plane_gate.py` (7 tests) holds it, deliberately using an identity that is **neither**
+the seeded viewer nor `DEMO_STYTCH_EMAIL` — the AC is that the gate follows the row. Full backend
+suite green, ruff clean. **Not yet deployed**: migration `0015` has to run on Neon and the API
+redeploy has to land before the production hole is actually closed, and the junk household from the
+measurement pass still needs deleting.

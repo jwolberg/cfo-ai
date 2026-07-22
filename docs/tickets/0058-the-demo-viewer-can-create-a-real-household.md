@@ -76,15 +76,38 @@ thing 0057 chose its lane to avoid.
 
 ## Acceptance criteria
 
-- [ ] `POST /households` with a demo-plane session is refused (403), verified against the **deployed**
-      API, not only locally.
-- [ ] The refusal is structural — a new demo identity added later is refused without a code change.
-- [ ] A regression test covers it alongside the existing `PATCH /policy` / `POST /attest` refusals, so
+- [x] `POST /households` with a demo-plane session is refused (403). — *Built 2026-07-21:
+      `current_real_user` (`backend/identity/deps.py`) reads the new `users.is_demo` and refuses.*
+- [ ] …verified against the **deployed** API, not only locally. — *Needs the redeploy; migration
+      `0015` must run on Neon first, and its backfill puts the existing demo viewer on the flag.*
+- [x] The refusal is structural — a new demo identity added later is refused without a code change.
+      — *It reads the `users` row, not `DEMO_STYTCH_EMAIL`. `tests/test_demo_plane_gate.py` proves
+      it with an identity that is neither the seeded viewer nor the configured email.*
+- [x] A regression test covers it alongside the existing `PATCH /policy` / `POST /attest` refusals, so
       the "demo viewer is read-only" claim has a test behind it rather than a docstring.
+      — *`tests/test_demo_plane_gate.py`, 7 tests.*
 - [ ] `backend/identity/demo.py`'s docstring and `docs/status.html`'s "structurally read-only" claim
-      are true again, or reworded to what is actually enforced.
+      are true again, or reworded to what is actually enforced. — *True in code; still false in
+      production until the redeploy. `status.html` left alone — it has unrelated pending edits.*
 - [ ] The junk household created by the measurement pass
       (`hh_2b15ef3a51b347e3bcdaa300820b9395`) is removed from Neon.
+
+## What the fix does (2026-07-21)
+
+The demo plane becomes a property of the **identity**, so it is answerable before any household
+exists:
+
+- **`0015_users_is_demo`** — `users.is_demo`, default false. Backfilled true for a user whose every
+  membership is to a demo household (and who has at least one), so the definition is derived from the
+  membership graph rather than an env var. A user with no memberships stays false — defaulting a
+  JIT-provisioned user to true would lock real users out.
+- **`current_real_user`** — `current_user` minus the demo plane, raising 403 "The demo session is
+  read-only."
+- Applied to the three routes with no household to authorize against: `POST /households`,
+  `POST /plaid/link/token`, `POST /plaid/link/exchange`. The link routes were the same hole — both are
+  user-keyed — and refusing at `link/token` also stops a demo caller burning Plaid quota.
+- `backend/seed.py` and `scripts/seed_demo_household.py` both assert the flag when they provision the
+  demo viewer, so a fresh seed or re-import is safe without a manual step.
 
 ## Notes
 
