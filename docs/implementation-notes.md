@@ -2781,3 +2781,90 @@ household → `/live-decision` + `/spend` return the real Sandbox-derived decisi
 config/route) + 3 new session.ts web-path tests; full backend suite green, 94 mobile tests, ruff
 clean. Stages 1–4 (Neon migrate 0004→0014, import into Neon, deploy API, deploy web) are the
 production steps, each always-ask.
+### Measuring the deployed read-only demo — and one hole it found (2026-07-21)
+The fail-closed check owed by the demo plan, run against `https://resfi-api-ax7jrjo2tq-uc.a.run.app`
+with a token from the unauthenticated `POST /demo/session`. Reads all answer from prod:
+`GET /households`, `/live-decision` (a real `refuse` / `card_behavior_unknown` decision), `/spend`
+(real statement balances), `/policy` — 200. Refusals hold: `PATCH /policy` **403**, `POST /attest`
+**403**, a non-member `household_id` named directly **403**, no token and a tampered token **401**.
+
+**`POST /households` returned 201.** The route depends on `current_user` alone — correctly no
+`authorize_household` (there is no household yet), but therefore no role gate, and role is the only
+thing making the viewer read-only. `create_household(..., owner_user_id=user.id)` then makes the demo
+viewer **owner** of a real (`is_demo = false`) household, which re-opens `PATCH /policy`,
+`POST /attest`, and `POST /plaid/link/exchange` on it. So `demo.py`'s "the worst a caller can do is
+read demo-plane households" and `status.html`'s "structurally read-only" are both false in prod, and
+KTD-10 holds for reads but not here. Bounded by the route being idempotent per user (one household
+total, since the viewer is one shared identity) and by prod being `PLAID_ENV=sandbox`. Filed as
+`0058`; fix is an identity-level gate on the demo plane, not a role check.
+
+The measurement created `hh_2b15ef3a51b347e3bcdaa300820b9395`, which the demo viewer's
+`GET /households` lists — so the public picker shows it until a scoped two-row delete removes it.
+Ledger reconciled the same day: `0054` had three of five ACs already true in prod (and a `deploy.md`
+that still names the superseded revision), `0026`'s two open ACs are unblocked now that a real deploy
+exists, and `0057` now records that lane C shipped and lane A is the remainder.
+
+### Fixing 0058 — the demo plane becomes a property of the identity (2026-07-21)
+Role is per-household, so the three routes with **no `household_id` to authorize against** had no
+role to check: `POST /households` (which creates the household a role would be scoped to) and both
+Link routes (`/plaid/link/token`, `/plaid/link/exchange`, keyed to the user). Rather than
+special-casing each, the plane moved onto the identity:
+
+- **`0015_users_is_demo`** — `users.is_demo`, default false. Backfilled true for a user with at least
+  one membership, all of them to demo households. Deriving it from the membership graph keeps it out
+  of `DEMO_STYTCH_EMAIL`; an env-var comparison at request time would put the safety property back
+  into deploy discipline, which is exactly what 0057 chose lane C to avoid. `EXISTS`/`NOT EXISTS`
+  rather than a COUNT comparison so a user who is a member of nothing is *excluded*, not swept in —
+  defaulting a JIT-provisioned user to demo would lock real users out.
+- **`current_real_user`** in `identity/deps.py` — `current_user` minus the demo plane, 403 "The demo
+  session is read-only." `User.is_demo` reads with `.get(..., False)` so a test's stub row need not
+  carry the column.
+- Both seeders (`backend/seed.py`, `scripts/seed_demo_household.py`) now assert the flag on the demo
+  viewer they provision, because `add_user` is `DO NOTHING` on re-run and defaults it false.
+
+Refusing at `/plaid/link/token` (not only at `exchange`) is deliberate: `exchange` already refused a
+caller with no real household, but `token` would still have minted a Plaid link_token and burned
+quota for anyone hitting the public demo.
+
+`tests/test_demo_plane_gate.py` (7 tests) holds it, deliberately using an identity that is **neither**
+the seeded viewer nor `DEMO_STYTCH_EMAIL` — the AC is that the gate follows the row. Full backend
+suite green, ruff clean. **Not yet deployed**: migration `0015` has to run on Neon and the API
+redeploy has to land before the production hole is actually closed, and the junk household from the
+measurement pass still needs deleting.
+
+### Deploying 0058 — and the ordering that decided whether it worked (2026-07-22)
+The fix was written on 2026-07-21 and production still had the hole. Deployed today in four steps,
+and the first one was load-bearing in a way that is invisible from the code:
+
+**Delete the junk household BEFORE migrating.** `0015`'s backfill marks a user demo only when every
+membership is to a demo household. `hh_2b15ef3a51b347e3bcdaa300820b9395` — created by the 07-21
+measurement pass — was a non-demo household the demo viewer *owned*, so migrating with it in place
+would have backfilled the viewer `false`, `current_real_user` would never have fired, and the fix
+would have shipped **inert on a deployment that looked fixed**. Nothing in the deploy path re-asserts
+the flag: both seeders do it, `scripts/deploy_prod.sh` runs neither. Measured before the delete:
+`demo=1 real=1 -> real`. After: `demo=1 real=0 -> DEMO`. Then `0014 → 0015 (head)`, then the
+redeploy (`resfi-api-00006-vok`).
+
+Production held exactly **one** user at migration time, so the backfill could not sweep in a human
+account. Worth writing down anyway: the seeded `user_reviewer_owner` belongs to demo households and
+nothing else, so this predicate *would* mark it demo in any environment where it exists, and it would
+then be refused `POST /households` and the Link routes. Household-scoped writes still work for it.
+
+**Verifying the deploy found a second hole, which is the whole argument for verifying the deploy.**
+`scripts/verify_demo_readonly.sh` (new, committed — no secrets, because an anonymous visitor has
+none) came back with one FAIL: `POST /plaid/sync/now` returned **500**, not 403.
+`_linkable_household` does refuse a demo caller, but only in the body, and `get_plaid_client` is a
+*dependency* — so it is built first, and production runs `PLAID_ENV=sandbox` with no
+`PLAID_CLIENT_ID`/`PLAID_SECRET`. `PlaidNotConfigured` → 500, before any gate. `link/token` and
+`link/exchange` escaped it only because `current_real_user` is declared ahead of the client and fires
+first, which means their correctness was partly **parameter ordering**. Fixed by giving `sync_now`
+`current_real_user` too; the test deletes the Plaid credentials before calling, so it pins the
+ordering rather than the happy path, and it fails without the fix. Not an escalation — it moved
+nothing and wrote nothing — but a public 500 is not what "structurally read-only" should look like,
+and no local run would have found it: it needed a deployment configured the way production is.
+
+Final state: `resfi-api-00007-cil`, `scripts/verify_demo_readonly.sh` all green — four reads at 200,
+six writes at 403, and the three identity cases. 798 passed / 10 skipped against a real Postgres
+(a throwaway instance, since these tests are `requires_db` and skip loudly without one), ruff clean.
+`0058` closed.
+

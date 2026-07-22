@@ -71,12 +71,31 @@ Measured, not assumed (see `docs/implementation-notes.md`, 2026-07-18):
 For **any** lane that shows real Plaid data in prod: wire `PLAID_*` (sandbox) into Cloud Run, and
 deploy the identity + Link rung (`0054` first, per its runbook).
 
+## Outcome as of 2026-07-21 — lane C shipped; lane A is the remainder
+
+**Lane C was chosen and is live.** `backend/identity/demo.py` + `POST /demo/session` mint a read-only
+viewer server-side on demand (no baked token, no 5-minute cliff), `scripts/seed_demo_household.py`
+imported the Sandbox household as `is_demo`, and stages 1–4 deployed it
+(`3b9f86d`, `0a8674f`, `6c0b0db`). Verified against the deployed API 2026-07-21 — see the AC notes.
+
+**Lane A — real web sign-in plus token refresh — was not built and is the real remaining rung.** It is
+what lets a *real user see their own data* on a public site, and it is currently unticketed: `0055`
+scopes sign-in as native-only, and the refresh half of KTD-4 does not exist. Blockers 1 and 2 above are
+therefore still open; blocker 3 was routed around (not fixed) by never minting an owner token, and
+blocker 4 still stands (prod is sandbox-only; the demo household holds no live Plaid token).
+
 ## Acceptance criteria
 
-- [ ] A deployed web build can show a linked household's live decision **without** a static owner
+- [x] A deployed web build can show a linked household's live decision **without** a static owner
       token in a public bundle, and **without** the session dying after 5 minutes.
+      — *Measured 2026-07-21 in prod: the bundle carries no token, `POST /demo/session` mints one,
+      and `/live-decision` + `/spend` return the real Sandbox-derived decision and card balances.*
 - [ ] The chosen lane's safety property is *technical*, not deploy-discipline — a wrong bake or an
       expired token fails closed, not open.
+      — *Mostly true and **not yet fully true**. `PATCH /policy`, `POST /attest`, a non-member
+      household, and a missing/tampered token are all refused (403/403/403/401). But `POST /households`
+      returns **201** to the demo viewer and makes it owner of a real household — see `0058`. This AC
+      cannot be ticked until that is gated.*
 - [ ] If real Plaid data is shown: `PLAID_ENV=sandbox` creds are in Secret Manager, the identity +
       Link rung is deployed (`0054`), and the linked household's data is in Neon.
 - [ ] The dev-only `scripts/dev_auth_proxy.py` is never on the deploy path.

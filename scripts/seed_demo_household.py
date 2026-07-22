@@ -95,6 +95,10 @@ def main() -> None:
     with target.connect() as c, c.begin():
         add_user(c, user_id=f"user_{uuid.uuid4().hex}", stytch_user_id=stytch_user_id, email=email)
         demo_user_id = get_user_by_stytch_id(c, stytch_user_id)["id"]
+        # The identity is on the demo plane, and says so (ticket 0058). `add_user` is idempotent and
+        # defaults `is_demo` false, so this is the one place the import asserts it — without it, the
+        # viewer this script provisions could create a real household and become its owner.
+        c.execute(text("UPDATE users SET is_demo = true WHERE id = :u"), {"u": demo_user_id})
         c.execute(text("DELETE FROM households WHERE id = :h"), {"h": demo_hh})
         c.execute(
             text("INSERT INTO households (id, archetype, is_demo) VALUES (:h, NULL, true)"),

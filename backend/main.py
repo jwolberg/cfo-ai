@@ -82,6 +82,7 @@ from backend.identity.deps import (
     User,
     authorize_household,
     authorize_household_owner,
+    current_real_user,
     current_user,
     households_for,
 )
@@ -469,7 +470,7 @@ async def households(
 
 @app.post("/households", status_code=status.HTTP_201_CREATED)
 async def create_household_route(
-    request: Request, user: Annotated[User, Depends(current_user)]
+    request: Request, user: Annotated[User, Depends(current_real_user)]
 ) -> Any:
     """Create a **real** household owned by the signed-in user — the onboarding write path the
     identity rung deferred (Decision 3), and the precondition a real bank link needs.
