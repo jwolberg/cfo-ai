@@ -53,17 +53,28 @@ fi
 AUTH=(-H "Authorization: Bearer $TOKEN")
 echo "  minted a session_jwt (${#TOKEN} chars)"
 
-# The household the demo actually shows. Taken from the viewer's own membership list rather than
-# hardcoded, so this keeps working when the demo household is re-imported under a new id.
-H="$(curl -s "${AUTH[@]}" "$API/households" \
-  | python3 -c 'import sys,json; hs=json.load(sys.stdin)["households"]; print(hs[0]["id"] if hs else "")' 2>/dev/null)"
-if [[ -z "$H" ]]; then
+# The households the demo actually shows, taken from the viewer's own membership list rather than
+# hardcoded, so this keeps working when they are re-seeded or re-imported under new ids.
+#
+# The two kinds are read through different routes and it is not interchangeable: a **seeded**
+# household (`archetype` set) has a 90-day graded window and `409`s on `/live-decision`; a **linked**
+# one (`archetype: null`) has only today's live decision and no window. `mobile/App.tsx` defaults to
+# the first id, so the first line below is also what a visitor lands on.
+LIST="$(curl -s "${AUTH[@]}" "$API/households")"
+read -r COUNT DEFAULT SEEDED LINKED <<<"$(printf '%s' "$LIST" | python3 -c '
+import json, sys
+hs = json.load(sys.stdin)["households"]
+seeded = next((h["id"] for h in hs if h["archetype"]), "-")
+linked = next((h["id"] for h in hs if not h["archetype"]), "-")
+print(len(hs), hs[0]["id"] if hs else "-", seeded, linked)
+' 2>/dev/null)"
+if [[ -z "${COUNT:-}" || "$COUNT" == "0" ]]; then
   echo "  FAIL  GET /households listed nothing — the demo viewer has no memberships."
   exit 1
 fi
-COUNT="$(curl -s "${AUTH[@]}" "$API/households" \
-  | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["households"]))' 2>/dev/null)"
-echo "  the viewer can see $COUNT household(s); reading $H"
+H="$SEEDED"
+echo "  the viewer can see $COUNT household(s); lands on $DEFAULT"
+echo "  seeded: $SEEDED   linked: $LINKED"
 echo
 echo "  Every id above must be a demo-plane household. A real one here means the demo"
 echo "  identity has crossed into the real plane (ticket 0058) — check before continuing."
@@ -71,9 +82,17 @@ echo "  identity has crossed into the real plane (ticket 0058) — check before 
 echo
 echo "-- reads: the demo works --"
 check "GET  /households"                200 "$(code "${AUTH[@]}" "$API/households")"
-check "GET  /households/{h}/live-decision" 200 "$(code "${AUTH[@]}" "$API/households/$H/live-decision")"
-check "GET  /households/{h}/spend"      200 "$(code "${AUTH[@]}" "$API/households/$H/spend")"
-check "GET  /households/{h}/policy"     200 "$(code "${AUTH[@]}" "$API/households/$H/policy")"
+check "GET  seeded/decisions"           200 "$(code "${AUTH[@]}" "$API/households/$SEEDED/decisions")"
+check "GET  seeded/spend"               200 "$(code "${AUTH[@]}" "$API/households/$SEEDED/spend")"
+check "GET  seeded/policy"              200 "$(code "${AUTH[@]}" "$API/households/$SEEDED/policy")"
+# 409, not 200: a seeded household has a graded window and no live decision. Asserted rather than
+# skipped, because "the wrong route answers anyway" is exactly the kind of drift this file exists
+# to catch.
+check "GET  seeded/live-decision"       409 "$(code "${AUTH[@]}" "$API/households/$SEEDED/live-decision")"
+if [[ "$LINKED" != "-" ]]; then
+  check "GET  linked/live-decision"     200 "$(code "${AUTH[@]}" "$API/households/$LINKED/live-decision")"
+  check "GET  linked/spend"             200 "$(code "${AUTH[@]}" "$API/households/$LINKED/spend")"
+fi
 
 echo
 echo "-- writes: every one must be refused --"
