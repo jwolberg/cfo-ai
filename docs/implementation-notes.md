@@ -2906,3 +2906,39 @@ it *would have licensed a $1.08M regression* until a third condition was added �
 conditions were monotone in reserve size. "My own safety gate was wrong in a way that would have
 shipped, and measuring it caught it" answers *how would you know if you were wrong* better than "the
 gate held".
+
+### Deploying 0058 — and the ordering that decided whether it worked (2026-07-22)
+The fix was written on 2026-07-21 and production still had the hole. Deployed today in four steps,
+and the first one was load-bearing in a way that is invisible from the code:
+
+**Delete the junk household BEFORE migrating.** `0015`'s backfill marks a user demo only when every
+membership is to a demo household. `hh_2b15ef3a51b347e3bcdaa300820b9395` — created by the 07-21
+measurement pass — was a non-demo household the demo viewer *owned*, so migrating with it in place
+would have backfilled the viewer `false`, `current_real_user` would never have fired, and the fix
+would have shipped **inert on a deployment that looked fixed**. Nothing in the deploy path re-asserts
+the flag: both seeders do it, `scripts/deploy_prod.sh` runs neither. Measured before the delete:
+`demo=1 real=1 -> real`. After: `demo=1 real=0 -> DEMO`. Then `0014 → 0015 (head)`, then the
+redeploy (`resfi-api-00006-vok`).
+
+Production held exactly **one** user at migration time, so the backfill could not sweep in a human
+account. Worth writing down anyway: the seeded `user_reviewer_owner` belongs to demo households and
+nothing else, so this predicate *would* mark it demo in any environment where it exists, and it would
+then be refused `POST /households` and the Link routes. Household-scoped writes still work for it.
+
+**Verifying the deploy found a second hole, which is the whole argument for verifying the deploy.**
+`scripts/verify_demo_readonly.sh` (new, committed — no secrets, because an anonymous visitor has
+none) came back with one FAIL: `POST /plaid/sync/now` returned **500**, not 403.
+`_linkable_household` does refuse a demo caller, but only in the body, and `get_plaid_client` is a
+*dependency* — so it is built first, and production runs `PLAID_ENV=sandbox` with no
+`PLAID_CLIENT_ID`/`PLAID_SECRET`. `PlaidNotConfigured` → 500, before any gate. `link/token` and
+`link/exchange` escaped it only because `current_real_user` is declared ahead of the client and fires
+first, which means their correctness was partly **parameter ordering**. Fixed by giving `sync_now`
+`current_real_user` too; the test deletes the Plaid credentials before calling, so it pins the
+ordering rather than the happy path, and it fails without the fix. Not an escalation — it moved
+nothing and wrote nothing — but a public 500 is not what "structurally read-only" should look like,
+and no local run would have found it: it needed a deployment configured the way production is.
+
+Final state: `resfi-api-00007-cil`, `scripts/verify_demo_readonly.sh` all green — four reads at 200,
+six writes at 403, and the three identity cases. 798 passed / 10 skipped against a real Postgres
+(a throwaway instance, since these tests are `requires_db` and skip loudly without one), ruff clean.
+`0058` closed.

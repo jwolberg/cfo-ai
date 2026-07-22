@@ -1,8 +1,10 @@
 ---
 id: "0058"
+closed: 2026-07-22
+revision: resfi-api-00007-cil
 title: The public demo viewer can create a real household — POST /households has no plane gate
 type: fix
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -78,19 +80,25 @@ thing 0057 chose its lane to avoid.
 
 - [x] `POST /households` with a demo-plane session is refused (403). — *Built 2026-07-21:
       `current_real_user` (`backend/identity/deps.py`) reads the new `users.is_demo` and refuses.*
-- [ ] …verified against the **deployed** API, not only locally. — *Needs the redeploy; migration
-      `0015` must run on Neon first, and its backfill puts the existing demo viewer on the flag.*
+- [x] …verified against the **deployed** API, not only locally. — *2026-07-22, revision
+      `resfi-api-00007-cil`: `scripts/verify_demo_readonly.sh` all green, `POST /households` **403**.*
 - [x] The refusal is structural — a new demo identity added later is refused without a code change.
       — *It reads the `users` row, not `DEMO_STYTCH_EMAIL`. `tests/test_demo_plane_gate.py` proves
       it with an identity that is neither the seeded viewer nor the configured email.*
 - [x] A regression test covers it alongside the existing `PATCH /policy` / `POST /attest` refusals, so
       the "demo viewer is read-only" claim has a test behind it rather than a docstring.
       — *`tests/test_demo_plane_gate.py`, 7 tests.*
-- [ ] `backend/identity/demo.py`'s docstring and `docs/status.html`'s "structurally read-only" claim
-      are true again, or reworded to what is actually enforced. — *True in code; still false in
-      production until the redeploy. `status.html` left alone — it has unrelated pending edits.*
-- [ ] The junk household created by the measurement pass
-      (`hh_2b15ef3a51b347e3bcdaa300820b9395`) is removed from Neon.
+- [x] `backend/identity/demo.py`'s docstring and `docs/status.html`'s "structurally read-only" claim
+      are true again, or reworded to what is actually enforced. — *Both true in production as of
+      `resfi-api-00007-cil`. `status.html` needed no edit; it is published from `docs/` by
+      `mobile/package.json`'s `copy:docs` and its claim is now accurate.*
+- [x] The junk household created by the measurement pass
+      (`hh_2b15ef3a51b347e3bcdaa300820b9395`) is removed from Neon. — *2026-07-22, two id-pinned
+      deletes in one transaction, each asserting exactly one row. Done **before** migration `0015`
+      — see the ordering note below.*
+- [x] `POST /plaid/sync/now` refuses the demo plane at the identity layer. — *Spawned by verifying
+      the deploy; it returned **500**, not 403. Fixed in `1c42968` and shipped in
+      `resfi-api-00007-cil`.*
 
 ## What the fix does (2026-07-21)
 
@@ -103,16 +111,44 @@ exists:
   JIT-provisioned user to true would lock real users out.
 - **`current_real_user`** — `current_user` minus the demo plane, raising 403 "The demo session is
   read-only."
-- Applied to the three routes with no household to authorize against: `POST /households`,
-  `POST /plaid/link/token`, `POST /plaid/link/exchange`. The link routes were the same hole — both are
-  user-keyed — and refusing at `link/token` also stops a demo caller burning Plaid quota.
+- Applied to the routes with no household to authorize against: `POST /households`,
+  `POST /plaid/link/token`, `POST /plaid/link/exchange` — and, added 2026-07-22 after the deploy was
+  measured, `POST /plaid/sync/now`. The link routes were the same hole — both are user-keyed — and
+  refusing at `link/token` also stops a demo caller burning Plaid quota.
 - `backend/seed.py` and `scripts/seed_demo_household.py` both assert the flag when they provision the
   demo viewer, so a fresh seed or re-import is safe without a manual step.
+
+## Deployed 2026-07-22 — and the ordering that had to hold
+
+Sequence run against production, in this order for a reason:
+
+1. **Delete the junk household first.** `0015`'s backfill marks a user demo only when they have at
+   least one demo membership and **no** non-demo one. The junk household was a non-demo household the
+   demo viewer *owned*, so migrating with it in place would have backfilled the viewer `false`,
+   `current_real_user` would never have fired, and the fix would have shipped **inert on a deployment
+   that looked fixed**. Nothing in the deploy path re-asserts the flag: both seeders do
+   (`backend/seed.py:230`, `scripts/seed_demo_household.py:101`), but `scripts/deploy_prod.sh` runs
+   neither. Measured before: `demo=1 real=1 -> real`. After: `demo=1 real=0 -> DEMO`.
+2. `alembic upgrade head`, owner credential, direct host — `0014` → `0015 (head)`.
+3. `scripts/deploy_prod.sh` → `resfi-api-00006-vok`.
+4. `scripts/verify_demo_readonly.sh` → one FAIL: `POST /plaid/sync/now` **500**. Fixed, tested,
+   redeployed as `resfi-api-00007-cil`, re-verified **all green**.
+
+Production held exactly one user (the demo viewer) at migration time, so the backfill had no chance
+to sweep in a human account — worth recording because the seeded `user_reviewer_owner`, which is a
+member of demo households and nothing else, *would* be marked demo by this predicate in any
+environment where it exists.
 
 ## Notes
 
 - The measurement pass created that household. It is visible to `GET /households` for the demo
   viewer, so the public demo's picker shows it until it is deleted. Cleanup is a scoped two-row
   delete (`household_members`, then `households`) under the Neon **owner** string.
+- **Verifying the deploy is what found the second hole.** The same argument the ticket closes with,
+  demonstrated twice: `POST /plaid/sync/now` was refused only in the route body, while
+  `get_plaid_client` — a dependency, therefore built first — raised `PlaidNotConfigured` on a
+  deployment with no Plaid credentials. A public 500 rather than a 403. It failed closed and wrote
+  nothing, so it was hygiene rather than escalation, but no local run would have surfaced it: it
+  needed a deployment configured exactly the way production is.
 - This is a spawned ticket — the demo-prep verification found it, which is the ticket's own argument
   for running negative tests against production rather than trusting the local run.
