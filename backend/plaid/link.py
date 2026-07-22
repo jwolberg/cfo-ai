@@ -28,7 +28,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from backend.db.repository import households_for_user, repository
-from backend.identity.deps import User, current_user
+from backend.identity.deps import User, current_real_user
 from backend.plaid.deps import get_engine, get_plaid_client
 
 router = APIRouter(prefix="/plaid", tags=["plaid"])
@@ -42,7 +42,7 @@ class LinkTokenResponse(BaseModel):
 @router.post("/link/token")
 def link_token(
     request: Request,
-    user: Annotated[User, Depends(current_user)],
+    user: Annotated[User, Depends(current_real_user)],
     client: Annotated[Any, Depends(get_plaid_client)],
 ) -> LinkTokenResponse:
     """Mint a short-lived Plaid `link_token` for the signed-in user — the thing a client-side Link
@@ -52,8 +52,9 @@ def link_token(
     The token is keyed to `client_user_id = user.id` (our stable per-user id, ticket 0046), not a
     household — a household is chosen only at `/link/exchange`, from the session, so nothing here
     can point a link at someone else's data. `products=[transactions]` matches what the sync reads
-    (`backend/plaid/sync.py`); Sandbox needs no more. Any signed-in user may mint one; the exchange
-    is where ownership and the demo-plane refusal are enforced.
+    (`backend/plaid/sync.py`); Sandbox needs no more. Any signed-in **real** user may mint one
+    (`current_real_user` — a demo-plane identity is refused before it can burn Plaid quota, ticket
+    0058); the exchange is where ownership is enforced.
     """
     from plaid.model.country_code import CountryCode
     from plaid.model.link_token_create_request import LinkTokenCreateRequest
@@ -136,7 +137,7 @@ def _linkable_household(engine: Engine, user: User) -> str:
 def link_exchange(
     body: LinkExchangeRequest,
     request: Request,
-    user: Annotated[User, Depends(current_user)],
+    user: Annotated[User, Depends(current_real_user)],
     engine: Annotated[Engine, Depends(get_engine)],
     client: Annotated[Any, Depends(get_plaid_client)],
 ) -> LinkExchangeResponse:
