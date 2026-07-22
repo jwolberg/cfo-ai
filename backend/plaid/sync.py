@@ -37,7 +37,7 @@ from sqlalchemy.engine import Engine
 
 from backend.db.repository import Repository, repository
 from backend.db.session import household_scope
-from backend.identity.deps import User, current_user
+from backend.identity.deps import User, current_real_user
 from backend.plaid.accounts import IngestResult, ingest_account_state
 from backend.plaid.deps import get_engine, get_oidc_verifier, get_plaid_client
 
@@ -269,7 +269,7 @@ async def sync_poll(
 @router.post("/sync/now", response_model=None)
 def sync_now(
     request: Request,
-    user: Annotated[User, Depends(current_user)],
+    user: Annotated[User, Depends(current_real_user)],
     engine: Annotated[Engine, Depends(get_engine)],
     client: Annotated[Any, Depends(get_plaid_client)],
 ) -> dict:
@@ -281,6 +281,14 @@ def sync_now(
     page prove the loop end to end (link → exchange → sync → rows) without any GCP wiring. It
     reuses `_linkable_household`, so the owner + non-demo + single-household checks are identical to
     the exchange it follows; a `viewer` or a non-owner is refused there.
+
+    **`current_real_user`, not `current_user` (ticket 0058).** This is the third user-keyed route,
+    and it was missed when the other two were gated because it lives here rather than in `link.py`.
+    `_linkable_household` did refuse a demo caller — but only in the body, and `get_plaid_client` is
+    a *dependency*, so it is built first: on a deployment with no Plaid credentials (which is
+    production today) the public demo session got a **500** out of `PlaidNotConfigured` instead of a
+    403, before any gate ran. Measured against the deployed API on 2026-07-22. Ordering the identity
+    gate ahead of the client is what makes the refusal independent of whether Plaid is configured.
     """
     from backend.plaid.link import _linkable_household
 

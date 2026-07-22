@@ -132,6 +132,21 @@ class TestTheDemoPlaneCannotLinkABank:
         )
         assert resp.status_code == 403
 
+    def test_sync_now_is_refused_without_plaid_configured(
+        self, client: TestClient, demo_caller: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The third user-keyed route, and the one that was missed.
+
+        `_linkable_household` refuses a demo caller in the **body**, but `get_plaid_client` is a
+        dependency and is therefore built first. With no Plaid credentials — production's actual
+        configuration — that raised `PlaidNotConfigured` and the public demo session got a 500
+        instead of a 403 (measured against the deployed API, 2026-07-22). So the credentials are
+        explicitly removed here: the refusal must not depend on Plaid being configured.
+        """
+        monkeypatch.delenv("PLAID_CLIENT_ID", raising=False)
+        monkeypatch.delenv("PLAID_SECRET", raising=False)
+        assert client.post("/plaid/sync/now", headers=_auth(DEMO_TOKEN)).status_code == 403
+
 
 class TestTheDemoViewerReads:
     """The gate must not cost the demo its whole reason for existing: reading is still fine."""
