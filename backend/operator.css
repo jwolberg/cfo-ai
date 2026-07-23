@@ -1,6 +1,8 @@
 :root{
   --ground:#0C181D;--surface:#12232A;--surface-2:#162A32;--border:#24393F;
-  --ink:#EAF2F4;--body:#A6B6BD;--muted:#728790;
+  /* Text neutrals mapped to Tailwind slate levels (faint teal bias kept): primary at slate-100,
+     body at slate-200, muted at slate-400. */
+  --ink:#F1F6F8;--body:#DBE6E9;--muted:#94A7AC;
   --sweep:#37C193;--sweep-deep:#0C7F63;--hold:#4FB3CD;--hold-wash:#123039;--sweep-wash:#12312A;
   --pass:#6FB89E;--accent:#4AAFC9;
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
