@@ -58,23 +58,26 @@ def _pill(step: GateStep) -> tuple[str, str]:
 
 
 def _inputs_html(step: GateStep) -> str:
-    # The surplus rung is arithmetic — render it as an equation, not a list.
+    # The surplus rung is arithmetic — render it as an equation, not a list. Itemised: the
+    # projected low, minus the buffer and each card's reserve as its own term, equals available.
     if step.stage == "Surplus":
-        low = step.inputs["projected low"]
-        buf = step.inputs["− buffer floor"].lstrip("− ")
-        res = step.inputs["− reserved obligations"].lstrip("− ")
-        avail = step.inputs["= available"]
-        return (
-            '<div class="equation">'
-            f'<span class="term">{html.escape(low)}</span>'
-            '<span class="op">−</span>'
-            f'<span class="term"><span class="term-label">buffer</span>{html.escape(buf)}</span>'
-            '<span class="op">−</span>'
-            f'<span class="term"><span class="term-label">reserved</span>{html.escape(res)}</span>'
-            '<span class="op">=</span>'
-            f'<span class="term term-result">{html.escape(avail)}</span>'
-            "</div>"
-        )
+        parts = ['<div class="equation">']
+        for idx, (k, v) in enumerate(step.inputs.items()):
+            if k.startswith("="):
+                parts.append('<span class="op">=</span>')
+                parts.append(f'<span class="term term-result">{html.escape(v)}</span>')
+            elif k.startswith("−"):
+                if idx:
+                    parts.append('<span class="op">−</span>')
+                label = k.lstrip("− ").replace("reserve · ", "")
+                parts.append(
+                    f'<span class="term"><span class="term-label">{html.escape(label)}</span>'
+                    f"{html.escape(v)}</span>"
+                )
+            else:
+                parts.append(f'<span class="term">{html.escape(v)}</span>')
+        parts.append("</div>")
+        return "".join(parts)
     rows = "".join(
         f'<div class="kv"><dt>{html.escape(k)}</dt><dd>{html.escape(v)}</dd></div>'
         for k, v in step.inputs.items()

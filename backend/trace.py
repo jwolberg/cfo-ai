@@ -27,7 +27,7 @@ audit trail to notice it has gone stale.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from engine.decide import (
@@ -43,9 +43,10 @@ from engine.decide import (
     _select_target,
     apply_caps,
     decide,
+    obligation_in_horizon,
     untouchable,
 )
-from engine.forecast import conservative_low_balance
+from engine.forecast import HORIZON_DAYS, conservative_low_balance
 from engine.interest import claimable_interest_avoided
 from engine.models import Snapshot
 
@@ -130,11 +131,13 @@ def trace(snapshot: Snapshot) -> DecisionTrace:
         "Funding account healthy and fresh, enough history, stable income, not in a blackout, no "
         "sweep already in flight.",
         {
-            "funding balance age (days)": str(funding.balance_age_days) if funding else "—",
-            "connection": funding.connection.value if funding else "—",
-            "history (days)": str(s.history_days),
-            "income variation": f"{s.income_variation:.2%}",
-            "sweep in flight": _f(s.sweeps_in_flight),
+            "days since checking balance updated": str(funding.balance_age_days)
+            if funding
+            else "—",
+            "bank connection status": funding.connection.value if funding else "—",
+            "days of transaction history": str(s.history_days),
+            "income variation (per paycheck)": f"{s.income_variation:.2%}",
+            "sweep already in flight (amount)": _f(s.sweeps_in_flight),
         },
         f"age ≤ {MAX_BALANCE_AGE_DAYS}d · history ≥ {MIN_HISTORY_DAYS}d · "
         f"income variation ≤ {MAX_INCOME_VARIATION:.0%}",
@@ -221,22 +224,35 @@ def trace(snapshot: Snapshot) -> DecisionTrace:
         )
 
     # --- 5. Untouchable + surplus arithmetic (engine.decide.untouchable) ---
+    # The reserve is a sum of per-card obligations (`obligation_in_horizon`); itemise it so the
+    # subtraction is auditable card by card rather than as one opaque total. Ordered dict → the
+    # renderers lay it out as a vertical ledger: projected low, then the buffer and each card
+    # subtracted, then the available result.
     buffer_floor, reserved = untouchable(s)
     available = low - buffer_floor - reserved
+    horizon_end = s.today + timedelta(days=HORIZON_DAYS)
+    surplus_inputs = {"projected low": _f(low), "− buffer floor": _f(buffer_floor)}
+    reserved_cards = 0
+    for card in s.portfolio.cards:
+        obligation = obligation_in_horizon(card, horizon_end)
+        if obligation > 0:
+            surplus_inputs[f"− reserve · {card.card_id}"] = _f(obligation)
+            reserved_cards += 1
+    surplus_inputs["= available"] = _f(available)
+    cards_phrase = (
+        f"{_f(reserved)} reserved across {reserved_cards} card{'s' if reserved_cards != 1 else ''}"
+        if reserved_cards
+        else "nothing reserved for cards"
+    )
     add(
         "Surplus",
         "Is there money that is ours to move?",
         "What is left of the projected low after the safety buffer and the cash already "
-        "reserved for upcoming card obligations.",
-        {
-            "projected low": _f(low),
-            "− buffer floor": _f(buffer_floor),
-            "− reserved obligations": _f(reserved),
-            "= available": _f(available),
-        },
+        "reserved for each card's obligation coming due in the horizon.",
+        surplus_inputs,
         None,
         INFO,
-        f"{_f(low)} − {_f(buffer_floor)} − {_f(reserved)} = {_f(available)} available.",
+        f"After the {_f(buffer_floor)} buffer and {cards_phrase}, {_f(available)} is available.",
     )
 
     # --- 6. Cadence hold (engine.decide._cadence_hold) — AFTER the forecast, deliberately ---

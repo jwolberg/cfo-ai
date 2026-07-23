@@ -81,6 +81,10 @@ class TestTheTwoHeroDays:
         surplus = next(s for s in t.steps if s.stage == "Surplus")
         assert surplus.inputs["= available"] == "$449.50"
         assert surplus.inputs["projected low"] == "$1,699.50"
+        # the reserve is itemised per card — biweekly has one, card_demo, and it must equal the
+        # buffer/available arithmetic: 1699.50 − 800 − 450 = 449.50
+        assert surplus.inputs["− buffer floor"] == "$800.00"
+        assert surplus.inputs["− reserve · card_demo"] == "$450.00"
 
     def test_may_30_refuses_despite_real_surplus(self) -> None:
         """The load-bearing contrast: surplus is positive, cadence still holds it."""

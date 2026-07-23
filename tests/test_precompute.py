@@ -256,12 +256,9 @@ class TestRollingStats:
         assert high > DEMO_SPEC.spend.median
 
     def test_a_biweekly_earner_reads_as_regular_income(self) -> None:
-        """The gate is 25%. Calendar-month buckets would score this household at ~24%.
-
-        Two paychecks a month, except the four times a year there are three — bucketing by
-        month turns that calendar artifact into "volatile income" and refuses to serve a
-        household whose pay is in fact identical every fortnight.
-        """
+        """The gate is 25%. `income_variation` measures the CV of paycheck *amounts*, and this
+        earner's are constant to within the 2% jitter, so it reads well under the gate — as it must
+        for any regular earner regardless of cadence (see `tests/test_seed.py`)."""
         history = self.history()
         day = history.start + timedelta(days=120)
 

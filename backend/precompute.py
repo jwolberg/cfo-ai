@@ -145,14 +145,19 @@ SPEND_LOOKBACK_DAYS = 90
 # the household's own worst months, not a parametric guess at them.
 SPEND_PROFILE_DAYS = 365
 SPEND_WINDOW_DAYS = 30
-# Income is bucketed into 28-day periods rather than calendar months, and this is not a
-# detail. This household is paid biweekly, so a calendar month contains two paychecks —
-# except the ~4 times a year it contains three. Bucketing by month would score that
-# calendar artifact as a 24% swing in income and trip INCOME_TOO_VARIABLE (the gate is
-# 25%), refusing to serve a household whose income is in fact perfectly regular. A 28-day
-# bucket is the honest measure of a biweekly earner's variability.
-INCOME_BUCKET_DAYS = 28
-INCOME_BUCKETS = 3
+# Income variation measures whether *paycheck amounts* are consistent, over a trailing window —
+# **not** income summed into fixed time buckets. The old design bucketed into three 28-day windows,
+# which is exactly two biweekly pay periods, so it read a biweekly earner as regular (~0%) but
+# **aliased against every other cadence**: a semimonthly or monthly earner's paydays drift against
+# the 28-day grid, so a bucket periodically caught one or three checks — or zero — and the household
+# was scored as volatile and refused (`INCOME_TOO_VARIABLE`, the gate is 25%) despite perfectly
+# regular pay. Measured: semimonthly tripped the gate 37% of days, monthly 21%, biweekly 0%.
+# Comparing paycheck amounts instead is timing-agnostic — it is the same ~1-2% for all cadences,
+# because it asks the question the gate actually cares about: do the *paychecks* vary in size? A
+# missed payday is a *gap*, not amount-volatility, and the forecast already catches it (an expected
+# inflow that does not arrive lowers the projected low). Ticket `0063`; the archetypes doc predicted
+# this would need finding, and the seeder found it.
+INCOME_WINDOW_DAYS = 84
 
 CHECKING_ID = "chk_demo"
 SAVINGS_ID = "sav_demo"
@@ -444,33 +449,32 @@ def daily_discretionary_high(history: History, today: date) -> Decimal:
 
 
 def income_variation(history: History, today: date) -> float:
-    """Coefficient of variation of income over trailing 28-day buckets.
+    """Coefficient of variation of individual paycheck **amounts** over the trailing window.
 
-    Floats are fine here and nowhere else in this file: `Snapshot.income_variation` is a
-    ratio, not money. See INCOME_BUCKET_DAYS for why the buckets are 28 days and not months.
-    Fewer than two whole buckets of history is not enough to say anything about variability,
-    and 0.0 is the honest answer — the engine is refusing on INSUFFICIENT_HISTORY on those
-    days anyway.
+    Timing-agnostic by construction (see `INCOME_WINDOW_DAYS`): it compares the paychecks to each
+    other, never sums them into a time grid, so it does not alias against pay cadence — a regular
+    earner reads ~the same whether paid biweekly, semimonthly, or monthly.
+
+    Floats are fine here and nowhere else in this file: `Snapshot.income_variation` is a ratio, not
+    money. Fewer than two paychecks in the window is not enough to say anything about variability,
+    and 0.0 is the honest answer — the engine is refusing on INSUFFICIENT_HISTORY on those days
+    anyway.
     """
-    seen = history.as_of(today)
-    payroll = [t for t in seen.txns if t.kind is TxnKind.PAYROLL]
+    window_start = today - timedelta(days=INCOME_WINDOW_DAYS - 1)
+    amounts = [
+        float(t.amount)
+        for t in history.as_of(today).txns
+        if t.kind is TxnKind.PAYROLL and window_start <= t.day <= today
+    ]
 
-    buckets: list[float] = []
-    for i in range(INCOME_BUCKETS):
-        end = today - timedelta(days=INCOME_BUCKET_DAYS * i)
-        start = end - timedelta(days=INCOME_BUCKET_DAYS - 1)
-        if start < history.start:
-            break
-        buckets.append(float(sum((t.amount for t in payroll if start <= t.day <= end), ZERO)))
-
-    if len(buckets) < 2:
+    if len(amounts) < 2:
         return 0.0
 
-    mean = statistics.fmean(buckets)
+    mean = statistics.fmean(amounts)
     if mean <= 0:
         return 0.0
 
-    return statistics.pstdev(buckets) / mean
+    return statistics.pstdev(amounts) / mean
 
 
 # --- derivation: raw history -> the card types ---------------------------------------
