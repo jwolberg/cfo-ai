@@ -506,18 +506,16 @@ def _trace_html(t: DecisionTrace) -> str:
         label, cls = _pill_class(step)
         term = " terminal" if step.terminal else ""
         if step.stage == "Surplus":
-            i = step.inputs
-            buf = html.escape(i["− buffer floor"].lstrip("− "))
-            res = html.escape(i["− reserved obligations"].lstrip("− "))
-            inputs = (
-                '<div class="eq">'
-                f'<span>{html.escape(i["projected low"])}</span><span class="op">−</span>'
-                f"<span>{buf}<em>buffer</em></span>"
-                '<span class="op">−</span>'
-                f"<span>{res}<em>reserved</em></span>"
-                '<span class="op">=</span>'
-                f'<span class="eqr">{html.escape(i["= available"])}</span></div>'
-            )
+            # A vertical ledger: the projected low, then the buffer and each card's reserve
+            # subtracted one per row, then the available result. Scales to however many cards.
+            rows = ""
+            for k, v in step.inputs.items():
+                rcls = "total" if k.startswith("=") else ("sub" if k.startswith("−") else "base")
+                rows += (
+                    f'<div class="lrow {rcls}"><span>{html.escape(k)}</span>'
+                    f"<span>{html.escape(v)}</span></div>"
+                )
+            inputs = f'<div class="ledger">{rows}</div>'
         else:
             inputs = (
                 '<dl class="kv">'
