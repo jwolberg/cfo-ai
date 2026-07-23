@@ -154,9 +154,31 @@ export interface LiveDecisionResponse {
   decision: Decision;
 }
 
+/** One day on the projected-balance curve (ticket 0064). */
+export interface ProjectionPoint {
+  day: IsoDate;
+  balance: Money;
+}
+
+/**
+ * The projected checking balance over the 30-day horizon — the forecast every decision turns on,
+ * as a curve rather than a sentence. Derived from the frozen snapshot server-side; `points[0]` is
+ * "now" and its minimum equals `low`, the number the narration quotes.
+ */
+export interface BalanceProjection {
+  as_of: IsoDate;
+  horizon_end: IsoDate;
+  buffer_floor: Money;
+  low: Money;
+  low_day: IsoDate;
+  points: ProjectionPoint[];
+}
+
 export interface ExplainResponse extends Decision {
   /** The engine's own sentences, in order. No LLM was involved in producing these. */
   narration: string[];
+  /** The projected-balance chart's data, or `null` when there is no snapshot to project from. */
+  projection: BalanceProjection | null;
 }
 
 /**
