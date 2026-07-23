@@ -103,3 +103,25 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mut
 .step.s-hold.terminal{background:var(--hold-wash);}
 @media (max-width:720px){.cols{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
+/* overrides: halt + pause + audit */
+.haltstrip{background:var(--hold);color:#fff;text-align:center;padding:.4rem;font-size:.8rem;font-weight:600;letter-spacing:.04em;}
+.haltcard{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.1rem;border-radius:12px;border:1px solid var(--border);background:var(--surface);margin-bottom:1.2rem;}
+.haltcard.on{border-color:color-mix(in srgb,var(--hold) 45%,transparent);background:var(--hold-wash);}
+.haltcard .hstatus{font-weight:700;color:var(--ink);font-size:.95rem;}
+.haltcard p{margin:.2rem 0 0;font-size:.82rem;color:var(--muted);max-width:52ch;}
+.btn{font:inherit;font-size:.82rem;font-weight:600;padding:.5rem .9rem;border-radius:8px;border:1px solid transparent;cursor:pointer;white-space:nowrap;}
+.btn.halt{background:var(--hold);color:#fff;}
+.btn.resume{background:var(--sweep-deep);color:#fff;}
+.pausebox{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-radius:11px;border:1px solid var(--border);background:var(--surface);margin-bottom:1.3rem;}
+.pausebox.paused{border-color:color-mix(in srgb,var(--hold) 40%,transparent);background:var(--hold-wash);}
+.pausebox span{font-weight:600;color:var(--ink);font-size:.9rem;}
+.pausebox p{margin:.15rem 0 0;font-size:.8rem;color:var(--muted);}
+.alist{display:flex;flex-direction:column;gap:.2rem;}
+.arow{display:grid;grid-template-columns:150px 90px 1fr auto;gap:.7rem;align-items:center;padding:.4rem .6rem;border-radius:7px;background:var(--surface);border:1px solid var(--border);font-size:.82rem;}
+.aat{font-family:var(--mono);color:var(--muted);font-size:.76rem;}
+.aact{font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;font-weight:600;}
+.aact.pause,.aact.halt{color:var(--hold);}
+.aact.unpause,.aact.resume{color:var(--sweep);}
+.awho{font-family:var(--mono);color:var(--ink);}
+.aactor{color:var(--muted);font-size:.78rem;}
+@media (max-width:600px){.arow{grid-template-columns:1fr auto;}.aat,.aactor{display:none;}}

@@ -30,17 +30,18 @@ import base64
 import hashlib
 import hmac
 import html
+import json
 import os
 import secrets
 import time
 import urllib.parse
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from backend import readpath
 from backend.db.repository import repository
@@ -234,17 +235,166 @@ def _dash(v: object) -> str:
     return "—" if v is None else str(v)
 
 
+# --- the overrides: pause (one household) and halt (all of them) ---------------------
+#
+# Two controls, two mechanisms, and neither keeps a second copy of its own state. A **pause** is a
+# forward window written into `policy_events.blackout_dates` — the same surface the customer's own
+# pause uses, and the one `decide()` already refuses on (`decide.py`, `ReasonCode.BLACKOUT`). A
+# **halt** is a row in the append-only `operator_actions` log; the halt *state* is simply the latest
+# halt/resume row, never a mutable flag that could drift from the log that explains it.
+
+# How far forward a pause blacks out. The engine checks one day at a time, so "paused" has to be a
+# span of days, not a boolean; 90 is "paused for the foreseeable" without writing an unbounded set.
+PAUSE_HORIZON_DAYS = 90
+
+
+class OperatorActionError(RuntimeError):
+    """An override could not be applied — e.g. pausing a household that has no policy to amend."""
+
+
+class SystemHalted(RuntimeError):
+    """The global halt is in effect. Raised by `assert_not_halted` — the hook the sweep-execution
+    rung calls before moving money. Nothing moves money today (the transfer leg is shadow), so this
+    is the wire left in place for when it does, not a guard already on a live path."""
+
+
+@dataclass(frozen=True)
+class OperatorAction:
+    at: str
+    actor: str
+    action: str
+    household_id: str | None
+    detail: dict
+
+
+def _insert_action(conn, actor: str, action: str, household_id: str | None, detail: dict) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO operator_actions (actor, action, household_id, detail)"
+            " VALUES (:a, :act, :h, CAST(:d AS jsonb))"
+        ),
+        {"a": actor, "act": action, "h": household_id, "d": json.dumps(detail)},
+    )
+
+
+def _rewrite_blackout(repo, policy: dict, dates: list[date]) -> None:
+    """Re-append the household's policy with a new blackout set, guardrails otherwise unchanged.
+
+    `changed_by` is NULL: the operator is a god-mode credential, not a `users` row. `loosened` is
+    False — a pause tightens, it never weakens a guardrail."""
+    repo.set_policy(
+        buffer_floor=policy["buffer_floor"],
+        max_sweep=policy["max_sweep"],
+        max_weekly_sweep=policy["max_weekly_sweep"],
+        min_days_between_sweeps=policy["min_days_between_sweeps"],
+        blackout_dates=[d.isoformat() for d in dates],
+        changed_by=None,
+        loosened=False,
+    )
+
+
+def pause_household(
+    engine: Engine,
+    actor: str,
+    household_id: str,
+    *,
+    today: date | None = None,
+    horizon_days: int = PAUSE_HORIZON_DAYS,
+) -> None:
+    """Pause sweeps for one household: blackout today forward, and log it. Atomic — the policy write
+    and the audit row commit together, so a pause never lands unrecorded."""
+    ref = today or date.today()
+    with repository(engine, household_id) as repo:
+        policy = repo.policy()
+        if policy is None:
+            raise OperatorActionError(f"{household_id} has no policy to pause")
+        window = {ref + timedelta(days=i) for i in range(horizon_days)}
+        merged = sorted(set(policy["blackout_dates"]) | window)
+        _rewrite_blackout(repo, policy, merged)
+        through = (ref + timedelta(days=horizon_days - 1)).isoformat()
+        _insert_action(
+            repo.conn, actor, "pause", household_id, {"from": ref.isoformat(), "through": through}
+        )
+
+
+def unpause_household(
+    engine: Engine, actor: str, household_id: str, *, today: date | None = None
+) -> None:
+    """Lift an operator pause: drop every blacked-out day from today forward, and log it. Dates in
+    the past are left alone — they are history, not a pause anyone can still act on."""
+    ref = today or date.today()
+    with repository(engine, household_id) as repo:
+        policy = repo.policy()
+        if policy is None:
+            raise OperatorActionError(f"{household_id} has no policy to unpause")
+        remaining = sorted(d for d in policy["blackout_dates"] if d < ref)
+        _rewrite_blackout(repo, policy, remaining)
+        _insert_action(repo.conn, actor, "unpause", household_id, {"cleared_from": ref.isoformat()})
+
+
+def set_global_halt(engine: Engine, actor: str, halted: bool) -> None:
+    """Record a global halt or resume. State is the latest such row (see `is_globally_halted`)."""
+    with engine.begin() as conn:
+        _insert_action(conn, actor, "halt" if halted else "resume", None, {})
+
+
+def is_globally_halted(engine: Engine) -> bool:
+    """True iff the most recent global action was a halt. Derived from the log, never stored."""
+    with engine.connect() as conn:
+        latest = conn.execute(
+            text(
+                "SELECT action FROM operator_actions WHERE action IN ('halt', 'resume')"
+                " ORDER BY seq DESC LIMIT 1"
+            )
+        ).scalar()
+    return latest == "halt"
+
+
+def assert_not_halted(engine: Engine) -> None:
+    """Raise if a global halt is in effect. The hook the sweep-execution rung will call before it
+    moves money; deliberately *not* wired into any live path yet (nothing moves money today)."""
+    if is_globally_halted(engine):
+        raise SystemHalted("a global halt is in effect — no money movement permitted")
+
+
+def recent_actions(engine: Engine, limit: int = 25) -> list[OperatorAction]:
+    with engine.connect() as conn:
+        rows = (
+            conn.execute(
+                text(
+                    "SELECT at, actor, action, household_id, detail FROM operator_actions"
+                    " ORDER BY seq DESC LIMIT :n"
+                ),
+                {"n": limit},
+            )
+            .mappings()
+            .all()
+        )
+    return [
+        OperatorAction(
+            at=str(r["at"]),
+            actor=r["actor"],
+            action=r["action"],
+            household_id=r["household_id"],
+            detail=r["detail"],
+        )
+        for r in rows
+    ]
+
+
 # --- rendering -----------------------------------------------------------------------
 
 
-def _page(title: str, body: str, *, user: str | None = None) -> str:
+def _page(title: str, body: str, *, user: str | None = None, halted: bool = False) -> str:
     chrome = ""
     if user is not None:
+        strip = '<div class="haltstrip">Money movement is halted</div>' if halted else ""
         chrome = (
             '<div class="topbar"><a class="brand" href="/">CFO&nbsp;·&nbsp;Operator</a>'
             f'<span class="who">{html.escape(user)}'
             '<form method="post" action="/logout" class="inline">'
             '<button class="linkbtn" type="submit">sign out</button></form></span></div>'
+            f"{strip}"
         )
     return (
         f"<!doctype html><html lang=en><head><meta charset=utf-8>"
@@ -279,7 +429,42 @@ def _badge(status: HouseholdStatus) -> str:
     return '<span class="pill active">active</span>'
 
 
-def _dashboard(rows: list[HouseholdStatus], user: str) -> str:
+def _halt_control(halted: bool) -> str:
+    if halted:
+        return (
+            '<div class="haltcard on"><div><span class="hstatus">Money movement halted</span>'
+            "<p>A global halt is in effect. The sweep-execution rung refuses to move money while "
+            "this stands.</p></div>"
+            '<form method="post" action="/resume"><button class="btn resume">Resume</button></form>'
+            "</div>"
+        )
+    return (
+        '<div class="haltcard off"><div><span class="hstatus">Money movement live</span>'
+        "<p>The global kill switch. Halting stops all money movement at the execution rung; it is "
+        "recorded to the audit log below.</p></div>"
+        '<form method="post" action="/halt"><button class="btn halt">Halt all</button></form>'
+        "</div>"
+    )
+
+
+def _audit_html(actions: list[OperatorAction]) -> str:
+    if not actions:
+        return '<p class="muted">No operator actions recorded yet.</p>'
+    rows = ""
+    for a in actions:
+        where = html.escape(a.household_id) if a.household_id else "all households"
+        rows += (
+            f'<div class="arow"><span class="aat">{html.escape(a.at[:19])}</span>'
+            f'<span class="aact {html.escape(a.action)}">{html.escape(a.action)}</span>'
+            f'<span class="awho">{html.escape(where)}</span>'
+            f'<span class="aactor">{html.escape(a.actor)}</span></div>'
+        )
+    return f'<div class="alist">{rows}</div>'
+
+
+def _dashboard(
+    rows: list[HouseholdStatus], user: str, halted: bool, actions: list[OperatorAction]
+) -> str:
     items = ""
     for s in rows:
         last = (
@@ -297,9 +482,12 @@ def _dashboard(rows: list[HouseholdStatus], user: str) -> str:
     body = (
         '<div class="head"><div><span class="eyebrow">Households</span>'
         f"<h1>{len(rows)} household{'s' if len(rows) != 1 else ''}</h1></div></div>"
+        f"{_halt_control(halted)}"
         f'<div class="hlist">{items}</div>'
+        "<h2>Recent operator actions</h2>"
+        f"{_audit_html(actions)}"
     )
-    return _page("Operator · households", body, user=user)
+    return _page("Operator · households", body, user=user, halted=halted)
 
 
 def _pill_class(step: GateStep) -> tuple[str, str]:
@@ -358,11 +546,39 @@ def _trace_html(t: DecisionTrace) -> str:
     return f'<ol class="steps">{steps}</ol>'
 
 
+def _pause_control(s: HouseholdStatus) -> str:
+    if s.paused:
+        return (
+            '<form method="post" action="/household/'
+            f'{html.escape(s.id)}/unpause" class="pausebox paused">'
+            "<div><span>Sweeps paused</span>"
+            "<p>This household will refuse to sweep while paused.</p>"
+            '</div><button class="btn resume">Resume sweeps</button></form>'
+        )
+    return (
+        '<form method="post" action="/household/'
+        f'{html.escape(s.id)}/pause" class="pausebox">'
+        "<div><span>Sweeps active</span><p>Pause blacks out sweeps for this household going "
+        'forward.</p></div><button class="btn halt">Pause sweeps</button></form>'
+    )
+
+
 def _household_page(
-    detail: HouseholdDetail, user: str, trace_view: DecisionTrace | None, open_day: str | None
+    detail: HouseholdDetail,
+    user: str,
+    trace_view: DecisionTrace | None,
+    open_day: str | None,
+    halted: bool = False,
 ) -> str:
     s = detail.status
-    black = ", ".join(s.blackout_dates) if s.blackout_dates else "none"
+    # A pause writes a contiguous forward window; a full date dump would flood the page, so show the
+    # span, not every day. Kept exact (min → max, count) so nothing is rounded away.
+    if not s.blackout_dates:
+        black = "none"
+    elif len(s.blackout_dates) == 1:
+        black = s.blackout_dates[0]
+    else:
+        black = f"{min(s.blackout_dates)} → {max(s.blackout_dates)} ({len(s.blackout_dates)} days)"
     decisions = ""
     for d in detail.decisions:
         active = " open" if d.day == open_day else ""
@@ -401,6 +617,7 @@ def _household_page(
         f'<div class="head"><div><span class="eyebrow">Household</span>'
         f"<h1>{html.escape(s.id)}</h1>"
         f'<p class="sub">{html.escape(s.label)} · {_badge(s)}</p></div></div>'
+        f"{_pause_control(s)}"
         '<div class="cols">'
         '<section class="col">'
         "<h2>Policy</h2>"
@@ -417,7 +634,7 @@ def _household_page(
         f'<section class="col wide">{tracepanel or empty_panel}</section>'
         "</div>"
     )
-    return _page(f"Operator · {s.id}", body, user=user)
+    return _page(f"Operator · {s.id}", body, user=user, halted=halted)
 
 
 # --- app -----------------------------------------------------------------------------
@@ -469,26 +686,31 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         user = require(request)
         if not user:
             return RedirectResponse("/login", status_code=303)
-        return HTMLResponse(_dashboard(list_status(app.state.engine), user))
+        eng = app.state.engine
+        return HTMLResponse(
+            _dashboard(list_status(eng), user, is_globally_halted(eng), recent_actions(eng))
+        )
 
     @app.get("/household/{household_id}", response_class=HTMLResponse)
     async def household(request: Request, household_id: str) -> object:
         user = require(request)
         if not user:
             return RedirectResponse("/login", status_code=303)
-        detail = household_detail(app.state.engine, household_id)
+        eng = app.state.engine
+        detail = household_detail(eng, household_id)
         if detail is None:
             return HTMLResponse(
                 _page("Not found", "<h1>No such household</h1>", user=user), status_code=404
             )
-        return HTMLResponse(_household_page(detail, user, None, None))
+        return HTMLResponse(_household_page(detail, user, None, None, is_globally_halted(eng)))
 
     @app.get("/household/{household_id}/decision/{day}", response_class=HTMLResponse)
     async def decision(request: Request, household_id: str, day: str) -> object:
         user = require(request)
         if not user:
             return RedirectResponse("/login", status_code=303)
-        detail = household_detail(app.state.engine, household_id)
+        eng = app.state.engine
+        detail = household_detail(eng, household_id)
         if detail is None:
             return HTMLResponse(
                 _page("Not found", "<h1>No such household</h1>", user=user), status_code=404
@@ -497,8 +719,44 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
             parsed = date.fromisoformat(day)
         except ValueError:
             return HTMLResponse(_page("Bad date", "<h1>Bad date</h1>", user=user), status_code=400)
-        t = decision_trace(app.state.engine, household_id, parsed)
-        return HTMLResponse(_household_page(detail, user, t, day))
+        t = decision_trace(eng, household_id, parsed)
+        return HTMLResponse(_household_page(detail, user, t, day, is_globally_halted(eng)))
+
+    # --- overrides (writes) ---------------------------------------------------------
+    # No CSRF token: this is a single-operator, same-origin local tool behind a god-mode password.
+    # When real per-operator auth lands, so does a CSRF defence — noted in the module docstring.
+
+    @app.post("/household/{household_id}/pause")
+    async def pause(request: Request, household_id: str) -> object:
+        user = require(request)
+        if not user:
+            return RedirectResponse("/login", status_code=303)
+        pause_household(app.state.engine, user, household_id)
+        return RedirectResponse(f"/household/{household_id}", status_code=303)
+
+    @app.post("/household/{household_id}/unpause")
+    async def unpause(request: Request, household_id: str) -> object:
+        user = require(request)
+        if not user:
+            return RedirectResponse("/login", status_code=303)
+        unpause_household(app.state.engine, user, household_id)
+        return RedirectResponse(f"/household/{household_id}", status_code=303)
+
+    @app.post("/halt")
+    async def halt(request: Request) -> object:
+        user = require(request)
+        if not user:
+            return RedirectResponse("/login", status_code=303)
+        set_global_halt(app.state.engine, user, True)
+        return RedirectResponse("/", status_code=303)
+
+    @app.post("/resume")
+    async def resume(request: Request) -> object:
+        user = require(request)
+        if not user:
+            return RedirectResponse("/login", status_code=303)
+        set_global_halt(app.state.engine, user, False)
+        return RedirectResponse("/", status_code=303)
 
     return app
 
