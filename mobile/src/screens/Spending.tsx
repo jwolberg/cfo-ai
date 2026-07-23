@@ -109,15 +109,20 @@ export function Spending({ householdId }: Props) {
         {many && (
           <View style={styles.card} testID="portfolio-totals">
             <Text style={styles.label}>ACROSS YOUR {cards.length} CARDS</Text>
-            <Text style={styles.stat}>{formatMoney(totals.statement)} due</Text>
+            <Text style={styles.stat}>{formatMoney(totals.statement)} balance due</Text>
             <Text style={styles.body}>
-              Plus {formatMoney(totals.unbilled)} still forming. They come due on different days —
-              each card is below.
+              Plus {formatMoney(totals.unbilled)} in new charges since your last statement.
             </Text>
 
             <Text style={styles.reserve} testID="held-back-total">
-              We&apos;re holding back {formatMoney(totals.held_back)} of your cash in total.
+              Scheduled payments
             </Text>
+            {cards.map((card) => (
+              <View key={card.card_id} style={styles.row} testID={`scheduled-${card.card_id}`}>
+                <Text style={styles.rowLabel}>{card.card_id.toUpperCase()}</Text>
+                <Text style={styles.rowAmount}>{formatMoney(card.this_cycle.held_back)}</Text>
+              </View>
+            ))}
           </View>
         )}
 
@@ -133,15 +138,19 @@ export function Spending({ householdId }: Props) {
             the worst kind of it is a judgement we have not earned and do not mean. Highest is
             the same fact without the verdict. */}
         <View style={styles.card} testID="worst-month">
-          <Text style={styles.label}>YOUR HIGHEST 30 DAYS</Text>
+          <Text style={styles.label}>YOUR HIGHEST 30 DAYS OF SPENDING</Text>
           <Text style={styles.stat}>{formatMoneyRounded(normal.worst_30d_cash)}</Text>
-          <Text style={styles.body}>We reserve against months like that one.</Text>
+          <Text style={styles.body}>
+            The most you&apos;ve spent in any 30-day stretch. We reserve against months like that
+            one.
+          </Text>
 
           <StripChart series={normal.rolling_30d_cash} worst={normal.worst_30d_cash} />
 
           <Text style={styles.small}>
-            Every overlapping 30-day total from your own history — not an average, and not a
-            guess at your biggest month.
+            Each bar is your total spending over one 30-day window, stepping forward a day at a time
+            across your history. The tallest, highlighted, is that highest stretch — not an average,
+            and not a guess at your biggest month.
           </Text>
         </View>
       </View>
@@ -185,7 +194,8 @@ function CardPanel({ card, showName }: { card: CardSpend; showName: boolean }) {
         {/* The line that stops the reserve looking arbitrary. This card's own share of it —
             `obligation_in_horizon` per card, not the portfolio total apportioned. */}
         <Text style={styles.reserve} testID={`held-back-${card.card_id}`}>
-          We&apos;re holding back {formatMoney(cycle.held_back)} of your cash for this.
+          We&apos;re holding back {formatMoney(cycle.held_back)} for this card&apos;s scheduled
+          payment.
         </Text>
       </View>
 

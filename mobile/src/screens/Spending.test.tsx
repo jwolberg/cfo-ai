@@ -102,7 +102,7 @@ test('the reserve is named, so it does not look arbitrary', async () => {
   await render(<Spending householdId={DEMO_HOUSEHOLD} />);
 
   await waitFor(() => expect(screen.getByTestId('held-back-card_demo')).toBeTruthy());
-  expect(screen.getByText(/holding back \$2,240\.00 of your cash/)).toBeTruthy();
+  expect(screen.getByText(/holding back \$2,240\.00 for this card's scheduled/)).toBeTruthy();
 });
 
 test('a household whose card shrank is not shown the warning panel', async () => {
@@ -216,9 +216,11 @@ test('the portfolio total is shown for many cards and suppressed for one', async
   const view = await render(<Spending householdId={PORTFOLIO} />);
 
   await waitFor(() => expect(screen.getByTestId('portfolio-totals')).toBeTruthy());
-  expect(screen.getByText(/holding back \$4,980\.00 of your cash in total/)).toBeTruthy();
+  // The portfolio panel lists each card's scheduled payment by name, not one opaque total.
+  expect(screen.getByText('Scheduled payments')).toBeTruthy();
+  expect(within(screen.getByTestId('scheduled-card_b_high')).getByText('$500.00')).toBeTruthy();
 
-  // With one card the total is that card's own figure repeated — a summary of nothing.
+  // With one card the panel is that card's own figures repeated — a summary of nothing.
   getSpend.mockResolvedValue(spend());
   view.rerender(<Spending householdId={DEMO_HOUSEHOLD} />);
 
