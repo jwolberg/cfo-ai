@@ -56,7 +56,9 @@ export function BalanceChart({ projection }: { projection: BalanceProjection }) 
     <View style={styles.wrap} testID="balance-chart">
       <Text style={styles.title}>WHERE YOUR CASH IS HEADED</Text>
 
-      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`}>
+      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        {/* `none` fills the card width; height matches the viewBox so only x stretches — the
+            y (dollars) keeps its 1:1 scale, no distortion. */}
         <Polygon points={area} fill={colors.leafGreen} fillOpacity={0.1} />
         <Line
           x1={PAD_X}
