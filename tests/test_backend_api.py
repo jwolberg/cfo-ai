@@ -409,6 +409,23 @@ class TestExplain:
         assert "interest_avoided" in body["reason_codes"]
         assert any("interest you won't pay" in s for s in body["narration"])
 
+    def test_it_carries_the_projected_balance_chart(
+        self, client: TestClient, auth: dict[str, str]
+    ) -> None:
+        """Ticket 0064: the explain response carries the projection the chart draws, and its low is
+        the same number the narration quotes — one forecast, one walk, so they cannot disagree."""
+        day = self.refusal_date(client, auth)
+        body = client.get(f"/households/{DEMO}/decisions/{day}/explain", headers=auth).json()
+
+        proj = body["projection"]
+        assert proj is not None
+        assert proj["as_of"] == day
+        assert len(proj["points"]) == 32  # a "now" anchor + the 30-day horizon
+        assert proj["buffer_floor"] and proj["low_day"]
+        # the chart's lowest point is the decision's projected low — as Decimals, not string sort
+        assert Decimal(proj["low"]) == Decimal(body["projected_low_balance"])
+        assert Decimal(proj["low"]) == min(Decimal(p["balance"]) for p in proj["points"])
+
     def test_a_day_outside_the_window_is_no_record_not_an_error(
         self, client: TestClient, auth: dict[str, str]
     ) -> None:

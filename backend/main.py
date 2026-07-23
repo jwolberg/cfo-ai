@@ -718,7 +718,8 @@ async def explain_decision(
     except ValueError:
         return no_record(day)
 
-    record = readpath.decision_on(repo, PostgresSnapshotStore(repo.conn), when)
+    store = PostgresSnapshotStore(repo.conn)
+    record = readpath.decision_on(repo, store, when)
 
     if record is None:
         return no_record(day)
@@ -726,6 +727,9 @@ async def explain_decision(
     return {
         **decision_json(record),
         "narration": list(explain(record.decision)),
+        # The projected-balance chart (ticket 0064): the same forecast the narration describes in
+        # words, as a curve. Derived from the frozen snapshot on read, never stored.
+        "projection": readpath.projection_on(repo, store, when),
     }
 
 

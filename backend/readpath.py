@@ -28,7 +28,7 @@ engine saw.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -40,6 +40,7 @@ from backend.codec import decode_scalar, decode_tree
 from backend.db.repository import Repository
 from backend.db.snapshots import SnapshotStore
 from backend.spend import SpendProjection, SpendSurface, assemble
+from engine.forecast import HORIZON_DAYS, balance_trajectory, conservative_low_balance
 from engine.models import (
     AccountKind,
     Action,
@@ -249,6 +250,36 @@ def decision_on(repo: Repository, store: SnapshotStore, day: date) -> DayRecord 
         return None
 
     return _day_record(row, store.get(ref))
+
+
+def balance_projection(snapshot: Any) -> dict[str, Any]:
+    """The projected-balance chart's data, derived from a frozen snapshot (ticket 0064).
+
+    Derived, never stored — a projection of the same `Snapshot` the engine already saw, on the same
+    walk the decision used (`engine.forecast`), so the chart's lowest point *is* the number the
+    decision quoted. Money stays strings on the wire, like every other dollar here.
+    """
+    low, low_day = conservative_low_balance(snapshot)
+    return {
+        "as_of": snapshot.today.isoformat(),
+        "horizon_end": (snapshot.today + timedelta(days=HORIZON_DAYS)).isoformat(),
+        "buffer_floor": str(snapshot.policy.buffer_floor),
+        "low": str(low),
+        "low_day": low_day.isoformat(),
+        "points": [
+            {"day": day.isoformat(), "balance": str(balance)}
+            for day, balance in balance_trajectory(snapshot)
+        ],
+    }
+
+
+def projection_on(repo: Repository, store: SnapshotStore, day: date) -> dict[str, Any] | None:
+    """The projected-balance chart for `day`, or `None` when there is no snapshot to project from
+    (the modal falls back to its text). Reads the frozen snapshot, exactly as `decision_on` does."""
+    row = repo.decision_on(day)
+    if row is None or not row["snapshot_ref"]:
+        return None
+    return balance_projection(store.get(row["snapshot_ref"]))
 
 
 def load_spend_surface(repo: Repository, store: SnapshotStore) -> SpendSurface:
