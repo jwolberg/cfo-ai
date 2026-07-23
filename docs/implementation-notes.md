@@ -2913,3 +2913,84 @@ thing standing between that and a live demo.
 
 Verified: 803 passed / 10 skipped against a real Postgres, ruff clean. **Not deployed** — production
 still serves the id until the API is redeployed.
+
+---
+
+## 2026-07-22 — decision audit trail / observability panel (CEO demo)
+
+Asked for "an audit trail or observability panel" showing the math behind a decision — inputs,
+thresholds, decision flow. Built three things, source-committed, generated output delivered separately:
+
+- **`backend/trace.py`** — replays `decide()`'s gate sequence over a stored `Snapshot` and records
+  every rung (inputs read, threshold measured against, pass/block, whether it decided). It reuses the
+  engine's own helpers (`_blocking_reasons`, `conservative_low_balance`, `untouchable`,
+  `_cadence_hold`, `apply_caps`, `claimable_interest_avoided`) — no value is recomputed, only the
+  order is mirrored — and reports `decide()`'s verbatim output as the headline, not a reconstruction.
+- **`tests/test_trace.py`** — pins the mirror to the engine across all 90 served days: the trace's
+  terminal gate must match `decide()`'s action every day, plus the two hero days' arithmetic. This is
+  the guardrail that stops the audit trail drifting into a flattering lie if `decide()` is reordered.
+- **`scripts/render_decision_panel.py`** — renders a self-contained HTML panel from the traces. Every
+  number is the engine's; nothing is typed. `scripts/` is outside CI's ruff scope (`engine sim backend
+  tests`), so the CSS blob's long lines are intentionally left unwrapped.
+
+**The demo choice:** feature 2026-05-25 (sweep $449.50) beside 2026-05-30 (refuse). Measured, the
+contrast is the whole point — gates 1–5 identical, and on May 30 there is **$41.47 of real surplus**
+(`$1,291.47 − 800 − 450`) that the engine still refuses, because cadence holds it (`days_since=5 < 7`).
+Same machine, one gate flips. That is "inputs + thresholds + flow" made visible, and it doubles as the
+runsheet's beat-3 point (80/90 days are refusals *by design*).
+
+Design honours the app's own theme (`mobile/src/theme.ts`): cool blue-green, **no red** — a refusal is
+the product working, not a fault — with monospaced tabular figures so the page reads as a machine
+ledger. Verified with a headless-Chrome screenshot (dark theme). 808 passed / 10 skipped, ruff clean.
+Not deployed and not wired into the web app — it is a standalone asset for the demo; wiring it into the
+app (a per-decision "show the math" panel over a `/decisions/{day}/trace` endpoint) is the obvious
+follow-up if the panel earns its place.
+
+---
+
+## 2026-07-22 — the Operator console (Admin lane of status.html)
+
+Built the "Operator console" box from `docs/status.html`: *look up a household, read the exact
+snapshot behind any decision, and pause sweeps for one account or all of them.* A standalone ASGI app
+(`backend/operator.py`, run `python -m backend.operator`), strictly separate from the customer app —
+own port, own audience, own auth. Committed in two tickets.
+
+**Auth is a deliberate placeholder and says so.** There is no operator identity yet (membership is
+owner/viewer only; status.html marks the operator half "still to come"). So the console is gated by a
+single **god-mode** username/password from the env (`OPERATOR_USER`/`OPERATOR_PASSWORD`), constant-time
+compared, carried in an HMAC-signed cookie. It **refuses to start without a password** so the gap is
+loud, and the docstring says plainly it is not safe to deploy public as-is. User asked for exactly
+this ("god-mode login/password is fine for now, real auth later").
+
+**What reuses what.** Lookup = `readpath.list_households` (unscoped tenant registry) + per-household
+`Repository`/RLS — no second read path invented. The snapshot-behind-a-decision = `backend/trace.py`
+(the CEO-panel engine) against the frozen `Snapshot` in the store. So two of the three capabilities
+were mostly wiring over things already built.
+
+**Pause is real, not cosmetic.** Pause writes a forward window into `policy_events.blackout_dates` —
+the same surface the customer's own pause uses, the one `decide()` already refuses on (BLACKOUT).
+`test_pause_actually_refuses_the_engine` proves it: a paused day re-traced is a refusal. Caveat worth
+knowing: seeded demo households serve *stored* decisions, so a pause on them changes state + future
+live decisions but not their historical feed; it bites hardest on a live-decided (linked) household.
+
+**Global halt = an append-only audit log, state derived not stored.** Migration `0016` adds
+`operator_actions` (append-only by GRANT — the app role has SELECT/INSERT and no DELETE, asserted in
+a test). Halt state is the latest halt/resume row, never a mutable flag that could disagree with the
+log — per the "store only what can't be derived" prior. Per-household pause state stays where it
+already lives (`blackout_dates`).
+
+**The kill switch's enforcement is a deliberate stub.** `assert_not_halted()` is the hook the
+sweep-execution rung will call before moving money; it is **not** wired into any live/customer path,
+because (a) nothing moves money today (the transfer leg is shadow) and (b) I would not thread an
+operator flag through the customer or transfer code without asking. The console records + displays
+the halt; wiring enforcement is a one-line call at the execution rung when that goes live.
+
+Design follows the app theme (cool blue-green, no red, mono figures). Caught one CSS collision the
+design skill warns about: a bare `.halt` banner selector also matched `<span class="aact halt">` in
+the audit log and boxed those rows — renamed to `.haltcard`. No CSRF token (single-operator,
+same-origin, god-mode local tool); lands with real auth. `python-multipart` avoided by parsing the
+login form body directly. CSS lives beside the module as `operator.css` (a CSS blob is not Python).
+
+825 passed / 10 skipped, ruff clean. Not deployed — a local tool. Verified every page by headless
+screenshot. Follow-ups if it earns its place: real per-operator auth + access log (the `Access &
+audit` box), and wiring `assert_not_halted` into the execution rung.
