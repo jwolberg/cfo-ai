@@ -73,9 +73,10 @@ class NoSpendProjection(LookupError):
 class Household:
     """A household the demo can be switched to. Not a customer — see `USERS.md`."""
 
-    def __init__(self, household_id: str, archetype: str | None) -> None:
+    def __init__(self, household_id: str, archetype: str | None, is_demo: bool = False) -> None:
         self.id = household_id
         self.archetype = archetype
+        self.is_demo = is_demo
 
     @property
     def label(self) -> str:
@@ -84,7 +85,17 @@ class Household:
         Derived from the archetype rather than stored: a label is copy, and copy that lives in a
         database is copy nobody can grep for. `null` archetype means a real household (the column's
         own comment), and a real household is not something the demo gets to name.
+
+        The one household that is **both** — `null` archetype *and* `is_demo` — is the imported
+        Plaid household (`scripts/seed_demo_household.py`, ticket `0057` lane C). Its null is
+        load-bearing: `Dashboard` keys off `archetype === null` to take the live-decision path
+        instead of the graded-window one. So it cannot be given an archetype just to earn a name,
+        and without this branch it fell through to the id — the picker showed a reviewer the string
+        `hh_demo_plaid` next to three sentences. It is a demo household, so the demo does get to
+        name it.
         """
+        if self.archetype is None and self.is_demo:
+            return _LINKED_DEMO_LABEL
         return _LABELS.get(self.archetype or "", self.archetype or self.id)
 
 
@@ -96,6 +107,11 @@ _LABELS = {
     "monthly_thin": "Monthly, two cards",
     "apr_unreported": "Biweekly, two cards, rates unknown",
 }
+
+# The imported-Plaid demo household. The other four labels name a *shape* (cadence, card count)
+# because that is what distinguishes simulated households from each other. This one's distinction is
+# not its shape — it is where the numbers came from, so that is what the label says.
+_LINKED_DEMO_LABEL = "Live Plaid data"
 
 
 def list_households(conn: Connection, only: list[str] | None = None) -> list[Household]:
@@ -112,15 +128,15 @@ def list_households(conn: Connection, only: list[str] | None = None) -> list[Hou
     should not buy you. Everything past this point goes through the repository and RLS.
     """
     if only is None:
-        rows = conn.execute(text("SELECT id, archetype FROM households ORDER BY id")).all()
+        rows = conn.execute(text("SELECT id, archetype, is_demo FROM households ORDER BY id")).all()
     elif not only:
         return []
     else:
         rows = conn.execute(
-            text("SELECT id, archetype FROM households WHERE id = ANY(:ids) ORDER BY id"),
+            text("SELECT id, archetype, is_demo FROM households WHERE id = ANY(:ids) ORDER BY id"),
             {"ids": only},
         ).all()
-    return [Household(household_id=r.id, archetype=r.archetype) for r in rows]
+    return [Household(household_id=r.id, archetype=r.archetype, is_demo=r.is_demo) for r in rows]
 
 
 @dataclass(frozen=True)
