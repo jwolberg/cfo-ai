@@ -1,8 +1,9 @@
 ---
 id: "0057"
+closed: 2026-07-18
 title: A deployed web app that safely shows a real linked household — what production needs
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: mobile-rn-agent

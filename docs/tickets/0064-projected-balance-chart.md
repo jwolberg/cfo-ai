@@ -1,8 +1,9 @@
 ---
 id: "0064"
+closed: 2026-07-23
 title: A projected-balance chart — the forecast the whole engine runs on, made visible
 type: feat
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: backend-python-agent
