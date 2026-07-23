@@ -3158,3 +3158,57 @@ Left alone: "highest" over the engine's "worst", a choice already argued in a co
 No test asserted the prose (`Spending.test.tsx` pins the amount and the testID), so nothing moved —
 typecheck clean, 96 mobile tests pass. Not deployed at the time of writing; reaching the public site
 needs `npm run deploy:web`.
+
+## 2026-07-23 — production re-seed onto the 0063 engine, and the membership regression it caused
+
+Operating the console against Neon (rather than the local test DB) turned up two pieces of drift and
+one self-inflicted outage. Recording all three, because the third is a trap that is documented in a
+script docstring nobody reads before the thing it warns about.
+
+**Neon was a migration behind, silently.** `alembic current` measured `0015`; the repo was at `0016`.
+Nothing surfaced it until the operator console read `operator_actions` and 500'd on `relation does
+not exist`. `0016` is additive — one new table, two CHECKs, an index, `GRANT SELECT, INSERT` to
+`cfo_app` — so applying it (owner role, direct host, §3e) was safe, and `cfo_runtime` is a member of
+`cfo_app` so the grant reaches the running service. `DEPLOY.local.md` claimed `0004 (head)`, which
+had been wrong for a week. That line now points at the measurement instead of carrying a number.
+
+**The demo was serving decisions from the pre-0063 engine.** Neon was seeded 2026-07-17; PR #86
+merged 2026-07-23. Production carried the aliasing bug at exactly the rate 0063 measured — 33/90
+semimonthly (37%), 19/90 monthly (21%), 52/360 overall (14.4%), zero biweekly.
+
+The re-seed was worth doing, but **not for the reason the PR headline suggests.** Sweep counts barely
+move: semimonthly 5 → 6, the other three unchanged. What changes is how much of the demo can be
+*inspected*. `income_too_variable` is a blocking precondition, so all 52 of those decisions stored a
+single reason and **no `projected_low_balance` at all** — the trace panel has nothing to render on
+them. Dead days went **126/360 → 78/360**, and `hh_semimonthly_portfolio` — the richest archetype,
+three cards — went from 53/90 un-inspectable (59%) to 24/90. Before the re-seed, a CEO clicking a
+random day in that household had better-than-even odds of landing on a stub whose only content was a
+70.71% income-variation figure the team had already proven was an artifact. Those days now resolve
+into real reasons: `no_surplus` 9 → 34, `cadence_hold` 67 → 89, `idle_cash_elsewhere` 90 → 138, plus
+one `clears_the_card`.
+
+**The regression: `seed_all` silently un-shares the public demo.** `_reset_household` deletes the
+`households` row, `household_members` is `ON DELETE CASCADE`, and `_seed_memberships` then re-grants
+to `seed.py`'s own `DEMO_USER_ID` — the synthetic `user_demo_viewer`, which is **not** the identity
+production authenticates as. Production's demo viewer is the Stytch-reconciled
+`demo-viewer@example.com` (`user_11819aee…`). So after the re-seed the archetype memberships all
+existed and all pointed at the wrong user; `GET /households` returned one row, and the household
+picker at `cfo-ai-1.web.app` disappeared.
+
+`scripts/grant_demo_viewer_archetypes.py` documents this precisely ("**Re-run this after any
+`backend.seed.seed_all`** … The failure is silent: the households still exist, the picker just goes
+back to showing one"). The warning is in the right place and it still did not fire, because the
+re-seed was reasoned about from `seed.py` — where `_seed_memberships` genuinely *is* idempotent — and
+the question "idempotent **for which user id**" was never asked. Verifying that membership rows exist
+is not the same as verifying the right principal holds them, and a per-household `string_agg` of
+memberships looks completely healthy in both cases.
+
+**Follow-up worth its own ticket.** The remedy is a script you must remember to run, guarded only by
+a docstring. Either `seed_all` should re-grant the real demo viewer when that user exists, or the
+grant should move into `seed_demo_household.py` so one entry point owns the demo plane. As it stands,
+every future re-seed breaks the public demo the same way and gives no signal that it has.
+
+**Also left open (from 0063).** `decision-engine.md` §9.3's spacing rule was masked by the income
+gate firing first. With the mask gone, `cadence_hold` rose 67 → 89 across the two affected
+households — expected, but it means the demo now leans on the cadence explanation harder than anyone
+has reviewed it doing.
