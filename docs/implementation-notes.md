@@ -2913,3 +2913,35 @@ thing standing between that and a live demo.
 
 Verified: 803 passed / 10 skipped against a real Postgres, ruff clean. **Not deployed** — production
 still serves the id until the API is redeployed.
+
+---
+
+## 2026-07-22 — decision audit trail / observability panel (CEO demo)
+
+Asked for "an audit trail or observability panel" showing the math behind a decision — inputs,
+thresholds, decision flow. Built three things, source-committed, generated output delivered separately:
+
+- **`backend/trace.py`** — replays `decide()`'s gate sequence over a stored `Snapshot` and records
+  every rung (inputs read, threshold measured against, pass/block, whether it decided). It reuses the
+  engine's own helpers (`_blocking_reasons`, `conservative_low_balance`, `untouchable`,
+  `_cadence_hold`, `apply_caps`, `claimable_interest_avoided`) — no value is recomputed, only the
+  order is mirrored — and reports `decide()`'s verbatim output as the headline, not a reconstruction.
+- **`tests/test_trace.py`** — pins the mirror to the engine across all 90 served days: the trace's
+  terminal gate must match `decide()`'s action every day, plus the two hero days' arithmetic. This is
+  the guardrail that stops the audit trail drifting into a flattering lie if `decide()` is reordered.
+- **`scripts/render_decision_panel.py`** — renders a self-contained HTML panel from the traces. Every
+  number is the engine's; nothing is typed. `scripts/` is outside CI's ruff scope (`engine sim backend
+  tests`), so the CSS blob's long lines are intentionally left unwrapped.
+
+**The demo choice:** feature 2026-05-25 (sweep $449.50) beside 2026-05-30 (refuse). Measured, the
+contrast is the whole point — gates 1–5 identical, and on May 30 there is **$41.47 of real surplus**
+(`$1,291.47 − 800 − 450`) that the engine still refuses, because cadence holds it (`days_since=5 < 7`).
+Same machine, one gate flips. That is "inputs + thresholds + flow" made visible, and it doubles as the
+runsheet's beat-3 point (80/90 days are refusals *by design*).
+
+Design honours the app's own theme (`mobile/src/theme.ts`): cool blue-green, **no red** — a refusal is
+the product working, not a fault — with monospaced tabular figures so the page reads as a machine
+ledger. Verified with a headless-Chrome screenshot (dark theme). 808 passed / 10 skipped, ruff clean.
+Not deployed and not wired into the web app — it is a standalone asset for the demo; wiring it into the
+app (a per-decision "show the math" panel over a `/decisions/{day}/trace` endpoint) is the obvious
+follow-up if the panel earns its place.
