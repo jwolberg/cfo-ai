@@ -140,17 +140,24 @@ export function Spending({ householdId }: Props) {
         <View style={styles.card} testID="worst-month">
           <Text style={styles.label}>YOUR HIGHEST 30 DAYS OF SPENDING</Text>
           <Text style={styles.stat}>{formatMoneyRounded(normal.worst_30d_cash)}</Text>
+          {/* "We set money aside for" and not "we reserve against": the reserve is not sized off
+              this number. `SPEND_QUANTILE` is None, so `forecast.py` charges `daily_discretionary_high`
+              instead — 0018 measured reserving against this figure and refused it (breach 2.3% ->
+              19.8%). Naming the mechanism here would name the one model the engine rejected. */}
           <Text style={styles.body}>
-            The most you&apos;ve spent in any 30-day stretch. We reserve against months like that
-            one.
+            The most you&apos;ve spent in any 30 days in a row. We set money aside for months like
+            that one.
           </Text>
 
           <StripChart series={normal.rolling_30d_cash} worst={normal.worst_30d_cash} />
 
+          {/* Written for a general reader: short sentences, and the sliding window shown by example
+              rather than named. "Days 1 to 30, then 2 to 31" is the whole idea, and it survives being
+              read once. */}
           <Text style={styles.small}>
-            Each bar is your total spending over one 30-day window, stepping forward a day at a time
-            across your history. The tallest, highlighted, is that highest stretch — not an average,
-            and not a guess at your biggest month.
+            Each bar adds up 30 days of spending. The first bar is days 1 to 30, the next is days 2
+            to 31, and so on. The tall highlighted bar is your biggest 30 days — a real total from
+            your own spending, not an average or a guess.
           </Text>
         </View>
       </View>

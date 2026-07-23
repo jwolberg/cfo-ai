@@ -3127,3 +3127,34 @@ household, and the archetype demos when re-seeded).
 
 Follow-up left open: `decision-engine.md` §9.3's spacing rule was masked by this gate firing first;
 with the mask gone it may surface on its own.
+
+---
+
+## 2026-07-23 — the spending tab's chart caption, in plainer language
+
+Asked to rewrite the "highest 30 days" card for a general reader (roughly a 17-year-old's reading
+level). The caption now *shows* the sliding window instead of naming it — "the first bar is days 1
+to 30, the next is days 2 to 31, and so on" replaces "one 30-day window, stepping forward a day at a
+time across your history." Same fact, one read-through.
+
+**One clause changed for correctness, not reading level, and it should not be reverted as copy
+polish.** The body read *"We reserve against months like that one."* The engine does not.
+`SPEND_QUANTILE` is `None` (`precompute.py:125`), so `spend_30d_high` is never populated and
+`forecast.py` falls back to `daily_discretionary_high`. Ticket `0018` built the dial to reserve
+against this exact figure, measured it, and refused the swap — breach **2.3% → 19.8%** over 4,320
+graded days. The sentence named the one model the engine rejected. It is now "We set money aside for
+months like that one": the reserve is real (`held_back` is on this same screen) without claiming this
+number sizes it. The error was in the safe direction — `30 × p90_daily` over-reserves relative to the
+enumerated worst window — but it was checkable and wrong. A comment in `Spending.tsx` now carries the
+reason.
+
+Dropping "across your history" also quietly retires a second overclaim: the series is 60–150 days,
+i.e. **2–5 independent months**, and overlapping windows flatter the sample count without adding
+information. Per `0018`, this estimator recovers 77% / 58% / 86% of the true worst month for typical
+/ high-variance / steady households, so "your biggest 30 days" is the biggest *observed*, not the
+biggest there is. The new copy no longer implies the history is complete.
+
+Left alone: "highest" over the engine's "worst", a choice already argued in a comment in the file.
+No test asserted the prose (`Spending.test.tsx` pins the amount and the testID), so nothing moved —
+typecheck clean, 96 mobile tests pass. Not deployed at the time of writing; reaching the public site
+needs `npm run deploy:web`.
