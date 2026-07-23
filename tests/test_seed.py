@@ -176,8 +176,14 @@ class TestArchetypeB:
 
     def test_each_card_carries_its_own_balance(self, db_engine, seeded):
         """Ticket 0027: one ledger for a whole portfolio reported a $3,000 card's balance as
-        $14,009.20. Three cards reporting three different statement balances is the cheapest
-        possible proof the walk is no longer doing that."""
+        $14,009.20 — every card showing the collapsed portfolio *sum*. The proof the walk is no
+        longer doing that is that the cards do **not** all report one identical balance.
+
+        This used to assert three *distinct* balances, but the `0063` income fix let this
+        semimonthly household sweep the days it was wrongly refused and **pay `card_b_high` to
+        $0** — and a transactor always clears its statement to $0 too. So two cards legitimately
+        share $0, for different reasons; "all distinct" now over-asserts. "Not collapsed to one
+        value" is the property 0027 is actually about."""
         hid = household_id_for("semimonthly_portfolio")
 
         with db_engine.connect() as c:
@@ -187,7 +193,11 @@ class TestArchetypeB:
 
         balances = {r["statement_balance"] for r in rows}
         assert len(rows) == 3
-        assert len(balances) == 3, f"cards share a balance: {rows}"
+        assert len(balances) >= 2, f"cards collapsed to one balance: {rows}"
+        portfolio_sum = sum(r["statement_balance"] for r in rows)
+        assert not all(r["statement_balance"] == portfolio_sum for r in rows), (
+            f"every card reports the portfolio sum — the 0027 collapse is back: {rows}"
+        )
 
 
 class TestArchetypeD:
@@ -337,34 +347,32 @@ class TestEveryArchetypeIsSeeded:
         assert dangling == []
 
 
-class TestTheIncomeGateIsBiweeklyShaped:
-    """The finding. Not a bug to fix here, and explicitly not a gate to loosen.
+class TestTheIncomeGateIsCadenceAgnostic:
+    """The finding, and its fix (ticket `0063`).
 
     Every archetype has `payroll.variation = 0.02` — their income is, by construction, exactly as
-    regular as the demo household's. The engine measures B and C as *too variable to serve*.
+    regular as the demo household's. The income gate *used* to disagree: `income_variation` summed
+    income into three 28-day buckets, which is two biweekly pay periods, so it read A as regular but
+    aliased against every other cadence and refused B (semimonthly) and C (monthly) as
+    `INCOME_TOO_VARIABLE` — measured, 37% and 21% of their days. That was pinned here as a tripwire
+    "so that fixing it is a deliberate act with a measurement attached."
 
-    `precompute.INCOME_BUCKET_DAYS = 28` exists because bucketing a biweekly earner by calendar
-    month would score the ~4-times-a-year three-paycheck month as a 24% swing and trip a 25% gate on
-    a household whose income is perfectly regular. Its own comment says a 28-day bucket "is the
-    honest measure of a biweekly earner's variability" — and it is. It is the measure of nobody
-    else's: 28 days divides evenly into a biweekly calendar and into no other. A semimonthly earner
-    (24/yr) lands 1 or 2 paychecks in a bucket; a monthly earner (12/yr) lands 0 or 1.
-
-    So `prd.md` §2.2's variance gate is working correctly on a number that is wrong, and it fires
-    *before* the forecast — which means it also masks §9.3's spacing rule, the thing this ticket set
-    out to price. Both are the same defect wearing two hats: a biweekly-shaped constant applied to
-    everyone, waiting on the recurring-income detector `decision-engine.md` §6.2 lists as assumed
-    away.
-
-    This test pins the finding so that fixing it is a deliberate act with a measurement attached,
-    rather than something that quietly stops being true.
+    This is that act. `income_variation` now measures the coefficient of variation of paycheck
+    *amounts*, which is timing-agnostic, so a regular earner reads regular at any cadence. The
+    measurement: the archetype breach rate fell on every shape (semimonthly 19.7%→11.0%, monthly
+    7.6%→5.6%, biweekly/apr unchanged) with **zero** sweep-caused overdrafts — licensed by
+    `calibrate`'s own rule. So the gate no longer fires on a household whose income is regular, and
+    this test now pins *that*.
     """
 
     def test_every_archetype_has_identical_true_income_regularity(self):
         variations = {name: s.payroll.variation for name, s in ARCHETYPES.items()}
         assert len(set(variations.values())) == 1, variations
 
-    def test_the_non_biweekly_households_are_refused_as_too_variable(self, db_engine, seeded):
+    def test_no_regular_earner_is_refused_as_too_variable(self, db_engine, seeded):
+        """The fix: none of the four archetypes — biweekly, semimonthly, or monthly — is ever
+        refused `income_too_variable`, because none of them has variable income. If this starts
+        firing again, the metric regressed to aliasing against cadence."""
         refused = {}
         with db_engine.connect() as c:
             for name in ARCHETYPES:
@@ -377,11 +385,7 @@ class TestTheIncomeGateIsBiweeklyShaped:
                 )
                 refused[name] = rows[0]["n"]
 
-        assert refused["demo_biweekly"] == 0
-        assert refused["apr_unreported"] == 0
-        assert refused["semimonthly_portfolio"] > 0, (
-            "the income gate stopped firing on a semimonthly household — if that was deliberate, "
-            "this test and decision-engine.md §9.3 both need updating; if it was not, the gate "
-            "moved without a measurement"
+        assert refused == {name: 0 for name in ARCHETYPES}, (
+            f"a regular earner was refused as too variable — the income metric is aliasing against "
+            f"pay cadence again: {refused}"
         )
-        assert refused["monthly_thin"] > 0

@@ -625,12 +625,14 @@ def _facts_html(facts: AccountFacts) -> str:
         f'<dl class="kv">{accounts}</dl></div>'
         '<div class="fcol"><h4>Income</h4>'
         '<dl class="kv">'
-        "<div><dt>month-to-month variation</dt>"
+        "<div><dt>income variation (per paycheck)</dt>"
         f"<dd>{html.escape(facts.income_variation)}</dd></div>"
         f"<div><dt>transaction history</dt><dd>{facts.history_days} days</dd></div>"
         "</dl>"
-        '<p class="fnote block">Variation is the coefficient of variation across <b>3 trailing '
-        "28-day buckets</b> (~84 days) — not calendar months. The per-bucket payroll figures are "
+        '<p class="fnote block">Variation is the coefficient of variation of '
+        "<b>paycheck amounts</b> over the trailing ~84 days — timing-agnostic, so it does not "
+        "alias against pay cadence "
+        "(biweekly / semimonthly / monthly all read the same). The individual paycheck figures are "
         "not in the stored snapshot.</p></div>"
         "</div>"
         f"<h4>Cards ({len(facts.cards)})</h4>"

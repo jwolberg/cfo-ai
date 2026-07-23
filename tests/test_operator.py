@@ -145,7 +145,7 @@ class TestAccountFacts:
         r = client.get("/household/hh_monthly_thin/decision/2026-05-21")
         assert "Account facts" in r.text
         assert "card_c_high" in r.text and "card_c_low" in r.text
-        assert "3 trailing" in r.text  # the income measurement note
+        assert "paycheck amounts" in r.text  # the income measurement note
 
     def test_missing_snapshot_facts_are_none(self, seeded_engine) -> None:
         assert account_facts(seeded_engine, "hh_demo_biweekly", date(1999, 1, 1)) is None

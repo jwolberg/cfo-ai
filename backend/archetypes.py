@@ -22,18 +22,20 @@ That is deliberate and it is the same discipline `calibrate._spec_for()` uses wh
 *cadence*, nothing they measured could be attributed to either. What varies is the calendar and
 the portfolio. Nothing else.
 
-## The instrument these are measured with is itself biweekly-shaped
+## The instrument these are measured with used to be biweekly-shaped — and these households found it
 
-`precompute.INCOME_BUCKET_DAYS = 28` exists because a *calendar month* contains two paychecks
-except the ~4 times a year it contains three, and scoring that artifact as a 24% income swing
-would trip `INCOME_TOO_VARIABLE` (the gate is 25%) on a household whose income is perfectly
-regular. Its own comment says a 28-day bucket "is the honest measure of a biweekly earner's
-variability."
+`income_variation` once summed income into three trailing 28-day buckets. That is exactly two
+biweekly pay periods, so it read a biweekly earner (A) as regular (~0%) but **aliased against every
+other cadence**: a semimonthly (B, 24/yr) or monthly (C, 12/yr) earner's paydays drift against the
+28-day grid, so a bucket periodically caught one or three checks — or zero — and the gate (25%)
+refused `INCOME_TOO_VARIABLE` on a household whose income is, by construction, exactly as regular as
+A's. This module said the artifact was "something the seeder and `calibrate` are here to find out",
+and they did: measured, B tripped the gate 37% of days and C 21%, A never.
 
-**Of a biweekly earner's.** A semimonthly earner is paid 24 times a year and a monthly earner 12,
-and neither divides into 28 days evenly either. Whether that instrument reports B and C as
-variable — when their income is, by construction, exactly as regular as A's — is not something
-this module asserts. It is something the seeder and `calibrate` are here to find out.
+**The fix (ticket `0063`) measures paycheck *amounts*, not time-bucketed sums** — timing-agnostic,
+so all three cadences read the same ~1-2%, and the archetype breach rate fell on every shape with
+zero sweep-caused overdrafts. These four archetypes are why a single-calendar spend population was
+never enough: the defect lived in the *calendars*, and only B and C could surface it.
 """
 
 from __future__ import annotations

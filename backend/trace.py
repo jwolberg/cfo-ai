@@ -136,7 +136,7 @@ def trace(snapshot: Snapshot) -> DecisionTrace:
             else "—",
             "bank connection status": funding.connection.value if funding else "—",
             "days of transaction history": str(s.history_days),
-            "month-to-month income variation": f"{s.income_variation:.2%}",
+            "income variation (per paycheck)": f"{s.income_variation:.2%}",
             "sweep already in flight (amount)": _f(s.sweeps_in_flight),
         },
         f"age ≤ {MAX_BALANCE_AGE_DAYS}d · history ≥ {MIN_HISTORY_DAYS}d · "

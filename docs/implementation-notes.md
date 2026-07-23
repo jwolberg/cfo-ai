@@ -3098,3 +3098,32 @@ login form body directly. CSS lives beside the module as `operator.css` (a CSS b
 825 passed / 10 skipped, ruff clean. Not deployed — a local tool. Verified every page by headless
 screenshot. Follow-ups if it earns its place: real per-operator auth + access log (the `Access &
 audit` box), and wiring `assert_not_halted` into the execution rung.
+
+---
+
+## 2026-07-22 — income variation aliased against pay cadence (0063)
+
+Spawned from operating the console: a monthly earner read 70.71% income variation on some days and
+was refused `income_too_variable` despite perfectly regular pay. `precompute.income_variation`
+summed payroll into three 28-day buckets — exactly two biweekly periods — so biweekly read ~0% but
+semimonthly and monthly aliased: a bucket periodically caught 0 or 3 checks. Measured: the gate
+tripped 37% of semimonthly days and 21% of monthly days; `income_too_variable` was **14.4%** of all
+archetype decisions, all of it B and C, none A.
+
+Fixed to the CV of paycheck **amounts** over the trailing ~84 days — timing-agnostic. Confirmed with
+`calibrate` before shipping (the promise): **0 → 0 sweep-caused overdrafts**, breach rate 4.97% →
+4.15% overall and **better on every shape** (semimonthly 19.7%→11.0%, monthly 7.6%→5.6%), so it is
+licensed by calibrate's own rule. `income_too_variable` refusals 1,040 → 0; sweeps 9.2% → 10.2% (the
+households now pay down debt on days they were wrongly refused — `card_b_high` reaches $0).
+
+The old `TestTheIncomeGateIsBiweeklyShaped` was a deliberate tripwire ("fixing it is a deliberate act
+with a measurement attached") — flipped to `TestTheIncomeGateIsCadenceAgnostic`, which now pins that
+no regular earner is refused. One test moved as a *consequence*, not a break: semimonthly's
+`card_b_high` now pays to $0, so `test_each_card_carries_its_own_balance`'s "3 distinct balances"
+proxy was relaxed to 0027's actual property (not collapsed to one value). Ticket `0063`, engine
+change, so ran the whole suite: 828 passed / 10 skipped, ruff clean. Not deployed (prod is
+sandbox/frozen-demo; the frozen demo serves precomputed decisions, so this bites a live-decided
+household, and the archetype demos when re-seeded).
+
+Follow-up left open: `decision-engine.md` §9.3's spacing rule was masked by this gate firing first;
+with the mask gone it may surface on its own.
