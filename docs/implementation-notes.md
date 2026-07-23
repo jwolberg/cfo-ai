@@ -2868,6 +2868,110 @@ six writes at 403, and the three identity cases. 798 passed / 10 skipped against
 (a throwaway instance, since these tests are `requires_db` and skip loudly without one), ruff clean.
 `0058` closed.
 
+### The demo was pointed at the wrong thing (2026-07-22)
+The 2026-07-21 demo plan pitched the read-only deploy's **access-control** story. That is plumbing,
+and `docs/decision-engine.md` opens by saying the decision — not the plumbing around it — is what the
+company lives or dies on. Superseded by
+`docs/plans/2026-07-22-001-feat-proving-the-engine-harness-and-observability-plan.md`, which makes the
+demo the engine and the rig that proves it. The old plan is kept, marked superseded, because its
+measurement discipline is what found `0058`.
+
+Reading the rig before designing changed the proposal: the proof harness is **already largely built**
+(`sim/household.py`'s deterministic zero-inflated-lognormal generator with `as_of` slicing against
+lookahead; `outcome.py`'s four distinct facts; `replay.py` applying the sweep itself so a caller
+cannot produce a flattering shadow report; `calibrate.py`'s population sweep and `licensed()` rule,
+which has already refused a change). So the plan adds nothing to grading semantics. Three gaps only:
+
+1. **Nothing to look at** — `calibrate.report()` returns a string (`0060`).
+2. **Scenarios are shapes, not events** — seeds and spend distributions, never "income skipped a
+   cycle" or "a card appeared mid-history". Also why the flagship demo opens on a refusal: nothing in
+   the rig is designed to produce a sweep (`0059`).
+3. **The harness stops at the decision** — transfers are assumed to post same-day and succeed
+   (`0061`).
+
+The load-bearing new metric is **decision mix**. Every safety number in the rig today improves the
+more the engine refuses — breach rate falls, sweep-caused overdrafts fall, and `false_refusal_cost`
+deliberately excludes deferral codes — so an engine that silently stopped sweeping would pass every
+existing gate with perfect scores. Nothing catches that today.
+
+Tickets `0059`–`0062` filed. `0059` → `0060` is the short path to a demo-able artifact. The read-only
+deploy work is demoted to support: the site is where a scenario-seeded household renders, and `0058`
+becomes a 60-second answer if asked about security rather than the headline.
+
+### Reviewing the 2026-07-22 plan by running the rig it describes (2026-07-22)
+The plan, `0059` and `0060` were reviewed against the code rather than read. Four claims held:
+`calibrate.report()` returns a bare string; `grade()` applies the sweep itself so a caller cannot
+flatter the report; `false_refusal_cost` excludes deferral codes; and `licensed()` did refuse a real
+change (nothing at or below `q=1.0`, dial still ships at `None`). Three did not.
+
+**"Nothing in the rig is designed to produce a sweep" is false.** Replaying the existing
+`SHAPES × SEEDS` population through `replay()`'s exact wiring — 1,350 graded days — gives 10.6%
+`SWEEP` (143 days), 59.7% `CADENCE_HOLD`, 20.0% `CARD_BEHAVIOR_UNKNOWN`, 9.7% `NO_SURPLUS`, against a
+cadence ceiling of 14.3% (`min_days_between_sweeps=7`). The engine runs at ~74% of the ceiling and
+swept whenever it was permitted and had surplus; the seeder's own record (10/5/9/11 sweeps per 90
+days) agrees. The linked Plaid demo refuses for a *data* reason — under three observed cycles — which
+is a different problem with a much shorter fix, so re-seeding the public demo from an existing
+archetype was moved off `0059`'s critical path. Worth recording how the first measurement was
+*wrong*: walking from `WINDOW_START` without `replay()`'s 60-day warm-up reported 65.6%
+`INSUFFICIENT_HISTORY` and a 2.1% sweep rate — an artifact of the harness, not the engine. A
+decision-mix number is only meaningful if it is produced by the same wiring `replay()` uses.
+
+**`0059`'s "sweeps on a majority of graded days" was unsatisfiable.** Cadence caps the achievable
+rate at 14.3%, so the only way to pass it was to change the policy — measuring a different product
+than the one that ships. Restated against cadence-eligible days.
+
+**`0060`'s "a rendering problem, not an instrumentation one" was wrong twice.** `Graded`
+(`replay.py:79`) carries `outcome` and `deferred` and drops the `Decision`, so decision mix by code
+is not computable from a replay today; and `decide.py` appends a `Reason` only for gates that fire
+(several paths return early), so "every gate evaluated" needs the engine to report what it
+considered. The ticket now prefers the cheap form — fired gates plus the inputs the non-firing ones
+read, derived outside `decide.py` — because an observability feature should not be the reason the
+decision path gets edited.
+
+Also resolved a contradiction: the plan said `0058` was "still required before the site is shown to
+anyone" and, four lines later, filed it under chores that can happen "whenever". Resolved to the
+stricter reading — the site is public and live now, so the exposure runs whether or not anyone is
+being shown it. And the ordering trap is now written into the plan: the junk household must be
+deleted **before** migration `0015`, because the backfill only marks a user demo when *every*
+membership is to a demo household, and `deploy_prod.sh` runs neither seeder that would otherwise
+assert the flag.
+
+Demo beat 5 was retold. `licensed()` refusing a change is the weaker half; the stronger half is that
+it *would have licensed a $1.08M regression* until a third condition was added — both original
+conditions were monotone in reserve size. "My own safety gate was wrong in a way that would have
+shipped, and measuring it caught it" answers *how would you know if you were wrong* better than "the
+gate held".
+
+### The public demo now opens on the product working (2026-07-22)
+The deployed demo opened on `hh_demo_plaid` — a linked household with no graded window, whose live
+decision is `card_behavior_unknown`. The first and only thing a visitor saw was a refusal. The
+2026-07-22 plan filed this under `0059` (a scenario library, because "nothing in the rig is designed
+to produce a sweep"), but that premise was wrong, and the fix turned out to be **three rows**.
+
+The four seeded archetypes have been in production since 2026-07-16 with a full 90-day graded feed
+each — `hh_apr_unreported` 11 sweeps, `hh_demo_biweekly` 10, `hh_monthly_thin` 9,
+`hh_semimonthly_portfolio` 5. They were invisible only because the demo viewer had no membership
+rows to them: `_seed_memberships` grants them to `seed.py`'s `user_demo_viewer`, while production
+runs on the Stytch-reconciled user `seed_demo_household.py` provisions. Two different identities, and
+nothing ever joined them. `scripts/grant_demo_viewer_archetypes.py` grants three as `viewer`.
+
+**`hh_apr_unreported` is excluded on purpose.** `readpath.list_households` orders by id and
+`mobile/App.tsx:73` defaults to `households[0]`, so including it would silently make it the household
+every visitor lands on — the weakest opening frame of the four, and named after a data gap. The
+default is now `hh_demo_biweekly`, the persona `USERS.md` describes. Ordering is the whole mechanism,
+which is worth knowing before adding a household whose id sorts early.
+
+The script is committed rather than left as a one-off because a re-seed silently undoes it:
+`seed_all` deletes each household, `household_members` cascades, and the rows come back pointing at
+the wrong user. The households still exist afterwards — the picker just quietly goes back to one.
+
+**This also caught a bug in the verification script, which is the argument for running it after data
+changes and not only after deploys.** `verify_demo_readonly.sh` took the first household from the
+picker and asserted `/live-decision` 200. With a seeded household first that is now `409` — the
+*correct* answer (`client.ts:177`: a seeded household has a graded window and `409`s there). The
+script now resolves a seeded and a linked household separately and asserts the right route for each,
+including the 409, because "the wrong route answers anyway" is exactly the drift it exists to catch.
+13 checks, all green against `resfi-api-00007-cil`.
 
 ---
 
