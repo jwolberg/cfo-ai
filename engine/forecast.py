@@ -66,18 +66,15 @@ def _spend_per_day(snapshot: Snapshot) -> Decimal:
     return snapshot.spend_30d_high / HORIZON_DAYS
 
 
-def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
-    """Return (low_balance, day_it_occurs) for the *funding account* over the horizon.
+def _project_horizon(snapshot: Snapshot) -> tuple[tuple[date, Decimal], ...]:
+    """One walk of the funding account across the horizon — the shared source of both the low and
+    the trajectory, so they can never disagree about the same forecast (ticket 0064).
 
-    Only the funding account is projected, and this is the whole point. An ACH debit
-    leaves one specific account. A user with $100 in checking and $5,000 in savings has
-    $5,100 of money and $100 of *protection* — summing them and testing the total
-    against the buffer would authorize a sweep that overdraws checking while the savings
-    sits there untouched. Savings is real money, but it is not *there*, and moving it is
-    a second ACH with its own delay and its own failure modes.
-
-    The low balance — not the ending balance — is what constrains a sweep. The user only
-    has to be broke once.
+    Returns the balance points the low is taken over, in order. The **first** point is `(today,
+    current balance)` — where the household is *now*, before today's own expected events; every
+    point after it is `(day, balance at the end of that day)` for `day` in `today..today+HORIZON`.
+    That "now" anchor is a real candidate for the low: a household whose balance only ever climbs is
+    at its lowest today, and dropping it would let the chart's minimum disagree with the decision's.
     """
     account = funding_account(snapshot)
     if account is None:
@@ -124,15 +121,48 @@ def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
 
         daily[when] = daily.get(when, ZERO) + amount
 
-    low = balance
-    low_day = snapshot.today
-
+    # The "now" anchor, then each day's end balance. `today` therefore appears twice — the current
+    # balance and the balance after today's own events — which are equal on the common day (no event
+    # dated exactly today) and differ, honestly, when a charge is pulled forward to today.
+    points: list[tuple[date, Decimal]] = [(snapshot.today, balance)]
     for offset in range(HORIZON_DAYS + 1):
         day = snapshot.today + timedelta(days=offset)
         balance += daily.get(day, ZERO)
         if offset > 0:
             balance -= _spend_per_day(snapshot)
+        points.append((day, balance))
 
+    return tuple(points)
+
+
+def balance_trajectory(snapshot: Snapshot) -> tuple[tuple[date, Decimal], ...]:
+    """The funding account's projected balance over the horizon, for the chart (ticket 0064).
+
+    The `(day, balance)` curve `conservative_low_balance` finds its low on — the *same walk*, so the
+    chart's lowest point and the decision's low are always the same number. See `_project_horizon`
+    for why `today` is the first point and may appear twice.
+    """
+    return _project_horizon(snapshot)
+
+
+def conservative_low_balance(snapshot: Snapshot) -> tuple[Decimal, date]:
+    """Return (low_balance, day_it_occurs) for the *funding account* over the horizon.
+
+    Only the funding account is projected, and this is the whole point. An ACH debit
+    leaves one specific account. A user with $100 in checking and $5,000 in savings has
+    $5,100 of money and $100 of *protection* — summing them and testing the total
+    against the buffer would authorize a sweep that overdraws checking while the savings
+    sits there untouched. Savings is real money, but it is not *there*, and moving it is
+    a second ACH with its own delay and its own failure modes.
+
+    The low balance — not the ending balance — is what constrains a sweep. The user only
+    has to be broke once. The low is the minimum of `_project_horizon`'s walk, earliest day
+    winning ties (the walk's first point is `today`, so a household that only gains is `today`).
+    """
+    points = _project_horizon(snapshot)
+
+    low_day, low = points[0]
+    for day, balance in points[1:]:
         if balance < low:
             low = balance
             low_day = day
