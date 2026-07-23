@@ -34,7 +34,8 @@ import {
 } from 'react-native';
 
 import { ApiError, askAssistant, getExplanation } from '../api/client';
-import type { Decision, Turn } from '../api/types';
+import type { BalanceProjection, Decision, Turn } from '../api/types';
+import { BalanceChart } from '../components/BalanceChart';
 import { formatDateLong, formatMoney } from '../format';
 import { COLUMN_WIDTH, MIN_TAP_TARGET, colors, radius, shadow, space, type } from '../theme';
 
@@ -52,7 +53,7 @@ interface Props {
 
 type Narration =
   | { status: 'loading' }
-  | { status: 'ready'; sentences: string[] }
+  | { status: 'ready'; sentences: string[]; projection: BalanceProjection | null }
   | { status: 'failed' };
 
 export function ExplainModal({ decision, householdId, onClose }: Props) {
@@ -76,7 +77,15 @@ export function ExplainModal({ decision, householdId, onClose }: Props) {
 
     let live = true;
     getExplanation(date, householdId)
-      .then((body) => live && setNarration({ status: 'ready', sentences: body.narration }))
+      .then(
+        (body) =>
+          live &&
+          setNarration({
+            status: 'ready',
+            sentences: body.narration,
+            projection: body.projection,
+          }),
+      )
       .catch(() => live && setNarration({ status: 'failed' }));
 
     return () => {
@@ -183,6 +192,9 @@ export function ExplainModal({ decision, householdId, onClose }: Props) {
                   {sentence}
                 </Text>
               ))}
+              {narration.projection !== null && (
+                <BalanceChart projection={narration.projection} />
+              )}
             </View>
           )}
 

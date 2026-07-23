@@ -41,12 +41,28 @@ const SWEEP: Decision = {
   debt_balance: '3451.64',
 };
 
+const PROJECTION = {
+  as_of: '2026-05-30',
+  horizon_end: '2026-06-29',
+  buffer_floor: '800.00',
+  low: '1154.67',
+  low_day: '2026-06-05',
+  points: [
+    { day: '2026-05-30', balance: '3847.41' },
+    { day: '2026-06-02', balance: '2100.00' },
+    { day: '2026-06-05', balance: '1154.67' },
+    { day: '2026-06-15', balance: '2600.00' },
+    { day: '2026-06-29', balance: '3200.00' },
+  ],
+};
+
 const NARRATION = {
   ...SWEEP,
   narration: [
     'Your balance is heading for a low of $1,154.67 on 2026-06-05.',
     "That's about $14.13 of interest you won't pay.",
   ],
+  projection: PROJECTION,
 };
 
 beforeEach(() => {
@@ -69,6 +85,23 @@ describe('opening a decision', () => {
 
     expect(screen.queryByText(/paid/i)).toBeNull();
     expect(getExplanation).not.toHaveBeenCalled();
+  });
+
+  it('draws the projected-balance chart alongside the words (ticket 0064)', async () => {
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByTestId('balance-chart')).toBeTruthy());
+    // the chart is the narration's low, drawn — the sentence and the curve agree by construction
+    expect(screen.getByText(/Low \$1,154\.67 on Jun 5/)).toBeTruthy();
+    expect(screen.getByText('WHERE YOUR CASH IS HEADED')).toBeTruthy();
+  });
+
+  it('degrades to text when there is no projection, never a broken chart', async () => {
+    getExplanation.mockResolvedValue({ ...NARRATION, projection: null });
+    await render(<ExplainModal householdId={DEMO_HOUSEHOLD} decision={SWEEP} onClose={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText(NARRATION.narration[0])).toBeTruthy());
+    expect(screen.queryByTestId('balance-chart')).toBeNull();
   });
 
   it('a failed narration fetch does not strand the user', async () => {
