@@ -214,17 +214,76 @@ def household_detail(engine: Engine, household_id: str, limit: int = 40) -> Hous
     )
 
 
-def decision_trace(engine: Engine, household_id: str, day: date) -> DecisionTrace | None:
-    """The exact snapshot behind one decision, replayed through the engine. None if not stored."""
+def _load_snapshot(engine: Engine, household_id: str, day: date):
+    """The frozen snapshot behind one decision, or None if not stored."""
     with repository(engine, household_id) as repo:
         store = PostgresSnapshotStore(repo.conn)
         try:
             # Refs are opaque to callers and the Postgres store only answers to its own `pg:` refs
             # (`PostgresSnapshotStore.put` returns exactly this shape).
-            snapshot = store.get(f"pg:{household_id}:{day.isoformat()}")
+            return store.get(f"pg:{household_id}:{day.isoformat()}")
         except SnapshotStoreError:
             return None
-    return trace(snapshot)
+
+
+def decision_trace(engine: Engine, household_id: str, day: date) -> DecisionTrace | None:
+    """The exact snapshot behind one decision, replayed through the engine. None if not stored."""
+    snapshot = _load_snapshot(engine, household_id, day)
+    return trace(snapshot) if snapshot is not None else None
+
+
+@dataclass(frozen=True)
+class CardFact:
+    card_id: str
+    balance: str  # total owed = statement + unbilled
+    statement: str
+    apr: str
+    behavior: str
+    minimum: str
+
+
+@dataclass(frozen=True)
+class AccountFacts:
+    """The raw inputs a decision was made on, straight off the snapshot — the operator's 'step 0'
+    before the gate trace. Everything here is a stored field; the one thing that is *not* stored is
+    the per-bucket payroll history behind `income variation`, so it is summarized, not itemized."""
+
+    accounts: list[tuple[str, str, str]]  # (label, balance, connection·age)
+    income_variation: str
+    history_days: int
+    cards: list[CardFact]
+
+
+def account_facts(engine: Engine, household_id: str, day: date) -> AccountFacts | None:
+    snapshot = _load_snapshot(engine, household_id, day)
+    if snapshot is None:
+        return None
+    accounts = []
+    for a in snapshot.accounts:
+        label = a.kind.value + (" (funding)" if a.account_id == snapshot.funding_account_id else "")
+        accounts.append((label, _f(a.balance), f"{a.connection.value} · {a.balance_age_days}d old"))
+    cards = [
+        CardFact(
+            card_id=c.card_id,
+            balance=_f(c.total_owed),
+            statement=_f(c.statement_balance),
+            apr=f"{c.apr:.2%} ({c.apr_source.value})" if c.apr is not None else "unknown",
+            behavior=c.behavior.value,
+            minimum=_f(c.minimum_payment),
+        )
+        for c in snapshot.portfolio.cards
+    ]
+    return AccountFacts(
+        accounts=accounts,
+        income_variation=f"{snapshot.income_variation:.2%}",
+        history_days=snapshot.history_days,
+        cards=cards,
+    )
+
+
+def _f(d: object) -> str:
+    """A dollar figure, matching the trace's `$X,XXX.XX`."""
+    return f"${d:,.2f}"
 
 
 def _iso(d: object) -> str:
@@ -544,6 +603,44 @@ def _trace_html(t: DecisionTrace) -> str:
     return f'<ol class="steps">{steps}</ol>'
 
 
+def _facts_html(facts: AccountFacts) -> str:
+    """The unofficial 'step 0' — the raw account inputs the decision was made on."""
+    accounts = "".join(
+        f"<div><dt>{html.escape(label)}</dt>"
+        f'<dd>{html.escape(bal)}<span class="fnote">{html.escape(note)}</span></dd></div>'
+        for label, bal, note in facts.accounts
+    )
+    card_rows = "".join(
+        f"<tr><td>{html.escape(c.card_id)}</td><td>{html.escape(c.balance)}</td>"
+        f"<td>{html.escape(c.apr)}</td><td>{html.escape(c.behavior)}</td>"
+        f"<td>{html.escape(c.statement)}</td><td>{html.escape(c.minimum)}</td></tr>"
+        for c in facts.cards
+    )
+    return (
+        '<div class="facts">'
+        '<div class="fh"><span class="ord0">0</span>'
+        '<span class="st"><em>Account facts</em>What the engine is looking at</span></div>'
+        '<div class="fgrid">'
+        '<div class="fcol"><h4>Accounts</h4>'
+        f'<dl class="kv">{accounts}</dl></div>'
+        '<div class="fcol"><h4>Income</h4>'
+        '<dl class="kv">'
+        "<div><dt>month-to-month variation</dt>"
+        f"<dd>{html.escape(facts.income_variation)}</dd></div>"
+        f"<div><dt>transaction history</dt><dd>{facts.history_days} days</dd></div>"
+        "</dl>"
+        '<p class="fnote block">Variation is the coefficient of variation across <b>3 trailing '
+        "28-day buckets</b> (~84 days) — not calendar months. The per-bucket payroll figures are "
+        "not in the stored snapshot.</p></div>"
+        "</div>"
+        f"<h4>Cards ({len(facts.cards)})</h4>"
+        '<table class="cards"><thead><tr><th>card</th><th>balance</th><th>APR</th>'
+        "<th>behaviour</th><th>statement</th><th>min</th></tr></thead>"
+        f"<tbody>{card_rows}</tbody></table>"
+        "</div>"
+    )
+
+
 def _pause_control(s: HouseholdStatus) -> str:
     if s.paused:
         return (
@@ -567,6 +664,7 @@ def _household_page(
     trace_view: DecisionTrace | None,
     open_day: str | None,
     halted: bool = False,
+    facts: AccountFacts | None = None,
 ) -> str:
     s = detail.status
     # A pause writes a contiguous forward window; a full date dump would flood the page, so show the
@@ -603,12 +701,13 @@ def _household_page(
             )
         else:
             amt = f" ${trace_view.amount:,.2f}" if trace_view.action == "sweep" else ""
+            facts_block = _facts_html(facts) if facts is not None else ""
             tracepanel = (
                 '<div class="tracepanel"><div class="tphead">'
                 f"<h2>Snapshot behind {html.escape(open_day)}</h2>"
                 f'<span class="tpout {trace_view.action}">'
                 f"{html.escape(trace_view.action)}{amt}</span></div>"
-                f"{_trace_html(trace_view)}</div>"
+                f"{facts_block}{_trace_html(trace_view)}</div>"
             )
     body = (
         f'<a class="back" href="/">← all households</a>'
@@ -718,7 +817,8 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         except ValueError:
             return HTMLResponse(_page("Bad date", "<h1>Bad date</h1>", user=user), status_code=400)
         t = decision_trace(eng, household_id, parsed)
-        return HTMLResponse(_household_page(detail, user, t, day, is_globally_halted(eng)))
+        facts = account_facts(eng, household_id, parsed)
+        return HTMLResponse(_household_page(detail, user, t, day, is_globally_halted(eng), facts))
 
     # --- overrides (writes) ---------------------------------------------------------
     # No CSRF token: this is a single-operator, same-origin local tool behind a god-mode password.

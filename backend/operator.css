@@ -130,3 +130,19 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mut
 .awho{font-family:var(--mono);color:var(--ink);}
 .aactor{color:var(--muted);font-size:.78rem;}
 @media (max-width:600px){.arow{grid-template-columns:1fr auto;}.aat,.aactor{display:none;}}
+/* account facts — the unofficial step 0 */
+.facts{border:1px dashed var(--border);border-radius:11px;padding:.85rem 1rem;margin:.4rem 0 1rem;background:var(--surface-2);}
+.facts .fh{display:flex;align-items:center;gap:.6rem;margin-bottom:.7rem;}
+.ord0{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font-family:var(--mono);font-size:.75rem;background:var(--ground);color:var(--muted);border:1px dashed var(--border);}
+.facts h4{font-size:.68rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin:.9rem 0 .35rem;font-weight:600;}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;}
+@media (max-width:640px){.fgrid{grid-template-columns:1fr;}}
+.fcol .kv dd{display:flex;flex-direction:column;align-items:flex-end;}
+.fnote{font-family:var(--sans);font-size:.7rem;color:var(--muted);font-weight:400;}
+.fnote.block{margin:.5rem 0 0;text-align:left;line-height:1.4;}
+.cards{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:.82rem;font-variant-numeric:tabular-nums;}
+.cards th{text-align:right;font-family:var(--sans);font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:.25rem .5rem;border-bottom:1px solid var(--border);}
+.cards th:first-child,.cards td:first-child{text-align:left;}
+.cards td{text-align:right;padding:.3rem .5rem;border-bottom:1px dotted var(--border);color:var(--ink);}
+.cards tbody tr:last-child td{border-bottom:none;}
+.facts .kv{padding-left:0;}

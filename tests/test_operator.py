@@ -21,6 +21,7 @@ from backend.db.snapshots import PostgresSnapshotStore
 from backend.operator import (
     OperatorNotConfigured,
     SystemHalted,
+    account_facts,
     assert_not_halted,
     create_operator_app,
     decision_trace,
@@ -125,6 +126,29 @@ class TestTheSnapshotBehindADecision:
 
     def test_a_missing_snapshot_is_none_not_a_crash(self, seeded_engine) -> None:
         assert decision_trace(seeded_engine, "hh_demo_biweekly", date(1999, 1, 1)) is None
+
+
+class TestAccountFacts:
+    def test_facts_carry_accounts_income_and_every_card(self, seeded_engine) -> None:
+        f = account_facts(seeded_engine, "hh_monthly_thin", date(2026, 5, 21))
+        assert f is not None
+        # two cards, each with a balance and a reported APR
+        assert {c.card_id for c in f.cards} == {"card_c_high", "card_c_low"}
+        high = next(c for c in f.cards if c.card_id == "card_c_high")
+        assert high.balance.startswith("$") and "22.99%" in high.apr
+        # the income variation the decision saw, and a funding account
+        assert f.income_variation == "0.74%"
+        assert any("(funding)" in label for label, _bal, _note in f.accounts)
+
+    def test_the_facts_section_renders_the_card_table(self, client) -> None:
+        _login(client)
+        r = client.get("/household/hh_monthly_thin/decision/2026-05-21")
+        assert "Account facts" in r.text
+        assert "card_c_high" in r.text and "card_c_low" in r.text
+        assert "3 trailing" in r.text  # the income measurement note
+
+    def test_missing_snapshot_facts_are_none(self, seeded_engine) -> None:
+        assert account_facts(seeded_engine, "hh_demo_biweekly", date(1999, 1, 1)) is None
 
 
 class TestPause:
