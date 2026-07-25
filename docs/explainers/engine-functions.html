@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>resfi — the engine, function by function</title>
+<style>
+  /* Light only, deliberately — status.html's reasoning, unchanged: `color-scheme: light` stops an
+     OS in dark mode from force-inverting the page into a palette nobody checked.
+
+     Palette is status.html's / decision-flow.html's, unchanged, and so are its fixed meanings:
+     BLUE (--go) marks the sweep, DEEP GREEN (--stop) marks a refusal. This page leans on that
+     hard — the gate ladder in §04 is a list of refusals, so its reason codes are drawn in the
+     stop voice with the same `.code` pill decision-flow.html uses. Whether a refusal is
+     *gradeable* is a different axis entirely and is deliberately drawn with no color at all,
+     in the faint mono kicker, so it cannot be misread as a third verdict. */
+  :root {
+    color-scheme: light;
+
+    --bg: #f5f9fa;
+    --panel: #ffffff;
+    --ink: #15282c;
+    --muted: #5c7178;
+    --faint: #949c9a;
+    --rule: #e3edef;
+    --kicker: #598278;
+
+    --stop: #085041;
+    --stop-bg: #eff5f3;
+    --stop-rule: #c9dcd6;
+
+    --go: #2c7f98;
+    --go-bar: #4aafc9;
+    --go-bg: #edf7fa;
+    --go-rule: #c2e3ec;
+
+    --note: #147257;
+    --note-bar: #1d9e75;
+    --note-bg: #f1f8f5;
+    --note-rule: #cfe7dc;
+
+    --ghost: #b3bdbc;
+
+    --shadow: 0 1px 2px rgba(22, 38, 46, .04), 0 8px 24px -8px rgba(22, 38, 46, .10);
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  a { color: var(--go); text-decoration-color: var(--go-rule); text-underline-offset: 2px; }
+  a:hover { text-decoration-color: var(--go); }
+
+  body {
+    margin: 0;
+    padding: 3rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1020px; margin: 0 auto; }
+
+  header { margin-bottom: 3rem; }
+  .brand { display: block; width: 168px; height: auto; margin: 0 0 1.75rem -6px; }
+  h1 {
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    line-height: 1.15;
+    margin: 0 0 .75rem;
+    letter-spacing: -0.02em;
+  }
+  .lede { font-size: 1.075rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.5rem; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .thesis {
+    border-left: 4px solid var(--stop);
+    padding: .3rem 0 .3rem 1rem;
+    font-size: 1.05rem;
+    max-width: 62ch;
+    /* status.html's .thesis inherits body ink; this page sets a muted default on <p>, so the
+       colour has to be restated or the thesis would drop a step in contrast. */
+    color: var(--ink);
+  }
+  .thesis strong { color: var(--stop); }
+
+  h2 {
+    font-size: 1.125rem;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--go-bar);
+    font-weight: 600;
+    margin: 3.5rem 0 1.4rem;
+    padding-bottom: .85rem;
+    position: relative;
+  }
+  h2::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 110px; height: 4px;
+    border-radius: 2px;
+    background: var(--go-bar);
+  }
+  .section-num {
+    display: inline-block;
+    font: 700 .8rem/1 var(--mono);
+    color: var(--faint);
+    letter-spacing: normal;
+    text-transform: none;
+    margin-right: .6rem;
+  }
+  .subhead {
+    font: 700 1rem/1 var(--mono);
+    letter-spacing: .03em;
+    text-transform: none;
+    color: var(--kicker);
+    margin: 3rem 0 1.1rem;
+  }
+  .subhead:first-of-type { margin-top: 1.75rem; }
+
+  p { max-width: 68ch; color: var(--muted); margin: 0 0 1rem; }
+  p b, p strong { color: var(--ink); font-weight: 600; }
+  ul.plain { max-width: 68ch; color: var(--muted); padding-left: 1.15rem; margin: 0 0 1.2rem; }
+  ul.plain li { margin: 0 0 .7rem; }
+  ul.plain li::marker { color: var(--go-rule); }
+  ul.plain b { color: var(--ink); font-weight: 600; }
+
+  code {
+    font: .82em var(--mono);
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+  }
+
+  /* --- figures ---------------------------------------------------------- */
+  figure { margin: 1.6rem 0 2rem; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.4rem 1.5rem;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; width: 100%; min-width: 620px; height: auto; }
+  figcaption { font-size: .85rem; color: var(--muted); margin-top: .85rem; max-width: 68ch; }
+  figcaption code { background: var(--bg); }
+
+  /* --- annotated code --------------------------------------------------- */
+  /* The code is the evidence and the margin note is the teaching, so they sit side by side and
+     the note gets the --kicker rule that .update-item uses on status.html. */
+  .annot {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+    margin: 1.2rem 0 1.9rem;
+  }
+  pre {
+    margin: 0;
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    font: .8rem/1.6 var(--mono);
+    color: var(--ink);
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 1em; }
+  .k { color: var(--go); }
+  .s { color: var(--note); }
+  .c { color: var(--faint); font-style: italic; }
+  .n { color: var(--kicker); }
+  .f { color: var(--stop); font-weight: 600; }
+
+  .note {
+    font-size: .875rem;
+    color: var(--muted);
+    border-left: 2px solid var(--rule);
+    padding-left: 1rem;
+  }
+  .note b, .note strong { color: var(--ink); font-weight: 600; }
+  .note .src {
+    display: block;
+    margin-top: .7rem;
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  @media (max-width: 820px) { .annot { grid-template-columns: 1fr; } }
+
+  /* --- tables ----------------------------------------------------------- */
+  .rules {
+    overflow-x: auto;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: .35rem 1.15rem;
+    margin: 0 0 1.6rem;
+  }
+  .rules tr:last-child td { border-bottom: none; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; min-width: 460px; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--rule);
+           vertical-align: top; }
+  th {
+    font: 600 .68rem/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--faint);
+  }
+  td:last-child { color: var(--muted); }
+  td b { color: var(--ink); font-weight: 600; }
+  td code { background: var(--bg); }
+  td code.wide { white-space: nowrap; }
+
+  /* --- the gate ladder -------------------------------------------------- */
+  .ladder { list-style: none; counter-reset: rung; padding: 0; margin: 1.4rem 0 1.8rem; }
+  .ladder li {
+    counter-increment: rung;
+    position: relative;
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1rem 1.2rem 1rem 3.5rem;
+    margin: 0 0 .6rem;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  .ladder li::before {
+    content: counter(rung, decimal-leading-zero);
+    position: absolute;
+    left: 1.15rem; top: 1.05rem;
+    font: 700 .72rem/1 var(--mono);
+    color: var(--faint);
+  }
+  .ladder li b { color: var(--ink); font-weight: 600; }
+  .ladder li code { background: var(--bg); }
+
+  /* The forecast line: everything below it carries a projection. Drawn in the go voice because
+     it is the point at which the page stops asking "may we?" and starts asking "how much?". */
+  .ladder li.hinge {
+    background: var(--go-bg);
+    border-color: var(--go-rule);
+    box-shadow: none;
+    color: var(--go);
+  }
+  .ladder li.hinge b { color: var(--go); }
+  .ladder li.hinge code { background: var(--panel); border-color: var(--go-rule); }
+
+  .codes { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
+  .code-pill {
+    font: .72rem/1.5 var(--mono);
+    background: var(--stop-bg);
+    border: 1px solid var(--stop-rule);
+    color: var(--stop);
+    border-radius: 999px;
+    padding: .2rem .6rem;
+    white-space: nowrap;
+  }
+  .grade {
+    display: block;
+    margin-top: .55rem;
+    font: 600 .66rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* --- callouts --------------------------------------------------------- */
+  .callout {
+    margin: 1.25rem 0;
+    background: var(--note-bg);
+    border: 1px solid var(--note-rule);
+    border-left: 4px solid var(--note-bar);
+    border-radius: 18px;
+    padding: 1.15rem 1.35rem;
+    font-size: .9rem;
+    max-width: 78ch;
+  }
+  .callout strong { color: var(--note); }
+  .callout p { margin: 0 0 .7rem; max-width: none; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout code { background: var(--panel); border-color: var(--note-rule); }
+  .callout .kicker {
+    display: block;
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--note);
+    margin-bottom: .6rem;
+  }
+  .callout.go { background: var(--go-bg); border-color: var(--go-rule); border-left-color: var(--go-bar); }
+  .callout.go strong, .callout.go .kicker { color: var(--go); }
+  .callout.go code { border-color: var(--go-rule); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: .82rem;
+    color: var(--faint);
+  }
+  footer p { color: var(--faint); max-width: 78ch; }
+  footer b { color: var(--muted); }
+  footer a { color: var(--go); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img class="brand" src="../design/logos/resfi-brand.svg"
+       alt="resfi — responsible finance" width="259" height="88">
+  <h1>The engine, function by function</h1>
+  <p class="lede">
+    A walk through <code>engine/</code> as of 25 July 2026 &mdash; seven files, about 2,200 lines,
+    roughly forty functions. Read from the source, not from the docs.
+  </p>
+  <p class="thesis">
+    They answer one question &mdash; <strong>should we move money out of this household&rsquo;s
+    checking account today, how much, and to which card?</strong> &mdash; and the interesting part
+    is that most of the code is dedicated to answering <strong>no</strong>, correctly, for a
+    reason you can name.
+  </p>
+</header>
+
+<h2><span class="section-num">01</span>The shape</h2>
+
+<p>The engine is a pure function of a <code>Snapshot</code>. No clock, no network, no randomness,
+no LLM. Everything it is allowed to look at is passed in; everything it decides comes back as a
+<code>Decision</code>. That constraint is what makes a sweep replayable years later, even after
+Plaid rewrites the underlying transaction history beneath us.</p>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 820 356" role="img" aria-label="Data flow: a Snapshot enters decide(), which produces a Decision, which feeds explain.py and outcome.py. decide() calls forecast.py and interest.py. models.py underlies all of it. outcome.py calls back into decide()'s own untouchable, apply_caps and would_sweep.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b3bdbc"/>
+    </marker>
+    <marker id="ahg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4aafc9"/>
+    </marker>
+  </defs>
+
+  <g fill="none" stroke="#b3bdbc" stroke-width="2">
+    <path d="M 130 74 L 186 74" marker-end="url(#ah)"/>
+    <path d="M 344 74 L 400 74" marker-end="url(#ah)"/>
+    <path d="M 522 74 L 552 74 L 552 40 L 586 40" marker-end="url(#ah)"/>
+    <path d="M 522 74 L 552 74 L 552 116 L 586 116" marker-end="url(#ah)"/>
+    <path d="M 218 168 L 234 114" marker-end="url(#ah)"/>
+    <path d="M 366 168 L 300 114" marker-end="url(#ah)"/>
+  </g>
+
+  <g fill="none" stroke="#4aafc9" stroke-width="2" stroke-dasharray="5 4">
+    <path d="M 646 138 L 646 236 L 265 236 L 265 114" marker-end="url(#ahg)"/>
+  </g>
+
+  <rect x="14" y="50" width="116" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="72" y="72" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="12.5" font-weight="700" fill="#15282c">Snapshot</text>
+  <text x="72" y="88" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">all inputs, frozen</text>
+
+  <rect x="186" y="38" width="158" height="76" rx="14" fill="#edf7fa" stroke="#c2e3ec" stroke-width="1.5"/>
+  <text x="265" y="64" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="13" font-weight="700" fill="#2c7f98">decide.py</text>
+  <text x="265" y="82" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10.5" fill="#5c7178">the gate ladder</text>
+  <text x="265" y="97" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10.5" fill="#5c7178">sweep, or refuse</text>
+
+  <rect x="400" y="50" width="122" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="461" y="72" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="12.5" font-weight="700" fill="#15282c">Decision</text>
+  <text x="461" y="88" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">amount + Reason codes</text>
+
+  <rect x="586" y="18" width="132" height="44" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="652" y="36" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#15282c">explain.py</text>
+  <text x="652" y="51" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">codes &rarr; English</text>
+
+  <rect x="586" y="94" width="132" height="44" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="652" y="112" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#15282c">outcome.py</text>
+  <text x="652" y="127" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">grade the prediction</text>
+
+  <text x="726" y="43" font-family="-apple-system,Helvetica,sans-serif" font-size="10.5" fill="#949c9a">sentences</text>
+  <text x="726" y="119" font-family="-apple-system,Helvetica,sans-serif" font-size="10.5" fill="#949c9a">Outcome</text>
+
+  <rect x="152" y="168" width="132" height="48" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="218" y="188" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#15282c">forecast.py</text>
+  <text x="218" y="203" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">how low will cash go</text>
+
+  <rect x="300" y="168" width="132" height="48" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="366" y="188" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11.5" font-weight="700" fill="#15282c">interest.py</text>
+  <text x="366" y="203" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">what a sweep saves</text>
+
+  <text x="455" y="233" font-family="-apple-system,Helvetica,sans-serif" font-size="10.5" font-style="italic" fill="#2c7f98">outcome.py imports decide()&rsquo;s own untouchable(), apply_caps(), would_sweep()</text>
+
+  <rect x="14" y="272" width="704" height="60" rx="14" fill="none" stroke="#b3bdbc" stroke-dasharray="6 5"/>
+  <text x="366" y="297" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="700" fill="#15282c">models.py</text>
+  <text x="366" y="315" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">the value types &mdash; and the validators that reject bad data before any function sees it</text>
+</svg>
+</div>
+<figcaption>Data flows left to right. <code>decide()</code> is the only entry point that makes a
+decision; <code>forecast.py</code> and <code>interest.py</code> are its two calculators. The
+dashed arrow is the one that surprises people: the grader does not re-implement the
+engine&rsquo;s arithmetic, it <b>imports</b> it.</figcaption>
+</figure>
+
+<h2><span class="section-num">02</span>models.py &mdash; types that refuse</h2>
+
+<p>The largest file (36 KB) exports almost no behavior. Its two real functions are tiny, and the
+rest of the work happens in <code>__post_init__</code> validators on frozen dataclasses.</p>
+
+<div class="annot">
+<pre><code><span class="k">def</span> <span class="f">money</span>(value: <span class="k">str</span> | <span class="k">int</span> | Decimal) -&gt; Decimal:
+    <span class="k">if</span> isinstance(value, <span class="k">float</span>):
+        <span class="k">raise</span> TypeError(
+            <span class="s">f"money() refuses floats (got {value!r})"</span>
+        )
+    <span class="k">return</span> Decimal(value).quantize(CENTS)</code></pre>
+<div class="note"><b>The boundary guard.</b> <code>Decimal(2.675)</code> is not 2.675 &mdash; it is
+the binary approximation, which quantizes to 2.67, not 2.68. So a float does not get converted,
+it gets rejected. A wrong cent must fail loudly at the edge rather than round quietly in the
+middle.<span class="src">engine/models.py:42</span></div>
+</div>
+
+<div class="annot">
+<pre><code><span class="k">def</span> <span class="f">statement_day</span>(year, month, day_of_month) -&gt; date:
+    last = calendar.monthrange(year, month)[<span class="n">1</span>]
+    <span class="k">return</span> date(year, month, min(day_of_month, last))</code></pre>
+<div class="note"><b>The February clamp.</b> A card that closes on the 31st closes on the 28th in
+February. It lives in <code>models.py</code> rather than <code>interest.py</code> &mdash; where it
+was born and which now imports it &mdash; because <code>StatementCycle</code> needs it too, and
+two copies would drift into a bug that appears in exactly one of
+them.<span class="src">engine/models.py:27</span></div>
+</div>
+
+<p>The validators are where the file earns its size, and they all lean the same way.
+<code>Card.__post_init__</code> rejects a negative <code>statement_balance</code>, a negative
+<code>minimum_payment</code>, an APR outside 0&ndash;200%, and a <code>next_close_date</code> that
+precedes the closed statement&rsquo;s own close. Every one of those refuses the direction that
+would <b>shrink the reserve</b> &mdash; because a smaller reserve buys a bigger sweep, and a bigger
+sweep is the overdraft the engine exists to prevent.</p>
+
+<p><code>StatementCycle.__post_init__</code> is the sharpest example: it raises if
+<code>grace_days &lt; 21</code>, the Regulation Z floor. A shorter grace would place a due date
+<b>earlier</b> than the law allows, pulling an obligation out of the 30-day horizon entirely. Bad
+upstream data must not be able to do that.</p>
+
+<h3 class="subhead">The property that changes the arithmetic</h3>
+
+<div class="annot">
+<pre><code><span class="k">@property</span>
+<span class="k">def</span> <span class="f">interest_bearing_balance</span>(self) -&gt; Decimal:
+    <span class="k">if</span> self.behavior <span class="k">is</span> PaymentBehavior.TRANSACTOR:
+        <span class="k">return</span> self.statement_balance
+    <span class="k">return</span> self.total_owed</code></pre>
+<div class="note"><b>Behavior is not just copy.</b> A transactor holds their grace period, so
+unbilled charges accrue nothing. A revolver has lost it, so their unbilled charges accrue from the
+day they posted. This one branch is why a transactor&rsquo;s interest avoided comes out as exactly
+<code>$0</code> rather than a small number.<span class="src">engine/models.py:468</span></div>
+</div>
+
+<h2><span class="section-num">03</span>forecast.py &mdash; how low will cash go</h2>
+
+<p>Five functions, governed by one sentence in the module docstring: <b>money arrives late and
+small; money leaves early and large.</b> Every uncertain quantity resolves toward the end of its
+range that hurts the user. Not pessimism for its own sake &mdash; a forecast that is right
+<b>on average</b> overdrafts half its users half the time.</p>
+
+<div class="rules">
+<table>
+<thead><tr><th>Function</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code class="wide">funding_account()</code></td><td>Finds the one account the ACH debit actually leaves from.</td></tr>
+<tr><td><code class="wide">_spend_per_day()</code></td><td>The daily discretionary charge against the horizon.</td></tr>
+<tr><td><code class="wide">_project_horizon()</code></td><td>One walk of the balance across the horizon. The shared source of truth.</td></tr>
+<tr><td><code class="wide">balance_trajectory()</code></td><td>That same walk, exposed for the chart.</td></tr>
+<tr><td><code class="wide">conservative_low_balance()</code></td><td>The minimum of that walk, plus the day it happens.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="annot">
+<pre><code><span class="k">if</span> event.is_inflow:
+    <span class="k">if</span> event.confidence &lt; INCOME_CONFIDENCE_FLOOR:
+        <span class="k">continue</span>  <span class="c"># not money — a hope</span>
+    <span class="c"># Late and small.</span>
+    when = event.expected_date + timedelta(days=event.date_jitter_days)
+    amount = min(event.amount, event.amount_low)
+<span class="k">else</span>:
+    <span class="c"># Early and large. Outflows are counted regardless of confidence.</span>
+    when = event.expected_date - timedelta(days=event.date_jitter_days)
+    <span class="k">if</span> when &lt; snapshot.today:
+        when = snapshot.today
+    amount = min(event.amount, event.amount_high)</code></pre>
+<div class="note"><b>The asymmetry, in eight lines.</b> Inflows below 80% confidence are dropped
+entirely; outflows are counted <b>regardless</b> of confidence, because an obligation you are
+unsure of is still one you might owe. Jitter pushes income later and bills earlier.
+<br><br>Note that <code>min()</code> is correct for both branches only because outflows are
+stored as negative numbers &mdash; one sign convention,
+everywhere.<span class="src">engine/forecast.py:108</span></div>
+</div>
+
+<h3 class="subhead">Why _project_horizon() exists at all</h3>
+
+<p>It was extracted so <code>balance_trajectory()</code> (the chart) and
+<code>conservative_low_balance()</code> (the decision) walk the <b>same</b> path. Two walks would
+eventually let the chart show a different low than the one the refusal quotes &mdash; a bug that
+is invisible in tests and obvious to a customer.</p>
+
+<p>Its first point is <code>(today, current balance)</code>, taken before today&rsquo;s own events,
+so <code>today</code> can appear twice. That is deliberate: a household whose balance only ever
+climbs is at its lowest <b>now</b>, and dropping the anchor would let the chart&rsquo;s minimum
+disagree with the decision&rsquo;s.</p>
+
+<div class="callout">
+  <span class="kicker">The spend model &middot; a measured 5.5&times; error</span>
+  <p><code>_spend_per_day()</code> carries a documented correction. The old model took
+  <code>daily_discretionary_high</code> &mdash; a p90 of <b>daily</b> spend &mdash; and charged it
+  against all 30 days, an effective reserve of <code>30 &times; p90_daily</code>. But
+  <strong>variance grows with &radic;t, and that model grew it with t</strong>: a 30-day sum has
+  30&times; the mean and only about 5.5&times; the standard deviation.</p>
+  <p>Measured against three years of real daily spend for three household shapes, it reserved more
+  than the household&rsquo;s worst 30-day stretch had <b>ever been</b>. The over-reserve was
+  <b>$400&ndash;970</b> against a $750 default buffer &mdash; on a large share of days, the entire
+  difference between sweeping and refusing.</p>
+  <p>The fix reads the household&rsquo;s own worst plausible 30-day total straight off their own
+  enumerated rolling windows (<code>spend_30d_high</code>) &mdash; non-parametric, their real skew
+  and autocorrelation, explainable in one sentence. It falls back to the old model when
+  <code>None</code>, and that fallback is what lets it ship inert and be switched on against a
+  measured breach rate rather than an argument.</p>
+</div>
+
+<h2><span class="section-num">04</span>decide.py &mdash; the gate ladder</h2>
+
+<p>This is the product. Read the refusal gates as features, not as validation: almost every hard
+thing that happens to a real household shows up here as a reason to do nothing.</p>
+
+<p><code>decide()</code> itself is about 70 lines, because each rung is its own named function.
+Here is the ladder in order, with the detail that matters most &mdash; <b>whether a refusal at
+that rung is gradeable.</b></p>
+
+<ol class="ladder">
+<li><b>_blocking_reasons()</b> &mdash; funding account missing or not a checking account,
+connection unhealthy, balance older than two days, under 60 days of history, income coefficient of
+variation above 0.25, a blackout date, or a sweep still in flight.
+  <div class="codes">
+    <span class="code-pill">FUNDING_ACCOUNT_MISSING</span>
+    <span class="code-pill">CONNECTION_UNHEALTHY</span>
+    <span class="code-pill">BALANCE_STALE</span>
+    <span class="code-pill">INSUFFICIENT_HISTORY</span>
+    <span class="code-pill">INCOME_TOO_VARIABLE</span>
+    <span class="code-pill">BLACKOUT</span>
+    <span class="code-pill">SWEEP_IN_FLIGHT</span>
+  </div>
+  <span class="grade">Refusal here is ungradeable &mdash; no projection was computed</span>
+</li>
+
+<li><b>_coverage_reasons()</b> &mdash; the portfolio is not attested complete, or a card exists
+whose payment behavior we have not observed for three cycles. Optimality within a portfolio you
+cannot see is not optimality.
+  <div class="codes">
+    <span class="code-pill">CARD_COVERAGE_INCOMPLETE</span>
+    <span class="code-pill">CARD_BEHAVIOR_UNKNOWN</span>
+  </div>
+  <span class="grade">Refusal here is ungradeable</span>
+</li>
+
+<li class="hinge"><b>conservative_low_balance()</b> &mdash; the forecast runs.
+<b>Everything below this line carries a projection, and is therefore gradeable.</b></li>
+
+<li><b>_select_target()</b> &mdash; highest effective APR wins, among the cards it is honest to
+sweep to at all.
+  <div class="codes">
+    <span class="code-pill">NO_DEBT</span>
+    <span class="code-pill">NO_INTEREST_TO_AVOID</span>
+    <span class="code-pill">APR_UNKNOWN</span>
+  </div>
+</li>
+
+<li><b>_cadence_hold()</b> &mdash; simply too soon since the last sweep.
+  <div class="codes"><span class="code-pill">CADENCE_HOLD</span></div>
+</li>
+
+<li><b>untouchable()</b> &rarr; the surplus check &mdash; buffer floor plus reserved obligations
+subtracted from the projected low, refusing below <code>MIN_SWEEP</code> of $1.00.
+  <div class="codes">
+    <span class="code-pill">NO_SURPLUS</span>
+    <span class="code-pill">BELOW_MIN_SWEEP</span>
+  </div>
+</li>
+
+<li><b>apply_caps()</b> &mdash; the per-sweep cap, the weekly cap, and the card&rsquo;s own
+balance. These shape the amount rather than refusing outright.
+  <div class="codes">
+    <span class="code-pill">PER_SWEEP_CAP</span>
+    <span class="code-pill">WEEKLY_CAP</span>
+    <span class="code-pill">CLEARS_THE_CARD</span>
+  </div>
+</li>
+
+<li><b>claimable_interest_avoided()</b> &mdash; attach the savings claim, or attach nothing at
+all.
+  <div class="codes"><span class="code-pill">INTEREST_AVOIDED</span></div>
+</li>
+</ol>
+
+<h3 class="subhead">Why the cadence hold sits at rung 05, not rung 01</h3>
+
+<p>This placement is the whole design, and it is the best single example of how the file thinks. A
+blocking reason short-circuits before the forecast runs, so its refusal carries no
+<code>projected_low_balance</code> &mdash; and <code>grade()</code> refuses to grade a decision
+without one, on the grounds that inventing a projection would corrupt the calibration distribution
+with zeros that look like perfect forecasts.</p>
+
+<p>Gate the cadence up at rung 01 and six days in seven become ungradeable. The engine would still
+<b>observe</b> daily and still be <b>wrong</b> daily; it would simply no longer be <b>measured</b>
+daily. The calibration distribution &mdash; the one asset the strategy says compounds &mdash; would
+lose most of its data to a rule that has nothing to do with forecasting.</p>
+
+<div class="callout go">
+  <span class="kicker">The rule</span>
+  <p><strong>The cadence limits what we do, never what we know. Daily data, weekly money.</strong></p>
+</div>
+
+<h3 class="subhead">obligation_in_horizon() — the two-term reserve</h3>
+
+<p>The subtlest function in the engine, and one where the naive version opens a hole rather than
+merely under-reserving.</p>
+
+<div class="annot">
+<pre><code><span class="k">def</span> <span class="f">obligation_in_horizon</span>(card: Card, horizon_end: date) -&gt; Decimal:
+    total = ZERO
+
+    <span class="c"># 1. The statement that has already closed. Legally due.</span>
+    <span class="k">if</span> card.statement_due_date &lt;= horizon_end:
+        total += _behavior_amount(card, card.statement_balance)
+
+    <span class="c"># 2. The statement that has NOT closed yet, but will close</span>
+    <span class="c">#    *and* come due inside the horizon.</span>
+    next_due = card.cycle.due_for(card.next_close_date)
+    <span class="k">if</span> next_due &lt;= horizon_end:
+        total += _behavior_amount(card, card.unbilled_balance)
+
+    <span class="k">return</span> total</code></pre>
+<div class="note"><b>Term 1 alone leaves a gap.</b> The moment the closed statement is paid, the
+next one has not closed yet &mdash; so the card looks like it owes nothing and the reserve falls to
+<b>zero for the last third of every cycle</b> while charges pile onto it.
+<br><br><b>And the forecast cannot cover it either</b>, because <code>forecast.py</code> skips
+<code>CARD_PAYMENT</code> events unconditionally, on the event tag alone. In that window neither
+side accounts for the obligation. A double-miss, in the unsafe direction.
+<br><br>Term 2 activates once the next close is within <code>horizon &minus; grace</code> days
+&mdash; precisely the window term 1 leaves empty. <b>The two terms tile the cycle with no gap</b>,
+and that is what makes the forecast&rsquo;s skip safe.<span class="src">engine/decide.py:266</span></div>
+</div>
+
+<h3 class="subhead">_behavior_amount() — the minimum is not what they pay</h3>
+
+<p>Three behaviors, three different reserves against the same statement:</p>
+
+<div class="rules">
+<table>
+<thead><tr><th>Behavior</th><th>Reserved</th><th>Why</th></tr></thead>
+<tbody>
+<tr>
+  <td><code class="wide">TRANSACTOR</code></td>
+  <td>the whole statement</td>
+  <td>They clear it. Reserving a $40 minimum against a $2,000 statement under-reserves by $1,960 and overdraws them on the 20th.</td>
+</tr>
+<tr>
+  <td><code class="wide">MINIMUM_ONLY</code></td>
+  <td><code>min(minimum, statement)</code></td>
+  <td>What they actually pay, capped at what is owed.</td>
+</tr>
+<tr>
+  <td><code class="wide">REVOLVER</code></td>
+  <td><code>observed_monthly_payment</code>, floored at the minimum, capped at the statement</td>
+  <td>Their habitual payment &mdash; which is also the counterfactual the interest claim is measured against.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<p>The docstring names the bug precisely: the minimum is what the <b>issuer</b> will accept; this
+is what the <b>household</b> pays. Reserving the first while the second leaves checking is the
+entire failure.</p>
+
+<h3 class="subhead">The three functions exported for the grader</h3>
+
+<p><code>untouchable()</code>, <code>apply_caps()</code> and <code>would_sweep()</code> are public
+for exactly one reason: <code>outcome.py</code> imports them.</p>
+
+<p>The grader has to answer &ldquo;how much was <b>actually</b> safe, in hindsight?&rdquo; and
+&ldquo;what would we have swept with a perfect forecast?&rdquo; &mdash; and it must use the
+identical definitions. Two copies of the cap ladder would drift, and <b>the day they drifted, the
+calibration numbers would quietly start measuring an engine that never shipped.</b></p>
+
+<p><code>would_sweep()</code> is the counterfactual itself: feed it the realized low and it answers
+what <code>decide()</code> would have moved knowing what we now know, obeying every guardrail the
+user set. It also opens by re-running <code>_coverage_reasons()</code> and returning zero &mdash;
+otherwise hindsight would price a refusal we were right to make as a cost, and the grader would
+slowly learn to talk the engine out of it.</p>
+
+<h3 class="subhead">_select_target() — the transactor exclusion</h3>
+
+<p>Highest APR wins, but <b>a transactor is never a target.</b> They pay no interest &mdash; the
+grace period already does exactly what our sweep claims to do. Moving their cash onto a card they
+were going to clear anyway is a <b>prepayment, not a saving</b>, and taking a share of it would be
+charging for nothing. They are still fully reserved against by <code>untouchable()</code>; they are
+simply not somewhere we can honestly send money.</p>
+
+<p>The ranking also degrades in steps rather than failing outright: a single targetable card needs
+no APR at all, since there is nothing to rank. Several cards with no APR between them returns
+<code>APR_UNKNOWN</code> &mdash; because paying the wrong card looks exactly like working while
+quietly destroying the entire point.</p>
+
+<h2><span class="section-num">05</span>interest.py &mdash; what a sweep saves</h2>
+
+<p>Three public functions computing one number: the figure the user is shown
+(&ldquo;that&rsquo;s $31 of interest you won&rsquo;t pay&rdquo;) and the figure the company is
+graded on. They must never disagree, so there is exactly one place that computes it.</p>
+
+<p>The model accrues daily at <code>apr / 365</code> with no intra-cycle compounding, posts accrued
+interest at each statement close, and lands payments at the <b>start</b> of their day. Daily
+accrual is not incidental: this product sweeps every day, so <b>when in the cycle</b> a dollar
+lands is exactly the thing we are being paid to get right. A monthly-periodic-rate model would
+value a day-2 sweep and a day-29 sweep identically &mdash; and be wrong in the direction of
+over-claiming, on a figure we put in front of the customer.</p>
+
+<h3 class="subhead">Four ways it declines to answer</h3>
+
+<div class="rules">
+<table>
+<thead><tr><th>Condition</th><th>Returns</th><th>Reasoning</th></tr></thead>
+<tbody>
+<tr>
+  <td>No APR</td><td><code>None</code></td>
+  <td>Plaid does not report it for many issuers. A figure that looks computed but was invented is worse than no figure.</td>
+</tr>
+<tr>
+  <td><code class="wide">apr_source is ESTIMATED</code></td><td><code>None</code></td>
+  <td>The engine may <b>rank</b> on a guessed rate &mdash; a wrong target optimizes worse and overdraws nobody &mdash; but it may not <b>price</b> one. <em>Act on the estimate. Never bill for it.</em></td>
+</tr>
+<tr>
+  <td>Behavior is <code class="wide">TRANSACTOR</code></td><td><code>ZERO</code></td>
+  <td>Not a rounding artifact. Zero is the answer.</td>
+</tr>
+<tr>
+  <td>The payments never amortize</td><td><em>raises</em></td>
+  <td>There is no payoff, so there is no total interest, and no honest answer exists. That household is drowning; the model says so rather than returning a plausible number.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<h3 class="subhead">The two layers, and why both exist</h3>
+
+<div class="annot">
+<pre><code><span class="k">def</span> <span class="f">claimable_interest_avoided</span>(card, sweep, on) -&gt; Decimal | <span class="k">None</span>:
+    <span class="k">if</span> card.observed_monthly_payment <span class="k">is</span> <span class="k">None</span>:
+        <span class="k">return</span> <span class="k">None</span>
+
+    <span class="k">try</span>:
+        <span class="k">return</span> interest_avoided(
+            card, sweep, on, card.observed_monthly_payment
+        )
+    <span class="k">except</span> ValueError:
+        <span class="k">return</span> <span class="k">None</span></code></pre>
+<div class="note"><b>Same computation, two contracts.</b> <code>interest_avoided()</code> is the
+<b>model</b>: asked about a debt with no payoff, it raises, because a caller that wanted an answer
+has a bug.
+<br><br><code>claimable_interest_avoided()</code> is the <b>product</b>: <code>decide()</code> must
+be total. A card with bad data is not a reason to crash somebody&rsquo;s daily decision &mdash; the
+sweep is still correct and still safe, we simply cannot say what it saved.
+<br><br><code>None</code> here means exactly one thing: <b>no claim can honestly be made.</b> The
+caller then emits no <code>INTEREST_AVOIDED</code> reason, so there is no code path anywhere that
+can render an invented number.<span class="src">engine/interest.py:243</span></div>
+</div>
+
+<h3 class="subhead">The counterfactual is an argument, not a default</h3>
+
+<p>Notice what <code>total_interest()</code> takes: <code>monthly_payment</code>, passed in
+explicitly. <code>Card.minimum_payment</code> is <b>not an input to this module at all</b>, and a
+test asserts that changing it does not move the claim by a cent.</p>
+
+<p>The reason: users of this product already pay more than the minimum &mdash; that is <b>why</b>
+they have idle cash. Crediting our sweep with interest they were never going to pay anyway inflates
+the one number the company is graded on. Measuring against their own trajectory is the harder,
+smaller, honest number.</p>
+
+<p>The same instinct produced <code>observed_monthly_charges</code>. Without it, the model projected
+a balance that could only ever <b>shrink</b>, so a household charging $1,500 a month to the card we
+are sweeping against got a payoff date that never arrives and an interest-avoided figure overstated
+by construction. Charges post at the close, <b>before</b> the payment &mdash; which understates the
+days they spend accruing, so it understates the interest, so it understates what we claim to have
+saved. Wrong in the safe direction, deliberately.</p>
+
+<h2><span class="section-num">06</span>outcome.py &mdash; settling the bet</h2>
+
+<p><code>decide()</code> emits a prediction. Until this module existed, nothing in the repo ever
+settled it &mdash; the engine&rsquo;s central claim (&ldquo;this $220 is not needed&rdquo;) had
+never once been checked against the future that followed it. <code>grade()</code> is what makes the
+engine falsifiable, and therefore what makes every later improvement to it defensible rather than
+merely plausible.</p>
+
+<h3 class="subhead">The signature is the safety property</h3>
+
+<div class="annot">
+<pre><code><span class="k">@dataclass</span>(frozen=<span class="k">True</span>)
+<span class="k">class</span> <span class="f">Realized</span>:
+    <span class="s">"""What the household actually did — excluding anything we did."""</span>
+    net_by_day: Mapping[date, Decimal]
+
+
+<span class="k">def</span> <span class="f">grade</span>(snapshot, decision, realized, settles_after_days=<span class="n">0</span>) -&gt; Outcome:
+    ...</code></pre>
+<div class="note"><b><code>grade()</code> does not take &ldquo;the realized balances.&rdquo;</b> It
+takes the household&rsquo;s untouched cash movement and applies the decision&rsquo;s sweep
+<b>itself</b>.
+<br><br>A replay that grades each day against untouched history never compounds the effect of its
+own sweeps, and will systematically <b>understate</b> breach risk &mdash; reporting a tail that
+would only have been real if we had never acted. That is the difference between a shadow-mode
+report and a shadow-mode lie, and it is not the sort of thing to leave to a caller&rsquo;s
+diligence. So the caller <b>cannot</b> forget to apply the sweep, because the caller is not the one
+who applies it.<span class="src">engine/outcome.py:147</span></div>
+</div>
+
+<p><code>settles_after_days</code> defaults to <b>0</b> &mdash; the sweep is charged against the
+funding account on the day we decided, not when ACH would plausibly have posted it. That is the
+assumption most likely to <b>find</b> a breach rather than excuse one. A grader that flatters itself
+is worse than no grader, because it converts an unknown risk into a false sense of a known one.</p>
+
+<h3 class="subhead">The three fields worth understanding</h3>
+
+<ul class="plain">
+<li><b>projection_error</b> &mdash; signed, and measured against the household&rsquo;s
+<b>unswept</b> path. <code>projected_low_balance</code> is a projection of the pre-sweep
+trajectory; the sweep is decided <b>from</b> it, not included <b>in</b> it. Comparing against the
+post-sweep low would fold the entire size of our own sweep into the &ldquo;error&rdquo;, making the
+engine look wildly optimistic precisely on the days it swept hardest and was right. The sign
+convention is load-bearing forever &mdash; a flip silently inverts the dial every future
+calibration decision is read off.</li>
+
+<li><b>sweep_caused_overdraft</b> &mdash; <code>low &lt; ZERO &lt;= unswept</code>. Not
+&ldquo;they went below zero&rdquo;, but &ldquo;they went below zero <b>and would not have without
+us</b>&rdquo;. A household that overdrafts on its own is not our doing, and folding those in would
+make the guardrail metric meaningless: it would be dominated by lives we never touched.</li>
+
+<li><b>false_refusal_cost</b> &mdash; <code>should_have_swept &minus; swept</code>, floored at zero.
+It fires on an <b>under-sweep</b>, not only on an outright refusal &mdash; which matters enormously,
+because the spend-model error in §03 does not refuse, it under-sweeps. A metric that counted only
+refusals would have been blind to the largest error in the engine.</li>
+</ul>
+
+<p><code>_low_balance()</code> is the private walk underneath all of it, and its <code>opening</code>
+is the balance at the <b>end</b> of today, with the ledger covering the days after. Applying day
+zero again would double-count it &mdash; and a grader that double-counts is a grader that invents
+breaches.</p>
+
+<h2><span class="section-num">07</span>explain.py &mdash; codes to English</h2>
+
+<p>Two public functions and one large <code>match</code> statement. <code>render()</code> maps a
+single <code>Reason</code> to a sentence; <code>explain()</code> maps a whole <code>Decision</code>
+to a tuple of them. That is the entire module, and its value is in what it makes impossible.</p>
+
+<ul class="plain">
+<li><b>Copy edits cannot break the decision.</b> Changing &ldquo;paused&rdquo; to
+&ldquo;snoozed&rdquo; is a change to this module, not to a financial calculation.</li>
+<li><b>The audit log stays stable.</b> A decision persisted in 2026 still means the same thing in
+2029 after three rounds of UI copy. The code is the record; the sentence is a view of it.</li>
+<li><b>The LLM has something to narrate from.</b> Handed a code and its parameters, a model can
+write a sentence for this particular household. Handed a finished sentence, all it can do is
+paraphrase &mdash; and any paraphrase of a financial claim is a chance to change its meaning. The
+LLM is never in the decision path.</li>
+<li><b>Translation becomes possible at all</b>, rather than a rewrite of <code>decide()</code>.</li>
+</ul>
+
+<p>The tone is deliberate too: a refusal must never read like an error. <em>&ldquo;You have no debt
+left to pay. Nothing to do &mdash; congratulations.&rdquo;</em> The user is not being denied
+anything; they are being told their money is staying put, and why.</p>
+
+<p>There is a small, revealing detail in the <code>CADENCE_HOLD</code> branch. The sentence is built
+in two pieces because <code>last_sweep_amount</code> may be <code>None</code> &mdash; and when it
+is, the copy says only <b>when</b> we paid, never a made-up figure. The same rule as everywhere
+else, applied to a sentence: <b>the absence is structural, not a formatting accident.</b></p>
+
+<h2><span class="section-num">08</span>The four rules that explain the rest</h2>
+
+<p>Once these are visible, most individual functions stop needing an explanation.</p>
+
+<ol class="ladder">
+<li><b>Bad data must never buy a bigger sweep.</b> Every validator, clamp and default resolves
+toward the reserve being larger. Where a default has to be permissive
+(<code>days_since_last_sweep = None</code>), the docstring argues explicitly why <b>that</b> one
+cannot make any single sweep larger.</li>
+
+<li><b>No claim we cannot stand behind.</b> Unknown APR, estimated APR, unobserved payment history,
+a debt that does not amortize &mdash; each produces <code>None</code> and no <code>Reason</code>,
+never a plausible number. The absence of a claim is a designed output.</li>
+
+<li><b>One implementation, or two will drift.</b> <code>statement_day()</code> moved to
+<code>models.py</code>. <code>_project_horizon()</code> was extracted so the chart and the decision
+share a walk. <code>untouchable()</code> and <code>apply_caps()</code> are exported so the grader
+measures the engine that shipped. The stated failure mode is always the same: the day they drift,
+one of them is silently wrong and nothing says so.</li>
+
+<li><b>Codes, not sentences.</b> The decision emits structured facts. Prose lives in a separate
+module, and the LLM narrates from the facts rather than passing strings through.</li>
+</ol>
+
+<h2><span class="section-num">09</span>Where to start reading</h2>
+
+<p>If you open one file, open <code>engine/decide.py</code> and read <code>decide()</code> at line
+399 top to bottom &mdash; it is about 70 lines and every helper it calls is named for what it
+decides. Then jump to <code>obligation_in_horizon()</code> at line 266, which is the single densest
+piece of reasoning in the engine, and <code>_cadence_hold()</code> at line 114 for the clearest
+statement of why placement in the ladder is itself a design decision.</p>
+
+<p>The docstrings in this codebase are unusually load-bearing &mdash; several of them record a bug
+that was found, the reasoning that was wrong, and why the current shape is safe.
+<code>EventKind</code> at <code>engine/models.py:69</code> even opens by saying that its own
+previous docstring asserted a safety property which was false. They are worth reading as primary
+sources, not as commentary on the code.</p>
+
+<footer>
+  <p><b>Read from the source on 25 July 2026:</b> <code>engine/</code> at seven files &mdash;
+  <code>models.py</code>, <code>decide.py</code>, <code>forecast.py</code>,
+  <code>interest.py</code>, <code>outcome.py</code>, <code>explain.py</code> and an empty
+  <code>__init__.py</code>. Line numbers cited above are from that reading and will drift as the
+  files change. The $400&ndash;970 over-reserve and the 5.5&times; figure are
+  <b>carried, not re-run</b>, from
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/learnings/2026-07-13-the-spend-model-over-reserves.md">the spend-model learning</a>.</p>
+  <p>Companion documents: <a href="../status.html">status.html</a> (what&rsquo;s built and what
+  isn&rsquo;t) &middot; <a href="../decision-flow.html">decision-flow.html</a> (the bet, the same
+  engine flow, and the open distribution questions) &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/decision-engine.md">decision-engine.md</a> &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/architecture.md">architecture.md</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,922 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>resfi — the backend, component by component</title>
+<style>
+  /* Light only, deliberately — status.html's reasoning, unchanged: `color-scheme: light` stops an
+     OS in dark mode from force-inverting the page into a palette nobody checked.
+
+     Palette and its fixed meanings are status.html's / decision-flow.html's: BLUE (--go) marks the
+     sweep and the paths that lead to one, DEEP GREEN (--stop) marks a refusal, and a DASHED GHOST
+     edge marks something built but not live. This page uses all three literally — the transfer
+     adapters are drawn as a ghost because shadow mode moves no money, and the refusal pills are
+     the same shape decision-flow.html uses. Sibling of explainers/engine-functions.html. */
+  :root {
+    color-scheme: light;
+
+    --bg: #f5f9fa;
+    --panel: #ffffff;
+    --ink: #15282c;
+    --muted: #5c7178;
+    --faint: #949c9a;
+    --rule: #e3edef;
+    --kicker: #598278;
+
+    --stop: #085041;
+    --stop-bg: #eff5f3;
+    --stop-rule: #c9dcd6;
+
+    --go: #2c7f98;
+    --go-bar: #4aafc9;
+    --go-bg: #edf7fa;
+    --go-rule: #c2e3ec;
+
+    --note: #147257;
+    --note-bar: #1d9e75;
+    --note-bg: #f1f8f5;
+    --note-rule: #cfe7dc;
+
+    --ghost: #b3bdbc;
+
+    --shadow: 0 1px 2px rgba(22, 38, 46, .04), 0 8px 24px -8px rgba(22, 38, 46, .10);
+
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Helvetica, Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  a { color: var(--go); text-decoration-color: var(--go-rule); text-underline-offset: 2px; }
+  a:hover { text-decoration-color: var(--go); }
+
+  body {
+    margin: 0;
+    padding: 3rem 1.25rem 5rem;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1020px; margin: 0 auto; }
+
+  header { margin-bottom: 3rem; }
+  .brand { display: block; width: 168px; height: auto; margin: 0 0 1.75rem -6px; }
+  h1 {
+    font-size: clamp(1.7rem, 4vw, 2.4rem);
+    line-height: 1.15;
+    margin: 0 0 .75rem;
+    letter-spacing: -0.02em;
+  }
+  .lede { font-size: 1.075rem; color: var(--muted); max-width: 62ch; margin: 0 0 1.5rem; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  .thesis {
+    border-left: 4px solid var(--stop);
+    padding: .3rem 0 .3rem 1rem;
+    font-size: 1.05rem;
+    max-width: 62ch;
+    color: var(--ink);
+  }
+  .thesis strong { color: var(--stop); }
+
+  h2 {
+    font-size: 1.125rem;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--go-bar);
+    font-weight: 600;
+    margin: 3.5rem 0 1.4rem;
+    padding-bottom: .85rem;
+    position: relative;
+  }
+  h2::after {
+    content: "";
+    position: absolute;
+    left: 0; bottom: 0;
+    width: 110px; height: 4px;
+    border-radius: 2px;
+    background: var(--go-bar);
+  }
+  .section-num {
+    display: inline-block;
+    font: 700 .8rem/1 var(--mono);
+    color: var(--faint);
+    letter-spacing: normal;
+    text-transform: none;
+    margin-right: .6rem;
+  }
+  .subhead {
+    font: 700 1rem/1 var(--mono);
+    letter-spacing: .03em;
+    text-transform: none;
+    color: var(--kicker);
+    margin: 3rem 0 1.1rem;
+  }
+  .subhead:first-of-type { margin-top: 1.75rem; }
+
+  p { max-width: 68ch; color: var(--muted); margin: 0 0 1rem; }
+  p b, p strong { color: var(--ink); font-weight: 600; }
+  ul.plain { max-width: 68ch; color: var(--muted); padding-left: 1.15rem; margin: 0 0 1.2rem; }
+  ul.plain li { margin: 0 0 .7rem; }
+  ul.plain li::marker { color: var(--go-rule); }
+  ul.plain b { color: var(--ink); font-weight: 600; }
+
+  code {
+    font: .82em var(--mono);
+    background: var(--panel);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: .05em .35em;
+  }
+
+  figure { margin: 1.6rem 0 2rem; }
+  .diagram {
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.4rem 1.5rem;
+    overflow-x: auto;
+  }
+  .diagram svg { display: block; width: 100%; min-width: 700px; height: auto; }
+  figcaption { font-size: .85rem; color: var(--muted); margin-top: .85rem; max-width: 68ch; }
+  figcaption code { background: var(--bg); }
+
+  .annot {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+    gap: 1.25rem;
+    align-items: start;
+    margin: 1.2rem 0 1.9rem;
+  }
+  pre {
+    margin: 0;
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1.1rem 1.25rem;
+    overflow-x: auto;
+    font: .8rem/1.6 var(--mono);
+    color: var(--ink);
+  }
+  pre code { background: none; border: none; padding: 0; font-size: 1em; }
+  .k { color: var(--go); }
+  .s { color: var(--note); }
+  .c { color: var(--faint); font-style: italic; }
+  .n { color: var(--kicker); }
+  .f { color: var(--stop); font-weight: 600; }
+
+  .note {
+    font-size: .875rem;
+    color: var(--muted);
+    border-left: 2px solid var(--rule);
+    padding-left: 1rem;
+  }
+  .note b, .note strong { color: var(--ink); font-weight: 600; }
+  .note .src {
+    display: block;
+    margin-top: .7rem;
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  @media (max-width: 820px) { .annot { grid-template-columns: 1fr; } }
+
+  .rules {
+    overflow-x: auto;
+    background: var(--panel);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: .35rem 1.15rem;
+    margin: 0 0 1.6rem;
+  }
+  .rules tr:last-child td { border-bottom: none; }
+  table { width: 100%; border-collapse: collapse; font-size: .875rem; min-width: 460px; }
+  th, td { text-align: left; padding: .55rem .7rem; border-bottom: 1px solid var(--rule);
+           vertical-align: top; }
+  th {
+    font: 600 .68rem/1 var(--mono);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--faint);
+  }
+  td:last-child { color: var(--muted); }
+  td b { color: var(--ink); font-weight: 600; }
+  td code { background: var(--bg); }
+  td code.wide { white-space: nowrap; }
+
+  ol.ladder { list-style: none; counter-reset: rung; padding: 0; margin: 1.4rem 0 1.8rem; }
+  ol.ladder li {
+    counter-increment: rung;
+    position: relative;
+    background: var(--panel);
+    border: 1px solid transparent;
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    padding: 1rem 1.2rem 1rem 3.5rem;
+    margin: 0 0 .6rem;
+    font-size: .9rem;
+    color: var(--muted);
+  }
+  ol.ladder li::before {
+    content: counter(rung, decimal-leading-zero);
+    position: absolute;
+    left: 1.15rem; top: 1.05rem;
+    font: 700 .72rem/1 var(--mono);
+    color: var(--faint);
+  }
+  ol.ladder li b { color: var(--ink); font-weight: 600; }
+  ol.ladder li code { background: var(--bg); }
+
+  /* Built, but moving nothing — status.html's ghost convention: the interior says built, the
+     dashed border says not-live. */
+  ol.ladder li.ghosted { background: transparent; box-shadow: none; border: 1px dashed var(--ghost); }
+
+  .codes { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
+  .code-pill {
+    font: .72rem/1.5 var(--mono);
+    background: var(--stop-bg);
+    border: 1px solid var(--stop-rule);
+    color: var(--stop);
+    border-radius: 999px;
+    padding: .2rem .6rem;
+    white-space: nowrap;
+  }
+  .code-pill.neutral { background: var(--bg); border-color: var(--rule); color: var(--muted); }
+
+  .callout {
+    margin: 1.25rem 0;
+    background: var(--note-bg);
+    border: 1px solid var(--note-rule);
+    border-left: 4px solid var(--note-bar);
+    border-radius: 18px;
+    padding: 1.15rem 1.35rem;
+    font-size: .9rem;
+    max-width: 78ch;
+  }
+  .callout strong { color: var(--note); }
+  .callout p { margin: 0 0 .7rem; max-width: none; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout code { background: var(--panel); border-color: var(--note-rule); }
+  .callout .kicker {
+    display: block;
+    font: 600 .68rem/1 var(--mono);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--note);
+    margin-bottom: .6rem;
+  }
+  .callout.go { background: var(--go-bg); border-color: var(--go-rule); border-left-color: var(--go-bar); }
+  .callout.go strong, .callout.go .kicker { color: var(--go); }
+  .callout.go code { border-color: var(--go-rule); }
+  .callout.stop { background: var(--stop-bg); border-color: var(--stop-rule); border-left-color: var(--stop); }
+  .callout.stop strong, .callout.stop .kicker { color: var(--stop); }
+  .callout.stop code { border-color: var(--stop-rule); }
+
+  footer {
+    margin-top: 4rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    font-size: .82rem;
+    color: var(--faint);
+  }
+  footer p { color: var(--faint); max-width: 78ch; }
+  footer b { color: var(--muted); }
+  footer a { color: var(--go); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img class="brand" src="../design/logos/resfi-brand.svg"
+       alt="resfi — responsible finance" width="259" height="88">
+  <h1>The backend, component by component</h1>
+  <p class="lede">
+    A walk through <code>backend/</code> as of 25 July 2026 &mdash; 48 Python files, about 12,300
+    lines across five packages. Read from the source, not from the docs.
+  </p>
+  <p class="thesis">
+    <a href="./engine-functions.html">The engine</a> decides. Everything here exists to get a real
+    household&rsquo;s data in front of that decision <strong>safely</strong>, to move the money the
+    decision names, and to prove afterwards that the decision was right &mdash;
+    <strong>without ever becoming a second implementation of the engine.</strong>
+  </p>
+</header>
+
+<h2><span class="section-num">01</span>The shape</h2>
+
+<p>Three flows, one floor. Data comes <b>in</b> through the Plaid chain, goes <b>out</b> through the
+read paths, and money moves through the transfer saga. All three sit on the same scoped-Postgres
+floor, and every one of them crosses an authorization boundary before it touches a row.</p>
+
+<figure>
+<div class="diagram">
+<svg viewBox="0 0 900 452" role="img" aria-label="Three bands over a shared database floor. Ingest: a Plaid webhook is verified by webhook.py, enqueued by tasks.py, and processed by sync.py into plaid_transactions. Read: the mobile app is verified by identity/deps.py, routed by main.py, assembled by readpath, livepath or linkedpath, and decided by the engine. Money: a Decision goes through saga.py, the TransferProvider port, and the adapters into an append-only ledger. All of it sits on db/, Postgres with row-level security forced.">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#b3bdbc"/>
+    </marker>
+  </defs>
+
+  <g font-family="ui-monospace,Menlo,monospace" font-size="9.5" font-weight="700" fill="#949c9a" letter-spacing="1">
+    <text x="8" y="58">IN</text>
+    <text x="8" y="168">OUT</text>
+    <text x="8" y="278">MONEY</text>
+  </g>
+
+  <g fill="none" stroke="#b3bdbc" stroke-width="1.8">
+    <path d="M 220 55 L 242 55" marker-end="url(#a)"/>
+    <path d="M 388 55 L 410 55" marker-end="url(#a)"/>
+    <path d="M 540 55 L 562 55" marker-end="url(#a)"/>
+    <path d="M 712 55 L 734 55" marker-end="url(#a)"/>
+    <path d="M 220 165 L 242 165" marker-end="url(#a)"/>
+    <path d="M 388 165 L 410 165" marker-end="url(#a)"/>
+    <path d="M 540 165 L 562 165" marker-end="url(#a)"/>
+    <path d="M 712 165 L 734 165" marker-end="url(#a)"/>
+    <path d="M 220 275 L 242 275" marker-end="url(#a)"/>
+    <path d="M 388 275 L 410 275" marker-end="url(#a)"/>
+    <path d="M 540 275 L 562 275" marker-end="url(#a)"/>
+    <path d="M 712 275 L 734 275" marker-end="url(#a)"/>
+  </g>
+
+  <!-- band 1: ingest -->
+  <rect x="96" y="30" width="124" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="158" y="52" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">Plaid</text>
+  <text x="158" y="67" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">a webhook fires</text>
+
+  <rect x="242" y="30" width="146" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="315" y="52" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">plaid/webhook.py</text>
+  <text x="315" y="67" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">verify &middot; persist &middot; enqueue</text>
+
+  <rect x="410" y="30" width="130" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="475" y="52" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">plaid/tasks.py</text>
+  <text x="475" y="67" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">Cloud Tasks + OIDC</text>
+
+  <rect x="562" y="30" width="150" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="637" y="52" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">plaid/sync.py</text>
+  <text x="637" y="67" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">cursored, row-locked</text>
+
+  <rect x="734" y="30" width="152" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="810" y="52" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">recurring.py</text>
+  <text x="810" y="67" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">rows &rarr; a spec</text>
+
+  <!-- band 2: read -->
+  <rect x="96" y="140" width="124" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="158" y="162" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">the app</text>
+  <text x="158" y="177" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">a Stytch session</text>
+
+  <rect x="242" y="140" width="146" height="50" rx="12" fill="#edf7fa" stroke="#c2e3ec" stroke-width="1.5"/>
+  <text x="315" y="162" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#2c7f98">identity/deps.py</text>
+  <text x="315" y="177" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">verify &rarr; authorize</text>
+
+  <rect x="410" y="140" width="130" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="475" y="162" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">main.py</text>
+  <text x="475" y="177" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">twelve routes</text>
+
+  <rect x="562" y="140" width="150" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="637" y="160" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="10.5" font-weight="700" fill="#15282c">read / live / linked</text>
+  <text x="637" y="176" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">three assembly paths</text>
+
+  <rect x="734" y="140" width="152" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="810" y="162" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">engine.decide()</text>
+  <text x="810" y="177" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">pure, unchanged</text>
+
+  <!-- band 3: money -->
+  <rect x="96" y="250" width="124" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="158" y="272" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">a Decision</text>
+  <text x="158" y="287" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">SWEEP, $400</text>
+
+  <rect x="242" y="250" width="146" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="315" y="272" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">transfer/saga.py</text>
+  <text x="315" y="287" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">advisory lock on the slot</text>
+
+  <rect x="410" y="250" width="130" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="475" y="272" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">provider.py</text>
+  <text x="475" y="287" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">the port</text>
+
+  <rect x="562" y="250" width="150" height="50" rx="12" fill="none" stroke="#b3bdbc" stroke-dasharray="5 4"/>
+  <text x="637" y="270" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="10" font-weight="700" fill="#949c9a">shadow &middot; plaid &middot; method</text>
+  <text x="637" y="286" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#949c9a">built, moving nothing</text>
+
+  <rect x="734" y="250" width="152" height="50" rx="12" fill="#ffffff" stroke="#e3edef"/>
+  <text x="810" y="272" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="11" font-weight="700" fill="#15282c">transfers</text>
+  <text x="810" y="287" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="9.5" fill="#5c7178">append-only ledger</text>
+
+  <!-- floor -->
+  <rect x="96" y="352" width="790" height="76" rx="14" fill="none" stroke="#b3bdbc" stroke-dasharray="6 5"/>
+  <text x="491" y="378" text-anchor="middle" font-family="ui-monospace,Menlo,monospace" font-size="12" font-weight="700" fill="#15282c">db/</text>
+  <text x="491" y="396" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">Postgres. Every household-scoped query runs inside a `Repository` bound to one household_id,</text>
+  <text x="491" y="411" text-anchor="middle" font-family="-apple-system,Helvetica,sans-serif" font-size="10" fill="#5c7178">and row-level security is FORCED underneath it. Two layers, tested independently.</text>
+</svg>
+</div>
+<figcaption>The dashed box in the money band is status.html&rsquo;s ghost convention, used
+literally: the adapters are built and unit-tested, and <code>ShadowProvider.submit()</code> is a
+logged no-op. Nothing here has moved a dollar.</figcaption>
+</figure>
+
+<h2><span class="section-num">02</span>db/ &mdash; the floor everything stands on</h2>
+
+<p>Four modules, and they set the constraints every other component inherits. SQLAlchemy
+<b>Core</b>, not the ORM &mdash; the SQL stays visible, there is no identity map, and nothing
+lazy-loads a card behind your back.</p>
+
+<p>Three rules in <code>db/models.py</code> are called non-negotiable, and each one has a specific
+failure behind it:</p>
+
+<ul class="plain">
+<li><b><code>NUMERIC</code>, never float.</b> The same argument <code>money()</code> makes inside
+the process: a cent that round-trips through a float is no longer the cent the engine decided on.
+This is the one place the database is <b>stronger</b> than the JSON artifact it replaced.</li>
+<li><b><code>household_id</code>, not <code>user_id</code>.</b> A user is a login; the household is
+the tenant. One household may eventually have two logins &mdash; and for this product that is not a
+footnote, because <b>a spouse&rsquo;s spending is precisely what breaks a forecast.</b></li>
+<li><b>RLS on every household-scoped table, and FORCED.</b> A policy the table owner is exempt from
+is decoration.</li>
+</ul>
+
+<h3 class="subhead">Two layers, each tested with the other removed</h3>
+
+<p><code>db/repository.py</code> is the fence; RLS is the backstop. Either alone would
+<em>probably</em> hold &mdash; and &ldquo;probably&rdquo; is not the bar for a table holding a
+household&rsquo;s complete financial life. <code>tests/test_idor.py</code> proves each one with the
+other disabled, on the reasoning that defense in depth only ever tested end-to-end is one layer
+wearing a disguise.</p>
+
+<div class="annot">
+<pre><code><span class="k">@dataclass</span>(frozen=<span class="k">True</span>)
+<span class="k">class</span> <span class="f">Repository</span>:
+    conn: Connection
+    household_id: <span class="k">str</span>
+
+    <span class="k">def</span> <span class="f">cards</span>(self) -&gt; list[dict[<span class="k">str</span>, Any]]:
+        <span class="k">return</span> self._all(
+            <span class="s">"SELECT * FROM cards WHERE household_id = :h ORDER BY id"</span>
+        )</code></pre>
+<div class="note"><b>Scope is a constructor argument, never a method argument.</b> A per-call
+<code>household_id</code> is a thing someone forgets exactly once. There is no way to hold a
+<code>Repository</code> and not know whose it is.
+<br><br><b>And it is frozen</b>, so a repository handed to a function cannot be quietly repointed at
+another household mid-call.<span class="src">backend/db/repository.py:31</span></div>
+</div>
+
+<h3 class="subhead">household_scope() — the trap, and the spelling that avoids it</h3>
+
+<div class="annot">
+<pre><code><span class="k">with</span> conn.begin():
+    conn.execute(
+        text(<span class="s">"SELECT set_config(:var, :hid, true)"</span>),
+        {<span class="s">"var"</span>: RLS_VAR, <span class="s">"hid"</span>: household_id},
+    )
+    <span class="k">yield</span> conn</code></pre>
+<div class="note"><b>Transaction-scoped, never connection-scoped.</b> Neon pools connections. A
+plain <code>SET app.household_id</code> persists for the life of the <em>connection</em>, so the
+next checkout from the pool inherits it &mdash; an IDOR wearing a security feature&rsquo;s clothes.
+A test suite that opens one connection and reuses it never catches the difference.
+<br><br><b>And <code>set_config(..., true)</code> rather than <code>SET LOCAL</code>, not as
+style.</b> <code>SET</code> is a utility statement and <b>cannot take a bind parameter</b>, so the
+only way to write it is to interpolate a request-supplied value into SQL. <code>set_config</code> is
+an ordinary function that takes the value as a parameter.
+<br><br>The safe spelling and the correct spelling turn out to be the same one. The obvious spelling
+is neither.<span class="src">backend/db/session.py:255</span></div>
+</div>
+
+<div class="callout stop">
+  <span class="kicker">The measurement that turned a guard into a startup check</span>
+  <p><code>assert_rls_binds()</code> refuses to start the process if the connecting role bypasses
+  RLS. That is not defensive programming &mdash; <strong>Neon&rsquo;s default role fails it.</strong></p>
+  <p>A <code>SUPERUSER</code> or <code>BYPASSRLS</code> role ignores every policy silently:
+  <code>household_scope()</code> still sets the variable, <code>pg_policies</code> still lists the
+  policies, and every query returns every household&rsquo;s rows anyway. There is no symptom until
+  someone reads someone else&rsquo;s financial life.</p>
+  <p>Measured against the real thing on 2026-07-16: Neon provisions <code>neondb_owner</code> with
+  <code>rolbypassrls = true</code>. Connected as that role and scoped to one household, a
+  <code>SELECT</code> returned <b>both</b>. So the obvious deployment &mdash; paste the connection
+  string Neon hands you into <code>DATABASE_URL</code> &mdash; collapses defense-in-depth to one
+  layer and turns the IDOR suite into a proof of a property production does not have.</p>
+</div>
+
+<h3 class="subhead">codec.py and db/snapshots.py — the frozen snapshot</h3>
+
+<p>The architecture calls the frozen snapshot the load-bearing design choice in the system, and it
+buys three things: <b>explanation</b> that stays true after Plaid rewrites history, <b>audit</b> for
+a regulator, and <b>backtest</b> &mdash; replay any new engine version across every historical
+snapshot and ask whether it would have overdrafted anyone. <em>Store the inputs, not references to
+the inputs.</em></p>
+
+<p><code>codec.py</code> exists because JSON has no decimal type and never will. <code>NUMERIC</code>
+made the <em>columns</em> exact natively, so <code>decisions.amount</code> needs no tagging &mdash;
+but the frozen snapshot is JSONB, and JSONB is JSON. It works at two layers, and they are different
+problems: <b>scalars</b> need a name registry on decode (<code>Reason.params</code> is an open
+mapping, so the caller has no idea what type to expect), while <b>trees</b> are type-driven from the
+target dataclass, which makes an unknown enum impossible rather than a runtime surprise.</p>
+
+<div class="callout">
+  <span class="kicker">Decoding a Decimal does not re-quantize</span>
+  <p>Amounts are read back with <code>Decimal(text)</code>, never <code>money(text)</code>.
+  Re-quantizing on the way in is a <b>second rounding of an already-rounded figure</b> &mdash;
+  silent, in the one place the type system exists to keep silent roundings out of. An APR is why it
+  matters in practice: it is a rate, not a dollar amount, and cents-quantizing it would be wrong.</p>
+</div>
+
+<p>The seam itself was justified by measurement rather than the guess it replaced. An earlier draft
+argued from a guessed ~10&nbsp;KB snapshot to 18&nbsp;TB/yr and a whole phase 3. Measured over 90
+consecutive snapshots of the demo household:</p>
+
+<div class="rules">
+<table>
+<thead><tr><th></th><th>Mean per snapshot</th><th>vs. raw</th></tr></thead>
+<tbody>
+<tr><td>raw JSON</td><td><b>2,699 B</b></td><td>&mdash;</td></tr>
+<tr><td>gzip&rsquo;d individually</td><td>770 B</td><td>3.5&times;</td></tr>
+<tr><td>gzip&rsquo;d as a batch</td><td>38 B</td><td><b>70.7&times;</b></td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Consecutive days for one household are nearly identical &mdash; <code>today</code> moves, a few
+balances move, the rest is unchanged. A store sorted by <code>(household_id, day)</code> exploits
+that; <b>Postgres TOAST cannot</b>, because it compresses each value independently. The conclusion
+was to keep the seam, back it with JSONB, and <b>not</b> build object storage: the phase-3 trigger
+is measured, and it does not fire.</p>
+
+<h2><span class="section-num">03</span>The three read paths</h2>
+
+<p>The same <code>Artifact</code> shape comes back from three different assembly routes, and which
+one runs depends on what kind of household you are. The client cannot tell the difference, which is
+the point.</p>
+
+<div class="rules">
+<table>
+<thead><tr><th>Module</th><th>Serves</th><th>Snapshot comes from</th></tr></thead>
+<tbody>
+<tr>
+  <td><code class="wide">readpath.py</code></td>
+  <td>a seeded demo household</td>
+  <td><b>Frozen</b> &mdash; the <code>snapshots</code> rows the seeder wrote. Two queries for a window, not ninety <code>get()</code> calls.</td>
+</tr>
+<tr>
+  <td><code class="wide">livepath.py</code></td>
+  <td>a household with live policy + attestation</td>
+  <td><b>Re-decided</b> &mdash; <code>assemble_snapshot</code> driven with the current <code>policy()</code> and <code>attested_for()</code>.</td>
+</tr>
+<tr>
+  <td><code class="wide">linkedpath.py</code></td>
+  <td>a real Plaid-linked household</td>
+  <td><b>Assembled from rows</b> &mdash; <code>plaid_transactions</code> becomes a <code>sim.History</code> the engine can decide against.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<p><code>livepath.py</code> closes a gap that is easy to miss and embarrassing to ship: the write
+paths persisted a user&rsquo;s guardrails and attestation and read them back, but nothing fed them
+into a live <code>decide()</code>. A user could lower their buffer floor, <code>Repository.policy()</code>
+would return the new value, and the app would keep showing a decision computed from the old one.</p>
+
+<p>What makes the fix careful is what it <b>didn&rsquo;t</b> touch. <code>assemble_snapshot</code>
+stays a pure function of its inputs; the live values are <em>passed in</em>, exactly as
+<code>sweeps_in_flight</code> already was. The one canonical <code>walk()</code> grew a single
+<code>attested</code> parameter defaulting to <code>True</code>, so the seeder, the replay driver and
+the artifact builder are all unchanged &mdash; <b>the regression oracle keeps grading the engine that
+shipped.</b></p>
+
+<div class="callout">
+  <span class="kicker">linkedpath.py names its own approximations</span>
+  <p>A linked household today is a Plaid <b>Sandbox</b> one, and the payment rail is in
+  <b>shadow</b> &mdash; so a first-cut approximation is a wrong <em>number on a screen</em>, never a
+  wrong transfer. That is what makes shipping v1 honest, and the two approximations (the card ledger
+  anchored at the current balance; the inferred spec covering only payroll, bills and cards) are
+  documented where they live rather than in a plan nobody rereads.</p>
+</div>
+
+<h2><span class="section-num">04</span>The Plaid chain &mdash; how rows get in</h2>
+
+<p>Five modules in a fixed order, and the ordering rule is the same one twice: <b>verify, persist,
+enqueue &mdash; never work inline.</b></p>
+
+<ol class="ladder">
+<li><b>plaid/link.py</b> &mdash; <code>POST /plaid/link/exchange</code>. A public token becomes a
+stored Item pinned to <em>your own</em> household. There is <b>no <code>household_id</code> on the
+wire</b> to smuggle; the target is derived from the verified session&rsquo;s membership. It refuses
+an <code>is_demo</code> household outright, so a real bank item can never attach to the public demo
+plane &mdash; the two planes cannot cross.</li>
+
+<li><b>plaid/webhook.py</b> &mdash; the doorbell. The endpoint is public and carries no API key,
+because Plaid does not have one. Its authentication <em>is</em> the signature.</li>
+
+<li><b>plaid/tasks.py</b> &mdash; hands the work to Cloud Tasks with an OIDC token on the push
+target, so only Cloud Tasks as the configured service account can invoke the worker route.</li>
+
+<li><b>plaid/sync.py</b> &mdash; the cursored <code>/transactions/sync</code> loop. Resolves the
+household through a <code>SECURITY DEFINER</code> lookup, takes <code>SELECT … FOR UPDATE</code> on
+the item row <em>before</em> reading the cursor so the two triggers cannot race into a double-insert,
+and is atomic: a failure mid-loop rolls back, so the cursor never advances past uncommitted rows.</li>
+
+<li><b>plaid/accounts.py</b> &mdash; the balances and card terms <code>/transactions/sync</code>
+cannot carry. Transactions record what a household <em>did</em>; this records what is <em>true
+now</em>. Degrades to balances-only when the <code>liabilities</code> product was not consented,
+rather than failing the refresh.</li>
+</ol>
+
+<div class="annot">
+<pre><code>    expected = claims.get(<span class="s">"request_body_sha256"</span>)
+    actual = hashlib.sha256(body).hexdigest()
+    <span class="k">if</span> <span class="k">not</span> expected <span class="k">or</span> <span class="k">not</span> hmac.compare_digest(<span class="k">str</span>(expected), actual):
+        <span class="k">raise</span> WebhookVerificationError(
+            <span class="s">"the request body hash does not match the signed claim"</span>
+        )</code></pre>
+<div class="note"><b>Why the body hash and not just the signature.</b> A valid signature replayed
+against a <em>different</em> payload would otherwise pass. The JWT commits to
+<code>request_body_sha256</code>, and this recomputes it over the exact bytes received &mdash; then
+parses only after the hash matches, so the parser never sees unverified input.
+<br><br>The <code>alg</code> is pinned to ES256 too, refusing the classic alg-confusion downgrade.
+<code>identity/stytch.py</code> mirrors this file deliberately, with two differences: RS256, and a
+<b>TTL on the key cache</b> rather than never-evict &mdash; a webhook JWT is single-use, but a
+session key is verified repeatedly, so a rotated key must stop being trusted within a bounded
+window.<span class="src">backend/plaid/webhook.py:95</span></div>
+</div>
+
+<p>The last link in the chain is <code>recurring.py</code>, which does no I/O at all. The engine
+forecasts against a payroll cadence and a set of scheduled bills; a real household arrives as a flat
+list of dated, signed, labelled movements with none of that structure. This is the pure function that
+recovers it &mdash; group by merchant, find what recurs on a regular cadence with a stable amount,
+return typed streams. <b>It decides nothing about money. It only describes what has been
+happening</b>, which is what lets a backtest grade the same detector production runs.</p>
+
+<h2><span class="section-num">05</span>identity/ &mdash; the edge</h2>
+
+<p>Two modules and one boundary, and the boundary is drawn so that swapping identity providers
+touches one file.</p>
+
+<ul class="plain">
+<li><b><code>stytch.py</code></b> verifies a session token <b>locally against Stytch&rsquo;s
+JWKS</b> and returns the vendor&rsquo;s user id. It is the only file in the codebase that knows the
+word &ldquo;Stytch&rdquo;. No per-request round-trip &mdash; a token is trusted on signature and
+expiry alone, which is what makes the hot path a local computation.</li>
+<li><b><code>deps.py</code></b> turns that into <code>current_user</code> (verify, then
+JIT-provision) and <code>authorize_household</code> (membership check, then a scoped repository). It
+names no vendor.</li>
+</ul>
+
+<p>Three details in <code>deps.py</code> are worth knowing:</p>
+
+<ul class="plain">
+<li><b>A bad token is refused before any provisioning.</b> <code>stytch.verify</code> does not touch
+the database, so an attacker cannot make the service write a row for an unverified identity.</li>
+<li><b>403 is deliberately indistinguishable from &ldquo;no such household&rdquo;.</b> A valid
+session naming a household it does not belong to learns nothing about whether that household
+exists.</li>
+<li><b>Writes require <code>owner</code>.</b> The role is read from <code>household_members</code>
+<em>inside the scope</em>, where RLS makes exactly the caller&rsquo;s row visible.</li>
+</ul>
+
+<div class="callout stop">
+  <span class="kicker">The hole a role check could not see</span>
+  <p><code>authorize_household_owner</code> is the write gate everywhere a <code>household_id</code>
+  is in the path. But <code>POST /households</code> creates the very household a role would be
+  scoped to, and <code>POST /plaid/link/*</code> is keyed to the user rather than a household
+  &mdash; <b>neither has a role to check.</b></p>
+  <p>Without a second gate, the public demo viewer could create a real household, become its owner,
+  and re-open every write it had just been refused. That was <b>measured as a 201 in production on
+  2026-07-21</b>, not reasoned about. <code>current_real_user</code> is the fix, and it reads
+  <code>users.is_demo</code> so a demo identity added later is refused with no code change &mdash;
+  structural rather than configured.</p>
+</div>
+
+<h2><span class="section-num">06</span>transfer/ &mdash; the write half</h2>
+
+<p>Paying a card is two legs: a <b>debit</b> (an ACH pull from checking into a platform funding
+account) and a <b>payoff</b> (a biller-payoff API landing that money on the card). Both sit behind
+one port so either vendor swaps without the saga changing. The money transits an FBO account we hold
+because Method&rsquo;s <code>source</code> must be a platform account &mdash; an end-user&rsquo;s
+checking cannot be one.</p>
+
+<ol class="ladder">
+<li><b>provider.py</b> &mdash; the <code>TransferProvider</code> port. Its four methods are shaped by
+what research found the real vendors actually do. Notably <code>authorize</code> is <b>our</b> step,
+not a vendor round-trip: neither vendor has a true two-phase authorize/submit, so it is the pre-flight
+re-check plus deriving the idempotency key from the <code>(household, decision_date)</code> slot.</li>
+
+<li class="ghosted"><b>shadow.py</b> &mdash; the first shipped state. <code>ShadowProvider</code>
+implements the full port, logs what it <em>would</em> do, and calls no vendor. Proven to touch no
+network in a test running under a socket that refuses to connect. <em>Move nothing first.</em></li>
+
+<li><b>saga.py</b> &mdash; <code>submit_leg</code> and <code>apply_status</code>. Built on the
+repo&rsquo;s already-proven Cloud Tasks + row-lock durability pattern rather than Temporal.</li>
+
+<li class="ghosted"><b>plaid_transfer.py · method.py · increase.py</b> &mdash; the adapters.
+Translation only: pure, unit-tested behind a fake client, because translation is the part vendors
+surprise you on.</li>
+
+<li><b>webhook.py · reconcile.py</b> &mdash; status arrives by webhook, verified and
+freshness-checked before it touches the ledger. And webhooks alone are not sufficient: Increase
+exhausts retries after ~72h and Method disables a webhook after repeated failures, so a periodic poll
+walks every non-terminal transfer and advances it against the provider&rsquo;s own truth.</li>
+</ol>
+
+<h3 class="subhead">Why a duplicate submit is guarded by a lock and not a constraint</h3>
+
+<div class="annot">
+<pre><code><span class="k">if</span> already:
+    <span class="k">return</span> <span class="k">None</span>  <span class="c"># the slot already reached submitted</span>
+
+repo = Repository(conn=scoped, household_id=intent.household_id)
+auth = provider.authorize(intent)
+
+_append(<span class="s">"authorized"</span>)
+ref = provider.submit(auth)          <span class="c"># the point of no return</span>
+_append(<span class="s">"submitted"</span>, ref=ref.provider_transfer_id)</code></pre>
+<div class="note"><b>A duplicate submit is an overdraft</b>, so this is the highest-stakes path in
+the service. It is guarded by a Postgres <b>advisory transaction lock on the
+<code>(household, decision_date, leg)</code> slot</b>, plus the check above that the slot has not
+already reached <code>submitted</code>.
+<br><br><b>A lock, not a UNIQUE constraint</b> &mdash; the ledger is append-only, so corrections are
+new rows and a uniqueness constraint on the slot is ruled out. The lock serializes two concurrent
+first-submits, which is the race a constraint would otherwise have caught.
+<br><br><code>apply_status</code> uses an advisory lock for a related reason: the app role holds
+<code>SELECT</code> and <code>INSERT</code> only, so it <em>cannot</em> take <code>FOR UPDATE</code>
+on a row &mdash; and the lock needs no row to exist.<span class="src">backend/transfer/saga.py:60</span></div>
+</div>
+
+<h2><span class="section-num">07</span>The measurement layer</h2>
+
+<p>Five modules whose entire job is to check the engine, and the constraint they share is the most
+important one in the folder: <b>none of them may become a second implementation of the engine.</b></p>
+
+<div class="rules">
+<table>
+<thead><tr><th>Module</th><th>Question it answers</th><th>How it avoids re-implementing</th></tr></thead>
+<tbody>
+<tr>
+  <td><code class="wide">precompute.py</code></td>
+  <td>What did the engine decide, day by day, for the demo household?</td>
+  <td>Build-time only. Byte-identical output across runs &mdash; a test asserts it.</td>
+</tr>
+<tr>
+  <td><code class="wide">replay.py</code></td>
+  <td>Was each decision right, against what the household actually did?</td>
+  <td>Calls <code>engine.outcome.grade()</code>, which had existed since July 13 and had <b>never been called</b>. It changes no decision; it observes.</td>
+</tr>
+<tr>
+  <td><code class="wide">calibrate.py</code></td>
+  <td>What would a looser spend model cost, across a population?</td>
+  <td>Grades many households at several dial settings. A setting is licensed only if its breach rate is no worse than today&rsquo;s.</td>
+</tr>
+<tr>
+  <td><code class="wide">trace.py</code></td>
+  <td>Why <em>that</em> number, gate by gate?</td>
+  <td>Reuses the engine&rsquo;s own helpers and mirrors only the <b>order</b>. No gate&rsquo;s value is recomputed.</td>
+</tr>
+<tr>
+  <td><code class="wide">artifact.py</code></td>
+  <td>Did a refactor silently change what the engine decides?</td>
+  <td>Nothing serves it any more &mdash; it is the golden fixture, checked day for day against seeded decisions.</td>
+</tr>
+</tbody>
+</table>
+</div>
+
+<div class="callout go">
+  <span class="kicker">An audit trail that is a second implementation is worse than none</span>
+  <p><code>trace.py</code> reconstructs the whole gate sequence <b>without re-deciding</b>. Two
+  things hold it honest: it calls the engine&rsquo;s own <code>_blocking_reasons</code>,
+  <code>conservative_low_balance</code>, <code>untouchable</code>, <code>_cadence_hold</code>,
+  <code>apply_caps</code> and <code>claimable_interest_avoided</code>; and the headline it reports is
+  <code>decide()</code>&rsquo;s own output verbatim, not a reconstruction.</p>
+  <p>A test pins the mirror across the whole demo window: for every day, the terminal gate the trace
+  lands on must match the action <code>decide()</code> actually returned. Reorder the engine and
+  forget this file, and that test fails &mdash; <strong>which is the only acceptable way for an audit
+  trail to drift.</strong></p>
+</div>
+
+<p>The sequencing here is worth reading as a discipline rather than a workflow. The spend-model fix
+<b>loosens</b> the forecast and buys bigger sweeps &mdash; the one direction a change must never move
+without evidence. So the order was fixed in advance: land the grader, land the replay driver, ship
+the new model with its dial set to reproduce today&rsquo;s refusals, and loosen it only as far as the
+<em>measured</em> breach rate licenses. <code>replay.py</code> is the evidence;
+<code>calibrate.py</code> is what reads a decision off it.</p>
+
+<h2><span class="section-num">08</span>assistant.py &mdash; the guard, not the prompt</h2>
+
+<p>Claude narrates; the engine decides. The model cannot compute a sweep, price interest or form a
+reason &mdash; those already happened, deterministically. Its only job is to answer a follow-up
+question <em>about</em> decisions that already exist, by retrieving them through two structured tools
+and describing what it found.</p>
+
+<div class="callout stop">
+  <span class="kicker">Why a guard and not a good system prompt</span>
+  <p>A system prompt asking a model not to invent numbers <strong>is a request.</strong> The
+  contract here is that the product <b>cannot</b> state a financial claim it can&rsquo;t trace to a
+  <code>Decision</code> &mdash; and a request is not a contract.</p>
+  <p>So every dollar figure, outcome and reason code in the model&rsquo;s final text is checked
+  against the tool results <em>from this turn</em> before the user sees a word of it. Anything that
+  doesn&rsquo;t verify replaces the whole response with &ldquo;no record.&rdquo; That makes the
+  guard, not the prompt, the actual test surface &mdash; which is why the test file spends most of
+  its length trying to sneak a false claim past it rather than checking the happy path.</p>
+</div>
+
+<p><code>verify()</code> enforces four rules in order of how much they matter. The first is the one
+that catches a <b>recombination</b> &mdash; every number real, the attribution false:</p>
+
+<ul class="plain">
+<li>A dollar figure in a sentence that names a date must belong to <b>that date&rsquo;s</b> decision.</li>
+<li>A figure in a sentence naming no date must at least appear somewhere in this turn&rsquo;s tool results.</li>
+<li>An outcome asserted about a date must match that decision&rsquo;s <code>Action</code>.</li>
+<li>A reason phrase used about a date must belong to that decision&rsquo;s codes.</li>
+</ul>
+
+<h3 class="subhead">The bug that taught the guard English word order</h3>
+
+<p>The guard distinguishes three kinds of date, and conflating the first two <b>made it reject the
+engine&rsquo;s own copy on 82 of 90 days.</b> The model had quoted a projection horizon out of an
+explanation it genuinely fetched, and was told it had fabricated it.</p>
+
+<div class="rules">
+<table>
+<thead><tr><th>Kind</th><th>Meaning</th><th>What may be said</th></tr></thead>
+<tbody>
+<tr><td><b>cited</b></td><td>a decision we fetched</td><td>Claims may attach to it.</td></tr>
+<tr><td><b>supporting</b></td><td>a date <em>inside</em> a fetched decision &mdash; the projection horizon</td><td>May be mentioned; may not be claimed about.</td></tr>
+<tr><td><b>unknown</b></td><td>never fetched in any form</td><td>Nothing.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>But the fix could not simply forbid a supporting date near an outcome verb, because the
+engine&rsquo;s own projection copy reads <em>&ldquo;heading for a low of $748.79 on 2026-06-05, so we
+swept $400&rdquo;</em> &mdash; one sentence, both the date and the verb, and every word of it true.</p>
+
+<p>What separates a faithful narration from an invented attribution turns out to be <b>word
+order</b>. Projection copy reaches the date <em>through</em> its figure &mdash; &ldquo;a low of
+$748.79 <b>on</b> 2026-06-05&rdquo; &mdash; so the figure lands <em>before</em> the date. An
+attribution leads with the date and the money follows: &ldquo;<b>On</b> 2026-06-05 we swept
+$748.79.&rdquo; Same date, same figure, same verb; <b>only the order differs, and the order is the
+claim.</b></p>
+
+<p>So a supporting date counts as projection work only when a figure the engine itself quoted
+alongside it appears earlier in the segment than the date does. A plain co-occurrence test would have
+waved through the recombination that puts the horizon&rsquo;s own low next to a false outcome.</p>
+
+<h2><span class="section-num">09</span>The five rules that explain the rest</h2>
+
+<ol class="ladder">
+<li><b>Two independent layers, each tested with the other removed.</b> The repository fence and RLS.
+Defense in depth that is only ever tested end-to-end is one layer wearing a disguise &mdash; and the
+startup check exists because the guarantee is only worth what the <em>connecting role</em> makes it
+worth, which is a deploy-time fact no CI test can see.</li>
+
+<li><b>Verify, persist, enqueue &mdash; never work inline.</b> Both doorbells. A slow handler causes
+retries, which cause the duplicates you were trying to avoid. Verification always precedes parsing,
+and the queue always precedes the work.</li>
+
+<li><b>One file per vendor.</b> <code>stytch.py</code> is the only file that knows the word Stytch;
+each transfer adapter is the only file that knows its vendor&rsquo;s shape; <code>plaid/client.py</code>
+is built lazily so a service with no Plaid credentials still boots and serves everything else.</li>
+
+<li><b>Refuse to boot rather than serve wrong numbers.</b> <code>DATABASE_URL</code>, the RLS role
+check, the credential-at-rest guards, the operator password. A service holding bad data should not
+serve wrong numbers one request at a time &mdash; and the operator console refuses to start without a
+password precisely so the gap is loud rather than silent.</li>
+
+<li><b>Never a second implementation of the engine.</b> <code>trace.py</code> mirrors order, not
+values. <code>seed.py</code> drives the one canonical <code>walk()</code> rather than writing its own
+ledger loop &mdash; a defect that had already happened twice before anyone noticed.
+<code>replay.py</code> calls <code>grade()</code>. <code>livepath.py</code> passes live values <em>in</em>
+rather than reading them inside the pure assembler.</li>
+</ol>
+
+<h2><span class="section-num">10</span>Where to start reading</h2>
+
+<p>Open <code>backend/db/session.py</code> first &mdash; <code>household_scope()</code> at line 255
+and <code>assert_rls_binds()</code> at line 34 are the two shortest functions in the folder that
+carry the most consequence, and both docstrings record a measured failure rather than an argument.
+Then <code>backend/db/repository.py:31</code> for the fence, and
+<code>backend/transfer/saga.py:60</code> for the highest-stakes path.</p>
+
+<p>If you want the one file that most rewards a slow read, it is <code>backend/assistant.py</code>
+&mdash; the comment block inside <code>verify()</code> is a small essay on why a plausible-looking
+safety check was wrong 82 times out of 90, and what it took to fix without weakening it.</p>
+
+<footer>
+  <p><b>Read from the source on 25 July 2026:</b> <code>backend/</code> at 48 Python files (43 of
+  them modules, 5 package <code>__init__.py</code>) and 12,329 lines, across <code>db/</code>,
+  <code>plaid/</code>, <code>identity/</code>, <code>transfer/</code> and the top level. Line numbers cited above are from that reading and will
+  drift as the files change. The snapshot compression table, the Neon <code>rolbypassrls</code>
+  measurement, the 82-of-90 guard rejection and the 2026-07-21 demo-viewer <code>201</code> are
+  <b>carried from the modules&rsquo; own docstrings, not re-run</b> for this page.</p>
+  <p>Companion documents: <a href="./engine-functions.html">engine-functions.html</a> (the decision
+  itself, function by function) &middot; <a href="../status.html">status.html</a> (what&rsquo;s built
+  and what isn&rsquo;t) &middot; <a href="../decision-flow.html">decision-flow.html</a> (the bet and
+  the engine flow) &middot;
+  <a href="https://github.com/jwolberg/cfo-ai/blob/main/docs/architecture.md">architecture.md</a>.</p>
+</footer>
+
+</div>
+</body>
+</html>
