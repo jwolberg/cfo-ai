@@ -298,8 +298,9 @@
        alt="resfi — responsible finance" width="259" height="88">
   <h1>The backend, component by component</h1>
   <p class="lede">
-    A walk through <code>backend/</code> as of 25 July 2026 &mdash; 48 Python files, about 12,300
-    lines across five packages. Read from the source, not from the docs.
+    A walk through <code>backend/</code> as of 25 July 2026 &mdash; 48 Python files and 12,329
+    lines across five packages, with <b>11,847 lines of tests</b> behind them. Read from the source,
+    not from the docs.
   </p>
   <p class="thesis">
     <a href="./engine-functions.html">The engine</a> decides. Everything here exists to get a real
@@ -860,11 +861,34 @@ safety check was wrong 82 times out of 90, and what it took to fix without weake
 
 <footer>
   <p><b>Read from the source on 25 July 2026:</b> <code>backend/</code> at 48 Python files (43 of
-  them modules, 5 package <code>__init__.py</code>) and 12,329 lines, across <code>db/</code>,
-  <code>plaid/</code>, <code>identity/</code>, <code>transfer/</code> and the top level. Line numbers cited above are from that reading and will
-  drift as the files change. The snapshot compression table, the Neon <code>rolbypassrls</code>
-  measurement, the 82-of-90 guard rejection and the 2026-07-21 demo-viewer <code>201</code> are
-  <b>carried from the modules&rsquo; own docstrings, not re-run</b> for this page.</p>
+  them modules, 5 package <code>__init__.py</code>), across <code>db/</code>,
+  <code>plaid/</code>, <code>identity/</code>, <code>transfer/</code> and the top level. Line numbers
+  cited above are from that reading and will drift as the files change. The Neon
+  <code>rolbypassrls</code> measurement, the 82-of-90 guard rejection and the 2026-07-21
+  demo-viewer <code>201</code> are <b>carried from the modules&rsquo; own docstrings, not re-run</b>
+  for this page.</p>
+
+  <p><b>Counted the same day</b>, splitting production from test. &ldquo;Code&rdquo; is total lines
+  minus blanks, comments and docstrings. A test file is attributed to <code>backend/</code> when it
+  names one of its modules or imports it; <code>engine/</code>'s and <code>sim/</code>'s own tests
+  and two infrastructure files (<code>test_requirements</code>,
+  <code>test_ci_runs_the_db_suite</code>) are excluded.</p>
+
+  <div class="rules" style="margin-top:1rem">
+  <table>
+  <thead><tr><th></th><th>Files</th><th>Lines</th><th>Code</th><th>Docstrings<br>+ comments</th></tr></thead>
+  <tbody>
+  <tr><td><b>Production</b> — <code>backend/</code></td><td>48</td><td>12,329</td><td>6,072</td><td>4,161</td></tr>
+  <tr><td><b>Tests</b></td><td>47</td><td>11,847</td><td>7,193</td><td>2,254</td></tr>
+  </tbody>
+  </table>
+  </div>
+
+  <p>Tests carry <b>1.18&times; the executable lines</b> of the code they cover — a thinner margin
+  than <a href="./engine-functions.html"><code>engine/</code></a>'s 1.7&times;, which is what you
+  would expect where the hard part is I/O and vendor shapes rather than arithmetic. A third of the
+  production lines are docstrings and comments (4,161 of 12,329), which is why the module docstrings
+  are worth reading as primary sources.</p>
   <p>Companion documents: <a href="./engine-functions.html">engine-functions.html</a> (the decision
   itself, function by function) &middot; <a href="../status.html">status.html</a> (what&rsquo;s built
   and what isn&rsquo;t) &middot; <a href="../decision-flow.html">decision-flow.html</a> (the bet and
