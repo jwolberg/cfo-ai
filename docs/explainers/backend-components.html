@@ -315,6 +315,23 @@
 read paths, and money moves through the transfer saga. All three sit on the same scoped-Postgres
 floor, and every one of them crosses an authorization boundary before it touches a row.</p>
 
+<p>The whole of it fits in one paragraph, and the rest of this page is detail underneath it.
+<b>A request arrives</b> carrying a Stytch session. <code>identity/deps.py</code> verifies the token
+against a cached signing key &mdash; no round-trip to the vendor &mdash; checks that the caller
+actually belongs to the household named in the URL, and hands the route a
+<code>Repository</code> that is <em>bound to that one household and cannot be repointed</em>. The
+route asks one of three assembly paths for a <code>Snapshot</code>, hands it to
+<code>engine.decide()</code>, and serializes what comes back. <b>Separately and asynchronously</b>,
+Plaid rings a doorbell whenever a bank has new data; that handler verifies the signature, writes the
+raw payload down, and enqueues &mdash; it never syncs inline, because a slow handler causes the
+retries that cause duplicates. <b>And when a decision says to move money</b>, a saga takes a lock on
+the <code>(household, date, leg)</code> slot, appends its intent to a ledger before calling the
+vendor, and today calls a provider that deliberately does nothing.</p>
+
+<p>Two questions are worth holding as you read the rest, because most of the surprising code answers
+one of them: <em>how does this stay scoped to one household?</em> and <em>what happens when this is
+delivered twice?</em></p>
+
 <figure>
 <div class="diagram">
 <svg viewBox="0 0 900 452" role="img" aria-label="Three bands over a shared database floor. Ingest: a Plaid webhook is verified by webhook.py, enqueued by tasks.py, and processed by sync.py into plaid_transactions. Read: the mobile app is verified by identity/deps.py, routed by main.py, assembled by readpath, livepath or linkedpath, and decided by the engine. Money: a Decision goes through saga.py, the TransferProvider port, and the adapters into an append-only ledger. All of it sits on db/, Postgres with row-level security forced.">
@@ -422,17 +439,12 @@ logged no-op. Nothing here has moved a dollar.</figcaption>
 
 <h2><span class="section-num">02</span>db/ &mdash; the floor everything stands on</h2>
 
-<p>Four modules, and they set the constraints every other component inherits. SQLAlchemy
-<b>Core</b>, not the ORM &mdash; the SQL stays visible, there is no identity map, and nothing
-lazy-loads a card behind your back.</p>
-
-<p>Three rules in <code>db/models.py</code> are called non-negotiable, and each one has a specific
-failure behind it:</p>
+<p>Four modules, SQLAlchemy Core rather than the ORM, and every dollar column
+<code>NUMERIC</code> &mdash; the same refusal to let a cent near a float that
+<a href="./engine-functions.html"><code>money()</code></a> enforces inside the process. Two other
+choices here shape everything above them:</p>
 
 <ul class="plain">
-<li><b><code>NUMERIC</code>, never float.</b> The same argument <code>money()</code> makes inside
-the process: a cent that round-trips through a float is no longer the cent the engine decided on.
-This is the one place the database is <b>stronger</b> than the JSON artifact it replaced.</li>
 <li><b><code>household_id</code>, not <code>user_id</code>.</b> A user is a login; the household is
 the tenant. One household may eventually have two logins &mdash; and for this product that is not a
 footnote, because <b>a spouse&rsquo;s spending is precisely what breaks a forecast.</b></li>
@@ -503,47 +515,15 @@ is neither.<span class="src">backend/db/session.py:255</span></div>
 
 <h3 class="subhead">codec.py and db/snapshots.py — the frozen snapshot</h3>
 
-<p>The architecture calls the frozen snapshot the load-bearing design choice in the system, and it
-buys three things: <b>explanation</b> that stays true after Plaid rewrites history, <b>audit</b> for
-a regulator, and <b>backtest</b> &mdash; replay any new engine version across every historical
-snapshot and ask whether it would have overdrafted anyone. <em>Store the inputs, not references to
-the inputs.</em></p>
+<p>Every decision stores the <b>entire input</b> it was made from, not references to it. That is what
+lets the service explain a sweep years later after Plaid has rewritten the underlying history, show a
+regulator exactly what was known at the time, and replay a new engine version across every
+historical day to ask whether it would have overdrafted anyone.</p>
 
-<p><code>codec.py</code> exists because JSON has no decimal type and never will. <code>NUMERIC</code>
-made the <em>columns</em> exact natively, so <code>decisions.amount</code> needs no tagging &mdash;
-but the frozen snapshot is JSONB, and JSONB is JSON. It works at two layers, and they are different
-problems: <b>scalars</b> need a name registry on decode (<code>Reason.params</code> is an open
-mapping, so the caller has no idea what type to expect), while <b>trees</b> are type-driven from the
-target dataclass, which makes an unknown enum impossible rather than a runtime surprise.</p>
-
-<div class="callout">
-  <span class="kicker">Decoding a Decimal does not re-quantize</span>
-  <p>Amounts are read back with <code>Decimal(text)</code>, never <code>money(text)</code>.
-  Re-quantizing on the way in is a <b>second rounding of an already-rounded figure</b> &mdash;
-  silent, in the one place the type system exists to keep silent roundings out of. An APR is why it
-  matters in practice: it is a rate, not a dollar amount, and cents-quantizing it would be wrong.</p>
-</div>
-
-<p>The seam itself was justified by measurement rather than the guess it replaced. An earlier draft
-argued from a guessed ~10&nbsp;KB snapshot to 18&nbsp;TB/yr and a whole phase 3. Measured over 90
-consecutive snapshots of the demo household:</p>
-
-<div class="rules">
-<table>
-<thead><tr><th></th><th>Mean per snapshot</th><th>vs. raw</th></tr></thead>
-<tbody>
-<tr><td>raw JSON</td><td><b>2,699 B</b></td><td>&mdash;</td></tr>
-<tr><td>gzip&rsquo;d individually</td><td>770 B</td><td>3.5&times;</td></tr>
-<tr><td>gzip&rsquo;d as a batch</td><td>38 B</td><td><b>70.7&times;</b></td></tr>
-</tbody>
-</table>
-</div>
-
-<p>Consecutive days for one household are nearly identical &mdash; <code>today</code> moves, a few
-balances move, the rest is unchanged. A store sorted by <code>(household_id, day)</code> exploits
-that; <b>Postgres TOAST cannot</b>, because it compresses each value independently. The conclusion
-was to keep the seam, back it with JSONB, and <b>not</b> build object storage: the phase-3 trigger
-is measured, and it does not fire.</p>
+<p><code>codec.py</code> is the tax on that: the snapshot is stored as JSONB, JSON has no decimal
+type, and a <code>Decimal</code> handed to <code>json.dumps</code> comes back a float. So each value
+is tagged with its type on the way out and reconstructed on the way in. The <code>NUMERIC</code>
+columns need none of this &mdash; only the JSONB payload does.</p>
 
 <h2><span class="section-num">03</span>The three read paths</h2>
 
@@ -831,37 +811,12 @@ that catches a <b>recombination</b> &mdash; every number real, the attribution f
 <li>A reason phrase used about a date must belong to that decision&rsquo;s codes.</li>
 </ul>
 
-<h3 class="subhead">The bug that taught the guard English word order</h3>
-
-<p>The guard distinguishes three kinds of date, and conflating the first two <b>made it reject the
-engine&rsquo;s own copy on 82 of 90 days.</b> The model had quoted a projection horizon out of an
-explanation it genuinely fetched, and was told it had fabricated it.</p>
-
-<div class="rules">
-<table>
-<thead><tr><th>Kind</th><th>Meaning</th><th>What may be said</th></tr></thead>
-<tbody>
-<tr><td><b>cited</b></td><td>a decision we fetched</td><td>Claims may attach to it.</td></tr>
-<tr><td><b>supporting</b></td><td>a date <em>inside</em> a fetched decision &mdash; the projection horizon</td><td>May be mentioned; may not be claimed about.</td></tr>
-<tr><td><b>unknown</b></td><td>never fetched in any form</td><td>Nothing.</td></tr>
-</tbody>
-</table>
-</div>
-
-<p>But the fix could not simply forbid a supporting date near an outcome verb, because the
-engine&rsquo;s own projection copy reads <em>&ldquo;heading for a low of $748.79 on 2026-06-05, so we
-swept $400&rdquo;</em> &mdash; one sentence, both the date and the verb, and every word of it true.</p>
-
-<p>What separates a faithful narration from an invented attribution turns out to be <b>word
-order</b>. Projection copy reaches the date <em>through</em> its figure &mdash; &ldquo;a low of
-$748.79 <b>on</b> 2026-06-05&rdquo; &mdash; so the figure lands <em>before</em> the date. An
-attribution leads with the date and the money follows: &ldquo;<b>On</b> 2026-06-05 we swept
-$748.79.&rdquo; Same date, same figure, same verb; <b>only the order differs, and the order is the
-claim.</b></p>
-
-<p>So a supporting date counts as projection work only when a figure the engine itself quoted
-alongside it appears earlier in the segment than the date does. A plain co-occurrence test would have
-waved through the recombination that puts the horizon&rsquo;s own low next to a false outcome.</p>
+<p>The hard part is that a guard strict enough to catch a lie also catches the truth. A first version
+<b>rejected the engine&rsquo;s own copy on 82 of 90 days</b>, because a sweep explanation legitimately
+names two dates &mdash; the day we acted and the projected low it was reasoning about &mdash; and only
+the first may carry a claim. What separates the two turns out to be word order: narration reaches the
+date through its figure (&ldquo;a low of $748.79 <b>on</b> the 5th&rdquo;), while an attribution leads
+with the date (&ldquo;<b>On</b> the 5th we swept $748.79&rdquo;). Same words, different claim.</p>
 
 <h2><span class="section-num">09</span>The five rules that explain the rest</h2>
 
