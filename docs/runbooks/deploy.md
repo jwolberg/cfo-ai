@@ -1,8 +1,16 @@
 ---
 title: Deploy the API to Cloud Run, with the database
 last-verified: 2026-07-16
+partially-verified: 2026-07-25
 anchor: RB-deploy
 ---
+
+> **Scope of the 2026-07-25 pass.** Four corrections, each measured against the live service or the
+> source, and each marked inline where it lands: `[0]`'s status table, `[0.5]`'s demo-session
+> failure mode, `[0.5]` step 5, and `[5]`'s deploy command (which was missing three variables the
+> live revision carries). **Everything else still dates from 2026-07-16 and was not re-checked** —
+> `last-verified` is deliberately left at that date rather than advanced on the strength of a
+> partial pass.
 
 # Deploy the API to Cloud Run, with the database
 
@@ -21,9 +29,15 @@ Read this or the rest will confuse you.
 
 | | |
 |---|---|
-| **Live revision** | `resfi-api-00003-viv` — `main`'s build, reading from Postgres |
-| **Its routes** | `/health`, `/households`, `/households/{id}/decisions`, `/households/{id}/spend`, `/assistant/message` |
-| **Database** | Neon at `0004 (head)`, four households × 90 days |
+| **Live revision** | `resfi-api-00011-wex` — measured 2026-07-25 |
+| **Its routes** | 12 on the app itself: `/health`, `POST /demo/session`, `GET`+`POST /households`, and under `/households/{id}`: `decisions`, `live-decision`, `spend`, `decisions/{day}/explain`, `policy` (`GET`+`PATCH`), `attest` — plus `POST /assistant/message`. Three routers are mounted alongside them (`plaid.webhook`, `plaid.link`, `plaid.sync`). |
+| **Database** | Neon. Migrations run to `0016_operator_actions` in the repo — **check the deployed head, do not assume it** (`[2]`) |
+
+> **The three rows above were stale until 2026-07-25**, and each had drifted the same way: written
+> true, then left while the thing moved. They read `resfi-api-00003-viv`, five routes, and
+> `0004 (head)`. Revision and routes are now measured; the database row is deliberately phrased as
+> an instruction rather than a number, because it is the one a reader is most likely to act on and
+> the one this file has no way to keep current.
 
 **This is a routine redeploy now. It was not, once, and that is worth thirty seconds.** Until
 2026-07-16 the live revision was `00002-zop`: one household, read out of the committed JSON file,
@@ -60,9 +74,23 @@ below and the live demo breaks in a way `/health` will not show you:
   `_assert_migrated()` does **not** check them (it lists only the read-path tables), so it will not
   catch this at startup — you find out per-request. **`0012` backfills then DROPS the mutable
   `policies` table** (its history moves to append-only `policy_events`; safe by design, but it runs).
-- **Web build with no `EXPO_PUBLIC_DEMO_SESSION`** → the public demo (`cfo-ai-1.web.app`) sends no
-  bearer and gets **401** on every route. The demo is no longer unauthenticated: it runs on a
-  pre-seeded, read-only `viewer` session baked into the build (KTD-10).
+- **API deployed without `DEMO_STYTCH_EMAIL` + `DEMO_STYTCH_PASSWORD`** → `POST /demo/session`
+  returns **503** (`demo_session_unconfigured`), the web client gets no token, and the public demo
+  (`cfo-ai-1.web.app`) gets **401** on every route. The demo is not unauthenticated: it runs on a
+  pre-seeded, read-only `viewer` session (KTD-10) — but as of ticket `0057` that session is
+  **minted server-side on demand**, not baked into the build.
+
+  > **Corrected 2026-07-25.** This bullet used to read "web build with no
+  > `EXPO_PUBLIC_DEMO_SESSION`". That was true before `0057` and is not true now, and it sends you
+  > hunting for a build-time token that should not exist. The failure moved from the **build** to
+  > the **API config**. Measured: `mobile/.env` deliberately has no `EXPO_PUBLIC_DEMO_SESSION`,
+  > `mobile/src/api/session.ts:97` fetches `POST /demo/session` on web when nothing is baked, and
+  > the live endpoint returns `200` with a real `session_jwt`.
+  >
+  > The env var still *works* as an override — `session.ts:90` prefers a baked token when one is
+  > present — so it remains useful for a dev override or a pinned build. It is simply no longer
+  > required, and a ~5-minute `session_jwt` baked at build time is exactly the expiry bug `0057`
+  > was filed to fix.
 
 **Do these, in this order:**
 
@@ -79,11 +107,22 @@ below and the live demo breaks in a way `/health` will not show you:
    seeder creates the demo `viewer` + reviewer `owner` users, their memberships, and sets `is_demo`
    (migration `0011` also backfills `is_demo=true` for the already-seeded households).
 4. **Deploy the backend** (`[5]`) with the two new secrets wired (see the amended command there).
-5. **Mint the demo session and rebuild the web** (`[7]`): mint a read-only `viewer` `session_jwt`
-   for the seeded demo user (`stytch-demo-viewer`) against the Stytch project, set it as
-   `EXPO_PUBLIC_DEMO_SESSION`, and `npm run build:web` + `firebase deploy`. **The exact mint call is
-   the one step this runbook cannot yet state with confidence** — it is the same
-   `_mint_session` that `0053` wires; treat `0053` going green as the prerequisite that pins it.
+5. **Wire the demo identity, then rebuild the web** (`[7]`): set `DEMO_STYTCH_EMAIL` and
+   `DEMO_STYTCH_PASSWORD` (the password from Secret Manager in prod) on the API revision, then
+   `npm run deploy:web` from `mobile/` — which runs `expo export`, `copy:docs`, and
+   `firebase deploy --only hosting` in one step. **No token is minted by hand and none is set on
+   the web build**: `backend/identity/demo.py` mints the demo `viewer` session server-side, caches
+   it process-wide, and re-mints within a minute of expiry, so N visitors cost ~one Stytch call per
+   5-minute window.
+
+   Confirm before rebuilding the web, since a 503 here is what turns into a 401 in the browser:
+
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}\n' -X POST "$API_URL/demo/session"   # expect 200
+   ```
+
+   The demo identity is a real Stytch user whose `stytch_user_id` the seeder reconciles onto the
+   demo viewer row (`scripts/seed_demo_household.py`), so step 3 is its prerequisite.
 
 Everything else in this runbook still applies. The sections below were last verified for the
 pre-identity revision — treat their command bodies as correct and these deltas as the amendment.
@@ -143,9 +182,14 @@ export DATABASE_URL='postgresql+psycopg://<owner>:<pw>@<direct-host>/<db>?sslmod
 > rows — verified, not assumed), so there was no data to move. That emptiness is a fact about
 > 2026-07-16, not a property of the migration: re-check it rather than inherit this conclusion.
 
-**Applied 2026-07-16.** Neon is now at `0004 (head)` and seeded (`[3]`); Postgres is 18.4. The
-deploy itself (`[5]`) ran the same day — every step in this file has now been executed at least
-once.
+**Applied 2026-07-16.** Neon reached `0004` — which was head *that day* — and was seeded (`[3]`);
+Postgres is 18.4. The deploy itself (`[5]`) ran the same day, so every step in this file has been
+executed at least once.
+
+> The repo has since moved to `0016_operator_actions`. This paragraph is a dated record of one
+> migration run, **not a statement of where the database is now** — the original read "Neon is now
+> at `0004 (head)`", which stopped being true the next time anyone added a migration. Read the
+> deployed head with `alembic current`; do not infer it from here.
 
 The owner *should* own the schema — that is the one thing Neon's `BYPASSRLS` default role is right
 for. It is a **migration credential and nothing else**; it never reaches the service.
@@ -271,9 +315,39 @@ gcloud run deploy "$SERVICE" \
   --cpu=1 \
   --memory=512Mi \
   --timeout=120s \
-  --set-secrets="RESFI_API_KEY=${SECRET_API_KEY}:latest,ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATABASE_URL=${SECRET_DATABASE_URL}:latest,STYTCH_SECRET=${SECRET_STYTCH_SECRET}:latest" \
-  --set-env-vars="^|^PYTHONUNBUFFERED=1|RESFI_ALLOWED_ORIGINS=https://cfo-ai-1.web.app,https://cfo-ai-1.firebaseapp.com|STYTCH_PROJECT_ID=${STYTCH_PROJECT_ID}"
+  --set-secrets="RESFI_API_KEY=${SECRET_API_KEY}:latest,ANTHROPIC_API_KEY=${SECRET_ANTHROPIC}:latest,DATABASE_URL=${SECRET_DATABASE_URL}:latest,STYTCH_SECRET=${SECRET_STYTCH_SECRET}:latest,DEMO_STYTCH_PASSWORD=${SECRET_DEMO_STYTCH_PASSWORD}:latest" \
+  --set-env-vars="^|^PYTHONUNBUFFERED=1|RESFI_ALLOWED_ORIGINS=https://cfo-ai-1.web.app,https://cfo-ai-1.firebaseapp.com|STYTCH_PROJECT_ID=${STYTCH_PROJECT_ID}|DEMO_STYTCH_EMAIL=${DEMO_STYTCH_EMAIL}|PLAID_ENV=sandbox"
 ```
+
+> ⚠️ **Corrected 2026-07-25 — the command above was missing three variables the live service
+> actually carries, and both flags REPLACE rather than merge.** Read as written, it would have
+> dropped `DEMO_STYTCH_EMAIL`, `DEMO_STYTCH_PASSWORD` and `PLAID_ENV` from the next revision. The
+> first two break the public demo (`POST /demo/session` → 503 → the browser gets 401 on every
+> route, `[0.5]`); dropping `PLAID_ENV` changes which Plaid environment the service talks to.
+>
+> Measured directly against the live revision `resfi-api-00011-wex` on 2026-07-25 — this is the
+> full set, and the split between secret and env-var is the deployed one, not a proposal:
+>
+> | Variable | Wired as | Note |
+> |---|---|---|
+> | `RESFI_API_KEY` | secret `resfi-api-key` | residual internal use; authorizes no user route |
+> | `ANTHROPIC_API_KEY` | secret `anthropic-api-key` | the explain path |
+> | `DATABASE_URL` | secret `resfi-database-url` | the **runtime** role string (`[4]`) |
+> | `STYTCH_SECRET` | secret `stytch-secret` | server API |
+> | `DEMO_STYTCH_PASSWORD` | secret `demo-stytch-password` | mints the demo viewer session |
+> | `DEMO_STYTCH_EMAIL` | env-var | the demo identity's address; not a credential |
+> | `STYTCH_PROJECT_ID` | env-var | JWKS issuer/audience; appears in every token |
+> | `RESFI_ALLOWED_ORIGINS` | env-var | CORS |
+> | `PLAID_ENV` | env-var (`sandbox`) | |
+> | `PYTHONUNBUFFERED` | env-var (`1`) | |
+>
+> Before deploying, diff the command against reality rather than trusting this table — it is a
+> snapshot of one day, and the failure mode is silent:
+>
+> ```bash
+> gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" \
+>   --format="value(spec.template.spec.containers[0].env)" | tr ';' '\n' | grep -oE "name': '[A-Z_]+'"
+> ```
 
 > **Identity-rung amendment (see `[0.5]`).** `STYTCH_SECRET` joins the secrets and
 > `STYTCH_PROJECT_ID` joins the env-vars (the project id is not itself a secret — it is the JWKS
