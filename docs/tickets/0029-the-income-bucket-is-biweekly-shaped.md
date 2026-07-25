@@ -1,8 +1,9 @@
 ---
 id: "0029"
+closed: 2026-07-22
 title: The income bucket is biweekly-shaped — the gate refuses households whose income is regular
 type: bug
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
@@ -14,6 +15,14 @@ created: 2026-07-16
 ---
 
 # The income bucket is biweekly-shaped — the gate refuses households whose income is regular
+
+> **CLOSED 2026-07-22 — resolved by [`0063`](0063-income-variation-aliases-against-pay-cadence.md),
+> not under this number.** This ticket and `0063` describe the same defect (the 28-day income bucket
+> aliases against non-biweekly pay cadences). `0063` measured it with `calibrate`, replaced the
+> bucketed metric with the coefficient of variation of paycheck *amounts*, and flipped the tripwire
+> `TestTheIncomeGateIsBiweeklyShaped` → `TestTheIncomeGateIsCadenceAgnostic`. Verified done
+> 2026-07-23: that test exists (`tests/test_seed.py:350`) and the old biweekly-shaped one is gone.
+> Kept as a record; do not rebuild.
 
 **Found by `0023`, which was looking for something else.** Not in its ticket, and not fixed there:
 it has a measured cost, no safe local fix, and it **loosens** — which is the one direction

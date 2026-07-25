@@ -1,8 +1,9 @@
 ---
 id: "0054"
+closed: 2026-07-18
 title: Deploy the identity rung — the Stytch + demo-session cutover, without breaking the demo
 type: dx
-status: open
+status: done
 priority: high
 repo: cfo-ai
 agentId: infra-devops-agent

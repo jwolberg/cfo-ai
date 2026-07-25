@@ -398,53 +398,86 @@
        alt="resfi — responsible finance" width="259" height="88">
   <h1>What&rsquo;s built, and what isn&rsquo;t</h1>
   <p class="lede">
-    Status as of 18 July 2026. Where each piece of the path from a bank login to money actually
+    Status as of 25 July 2026. Where each piece of the path from a bank login to money actually
     moving stands today:
   </p>
   <div class="updates">
     <div class="update-day">
+      <h3 class="update-date">25 July 2026</h3>
+      <div class="update-item">
+        <span class="update-cat">Operate &middot; the support surface</span>
+        <p>The <b>operator console is built</b> &mdash; the Admin lane below, as a working tool:
+          look up a household, read the <b>exact snapshot behind any decision</b> gate by gate, and
+          pause sweeps for one household or halt them globally. Every action is written to an
+          audit table. It reads through the same household-scoped layer the customer API uses and
+          renders the decision trace from the engine&rsquo;s own gates, so it cannot show a story
+          that disagrees with what actually ran. <b>It runs locally and is deliberately not
+          deployed</b>: there is no operator identity yet, so it is gated by a single god-mode
+          password &mdash; enough for a tool on <code>127.0.0.1</code>, not enough for the public
+          internet. Per-operator auth and an access log are the <b>Access &amp; audit</b> box,
+          still to come. The <b>global halt is recorded and displayed but not yet enforcing</b>:
+          nothing moves money today, so it is the hook the sweep-execution rung will call, not a
+          guard already on a live path.</p>
+      </div>
+      <div class="update-item">
+        <span class="update-cat">Docs &middot; the engine and the backend, explained</span>
+        <p>Two <b>visual explainers</b> now sit alongside this page, both read from the source
+          rather than from the docs:
+          <a href="./explainers/engine-functions.html">the engine, function by function</a>
+          &mdash; the gate ladder, the two-term card reserve, and why the grader imports the
+          engine&rsquo;s own arithmetic instead of re-deriving it; and
+          <a href="./explainers/backend-components.html">the backend, component by component</a>
+          &mdash; the two-layer household isolation, the Plaid ingest chain, the money saga, and
+          the guard that checks every number the assistant writes. Same discipline as
+          <a href="./decision-flow.html">decision-flow.html</a>: no server, no build step, diffable
+          and shareable.</p>
+      </div>
+    </div>
+
+    <div class="update-day">
       <h3 class="update-date">18 July 2026</h3>
       <div class="update-item">
-        <span class="update-cat">Ship &middot; a linked household, live on the public site</span>
-        <p><b>The whole path from a bank login to a decision is now live at
-           <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a></b> &mdash; on the identity + link
-           stack in production (Cloud Run, Neon migrated to the identity/Plaid schema). The site shows
-           a <b>real Plaid Sandbox household</b>: its 48 transactions and two cards are turned into a
-           <b>live decision and a per-card spend view</b>, recomputed on every request rather than
-           pre-baked. It is <b>read-only by construction</b> &mdash; an anonymous visitor gets a Stytch
-           <b>viewer</b> session that can read every demo household and write to none, so it is safe on
-           a public URL. Still <b>Sandbox data, no sign-in, and no money moved</b>: a real person
-           logging in to their <em>own</em> household with write access is the next rung.</p>
-      </div>
-      
-      <div class="update-item">
-        <span class="update-cat">Onboarding &middot; connect a bank &rarr; a decision</span>
-        <p>The <b>bank-link loop is complete end to end</b> against <b>Plaid Sandbox</b>: a signed-in user
-          <b>creates a household</b>, links a bank, and the transactions <b>plus balances and card
-          terms</b> land in Postgres. The <b>assembler that turns those rows into a live
-          <code>decide()</code></b> &mdash; recurring-income/bill detection, the card ledger, the funding
-          balance &mdash; is <b>built and dogfooded</b>. Link &rarr; sync &rarr; a real decision and
-          spend view runs in one loop, and it is what the public demo above now serves. Still Sandbox;
-          real accounts need envelope encryption for the tokens and a Plaid production plan.</p>
-      </div>
-      <div class="update-item">
-        <span class="update-cat">Act &middot; payment rail, payoff leg</span>
-        <p>The payoff leg&rsquo;s <b>live client (Method)</b> is <b>built and connected to Method&rsquo;s
-          dev API</b> &mdash; the first rail vendor to leave shadow for a real endpoint. Creating the
-          paying entity and its funding account works against dev; the one piece left is the <b>card
-          destination</b>, gated by Method&rsquo;s per-account org consent. Still mocked money and not the
-          live rail &mdash; but the <code>submit()</code> no-op now has a real client behind it, ready
-          for the sandbox gate.</p>
-      </div>
-      <div class="update-item">
-        <span class="update-cat">Identity &amp; access</span>
-        <p><b>Now deployed and live.</b> A <b>verified user (via Stytch)</b> and a <b>membership graph</b>
-          scope every route to the households a user may touch: each route <b>authorizes the household
-          against membership</b>, and the baked shared key is retired. Every request to the public site
-          carries a <b>real Stytch session the API verifies</b> against Stytch&rsquo;s keys, and the
-          demo&rsquo;s read-only session is <b>minted on demand and auto-refreshed</b> rather than baked,
-          so it never expires mid-visit.</p>
-      </div>
+        
+  <span class="update-cat">Ship &middot; a linked household, live on the public site</span>
+  <p><b>The whole path from a bank login to a decision is now live at
+     <a href="https://cfo-ai-1.web.app">cfo-ai-1.web.app</a></b> &mdash; on the identity + link
+     stack in production (Cloud Run, Neon migrated to the identity/Plaid schema). The site shows
+     a real Plaid Sandbox household: its 48 transactions and two cards are turned into a
+     <b>live decision and a per-card spend view</b>, recomputed on every request rather than
+     pre-baked. It is read-only by construction &mdash; an anonymous visitor gets a Stytch
+     viewer session that can read every demo household and write to none, so it is <b>safe on
+     a public URL</b>. Still <b>Sandbox data, no sign-in, and no money moved</b>: a real person
+     logging in to their <em>own</em> household with write access is the next rung.</p>
+</div>
+
+<div class="update-item">
+  <span class="update-cat">Onboarding &middot; connect a bank &rarr; a decision</span>
+    <p>The <b>bank-link loop is complete end to end</b> against Plaid Sandbox: a signed-in user
+      creates a household, links a bank, and the transactions plus balances and card
+      terms land in Postgres. The assembler that turns those rows into a live
+      <code>decide()</code> &mdash; recurring-income/bill detection, the card ledger, the funding
+      balance &mdash; is <b>built and dogfooded</b>. Link &rarr; sync &rarr; a real decision and
+      spend view runs in one loop, and it is what the public demo above now serves. Still Sandbox;
+      real accounts need envelope encryption for the tokens and a Plaid production plan.</p>
+  </div>
+  <div class="update-item">
+    <span class="update-cat">Act &middot; payment rail, payoff leg</span>
+    <p>The payoff leg&rsquo;s live client (Method) is <b>built and connected to Method&rsquo;s
+      dev API</b> &mdash; the first rail vendor to leave shadow for a real endpoint. Creating the
+      paying entity and its funding account works against dev; the one piece left is the card
+      destination, gated by Method&rsquo;s per-account org consent. <b>Still mocked money and not the
+      live rail</b> &mdash; but the <code>submit()</code> no-op now has a real client behind it, ready
+      for the sandbox gate.</p>
+  </div>
+  <div class="update-item">
+    <span class="update-cat">Identity &amp; access</span>
+    <p><b>Now deployed and live.</b> A verified user (via Stytch) and a membership graph
+      scope every route to the households a user may touch: each route authorizes the household
+      against membership, and the baked shared key is retired. Every request to the public site
+      carries a real Stytch session the API verifies against Stytch&rsquo;s keys, and the
+      demo&rsquo;s read-only session is minted on demand and auto-refreshed rather than baked,
+      so it never expires mid-visit.</p>
+  </div>
       <div class="update-item">
         <span class="update-cat">Customer controls &middot; first write path</span>
         <p>The product&rsquo;s <b>first user-driven writes</b> are built: a settings screen for the

@@ -13,6 +13,34 @@ Every ticket has exactly one owner. Owners are placeholder role identities
 substitute real agent IDs once this repo has one registered (`list_agents` would list
 them).
 
+## Two stores: this one is the source of truth, `.TerMinal/backlog/` is a cockpit mirror
+
+Tickets live in **two** places on disk, and `docs/tickets/` (here) is authoritative:
+
+- **`docs/tickets/NNNN-slug.md` — the source of truth.** Git-tracked and committed, so it
+  travels with the repo and shows up in PRs. Uses the frontmatter above
+  (`agentId`/`agentKind`/`agentScope`, `depends_on: ["0059"]`, `status: open|done`,
+  `type: fix|feat|feature`). **Write and edit tickets here.**
+- **`.TerMinal/backlog/NNNN-slug.md` — a deliberate mirror**, kept so tickets appear in the
+  TerMinal cockpit. It is **git-ignored** (`.gitignore`: `.TerMinal/`), so it is a local
+  view only and never travels with the repo. It uses the harness project-template schema,
+  which is *not* identical to this one — the fields map:
+
+  | `docs/tickets/` | `.TerMinal/backlog/` | notes |
+  |---|---|---|
+  | `id: "0065"` | `id: 65` | integer, leading zeros stripped |
+  | `status: done` | `status: closed` | `open` → `open` |
+  | `type: fix` | `type: bug` | harness vocab is `bug\|dx\|feature\|security\|testing` |
+  | `type: feat` / `feature` | `type: feature` | |
+  | `agentId` / `agentScope` / `agentKind` | `agent_id` / `agent_scope` / `agent_kind` | |
+  | `depends_on: ["0059","0060"]` | `depends_on: [59, 60]` | integers |
+  | — | `horizon: now`, `prs: []`, `refs: []`, `acceptance: []`, `model_tier: auto`, `worked_by: []` | harness-only constants |
+
+**Keep the mirror in sync when you add or close a ticket here** — the harness MCP ticket
+tools (`mcp__terminal-harness__*`) are scoped to a *different* repo and will **not** write
+into cfo-ai's backlog, so the mirror is maintained by hand. If the two disagree,
+`docs/tickets/` wins.
+
 ## Dependency order
 
 ```

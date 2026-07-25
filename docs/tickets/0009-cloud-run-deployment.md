@@ -1,8 +1,9 @@
 ---
 id: "0009"
+closed: 2026-07-16
 title: Cloud Run deployment
 type: feature
-status: open
+status: done
 priority: medium
 repo: cfo-ai
 agentId: infra-devops-agent
