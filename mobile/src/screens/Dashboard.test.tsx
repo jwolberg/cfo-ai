@@ -64,6 +64,22 @@ function body(over: Partial<DecisionsResponse> = {}): DecisionsResponse {
   };
 }
 
+/**
+ * Six days, newest first — the order `GET /decisions` serves them in (`types.ts`), alternating
+ * sweep and refuse so the disclosure's tally has something to count.
+ */
+function week(): Decision[] {
+  const days = ['2026-05-30', '2026-05-29', '2026-05-28', '2026-05-27', '2026-05-26', '2026-05-25'];
+  return days.map((date, i) =>
+    decision({
+      date,
+      action: i % 2 === 0 ? 'sweep' : 'refuse',
+      amount: i % 2 === 0 ? '400.00' : '0.00',
+      reasons: [{ code: 'projection', text: `Reason for ${date}.` }],
+    }),
+  );
+}
+
 beforeEach(() => {
   getDecisions.mockReset();
   getLiveDecision.mockReset();
@@ -239,6 +255,112 @@ describe('the dashboard', () => {
     await fireEvent.press(screen.getByText('Paid $400.00'));
 
     expect(onExplain).toHaveBeenCalledWith(expect.objectContaining({ date: '2026-05-30' }));
+  });
+});
+
+/**
+ * The feed used to be ninety full-height cards in a row — every dated decision arguing its case at
+ * the same volume, which is a lot of screen for a question ("did anything happen?") that the last
+ * few days answer. So the recent ones keep their reasoning and the rest fold away.
+ *
+ * What the collapse must NOT do is hide something the household has to act on. That is the last
+ * test here, and it is the reason the dense row is a *rendering* choice rather than a data one.
+ */
+describe('the feed keeps the recent decisions and folds the rest away', () => {
+  it('shows the three most recent in full, and holds the rest back', async () => {
+    getDecisions.mockResolvedValue(body({ decisions: week() }));
+
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('May 30')).toBeTruthy());
+    expect(screen.getByText('May 29')).toBeTruthy();
+    expect(screen.getByText('May 28')).toBeTruthy();
+    expect(screen.queryByText('May 27')).toBeNull();
+
+    // ...and the three that stay keep the "why", which is half of what the feed is for.
+    expect(screen.getByText('Reason for 2026-05-30.')).toBeTruthy();
+  });
+
+  it('says how many it is holding back, and what happened on them', async () => {
+    // A bare "Show more" makes the user tap to find out whether it is worth tapping. The tally is
+    // derived from the hidden days themselves, not from `summary` — which counts the whole window,
+    // including the three still on screen.
+    getDecisions.mockResolvedValue(body({ decisions: week() }));
+
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('Show 3 earlier decisions')).toBeTruthy());
+    // Hidden: May 27 refuse, May 26 sweep, May 25 refuse.
+    expect(screen.getByText('1 payment · 2 no-payment days')).toBeTruthy();
+  });
+
+  it('expands to the whole window, and folds back up again', async () => {
+    getDecisions.mockResolvedValue(body({ decisions: week() }));
+
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
+    await waitFor(() => expect(screen.getByText('Show 3 earlier decisions')).toBeTruthy());
+
+    await fireEvent.press(screen.getByText('Show 3 earlier decisions'));
+    expect(screen.getByText('May 27')).toBeTruthy();
+    expect(screen.getByText('May 25')).toBeTruthy();
+
+    await fireEvent.press(screen.getByText('Hide earlier decisions'));
+    expect(screen.queryByText('May 27')).toBeNull();
+  });
+
+  it('renders the earlier days as dense rows — the outcome, not the whole argument', async () => {
+    // The details stay behind the tap, exactly as they always did for a card. What changes is that
+    // an earlier day no longer spends a paragraph making its case unprompted.
+    const onExplain = jest.fn();
+    getDecisions.mockResolvedValue(body({ decisions: week() }));
+
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={onExplain} />);
+    await waitFor(() => expect(screen.getByText('Show 3 earlier decisions')).toBeTruthy());
+    await fireEvent.press(screen.getByText('Show 3 earlier decisions'));
+
+    expect(screen.queryByText('Reason for 2026-05-27.')).toBeNull();
+
+    await fireEvent.press(screen.getByText('May 27'));
+    expect(onExplain).toHaveBeenCalledWith(expect.objectContaining({ date: '2026-05-27' }));
+  });
+
+  it('never compacts away a day that is asking the household to do something', async () => {
+    // A coverage refusal carries the only route to the Attest screen (ticket 0052). Folding that
+    // into a one-line row would quietly strand a household that cannot be swept for until they
+    // confirm their cards — the collapse is about volume, never about reachability.
+    const decisions = week();
+    decisions[4] = decision({
+      date: '2026-05-26',
+      action: 'refuse',
+      amount: '0.00',
+      reason_codes: ['card_coverage_incomplete'],
+      reasons: [
+        {
+          code: 'card_coverage_incomplete',
+          text: "We can't confirm your cards.",
+          params: { coverage: 'unattested', unmatched: 2 },
+        },
+      ],
+    });
+    getDecisions.mockResolvedValue(body({ decisions }));
+
+    await render(
+      <Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} onAttest={jest.fn()} />,
+    );
+    await waitFor(() => expect(screen.getByText('Show 3 earlier decisions')).toBeTruthy());
+    await fireEvent.press(screen.getByText('Show 3 earlier decisions'));
+
+    expect(screen.getByTestId('attest-cta-2026-05-26')).toBeTruthy();
+    expect(screen.getByText("We can't confirm your cards.")).toBeTruthy();
+  });
+
+  it('offers no disclosure when there is nothing behind it', async () => {
+    getDecisions.mockResolvedValue(body({ decisions: week().slice(0, 3) }));
+
+    await render(<Dashboard householdId={DEMO_HOUSEHOLD} onExplain={jest.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('May 28')).toBeTruthy());
+    expect(screen.queryByText(/earlier decisions/)).toBeNull();
   });
 });
 

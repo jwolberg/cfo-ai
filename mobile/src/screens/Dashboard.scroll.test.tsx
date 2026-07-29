@@ -206,8 +206,25 @@ describe('the hero collapses as you scroll', () => {
     expect(summaryBar()).toBeTruthy();
 
     await scrollTo(HERO_HIDDEN_AT - 30); // past the expand threshold (24px) — now it goes
-    expect(summaryBar()).toBeNull();
+    // `waitFor`, not a bare assertion: the bar animates out and unmounts when it lands, so its
+    // departure is a moment later than the scroll that ordered it. Asserting synchronously here
+    // passed or failed depending on how loaded the machine was — it was green in a full suite run
+    // and red running this file alone, which is a flake, not a test.
+    await waitFor(() => expect(summaryBar()).toBeNull());
   });
+
+  // **There is deliberately no test that the bar *lingers* while it fades out**, and the gap is
+  // worth naming rather than leaving for someone to discover.
+  //
+  // Two versions were written and both were thrown away. On real timers, "still present one line
+  // after the scroll" failed about one run in three: `act` pumps the queue, the exit's frames run
+  // against the wall clock, and on a loaded machine the animation genuinely had finished — the test
+  // was measuring the laptop. On fake timers the animation itself behaves (`Animated` advances
+  // exactly as you would expect in isolation), but the bar could not be queried mid-flight through
+  // the renderer, so the assertion was about the harness rather than the screen.
+  //
+  // What survives is the `waitFor` above, which fails loudly if the bar ever stops leaving at all.
+  // The smoothness itself is a visual property and was checked by running the app.
 
   it('summarises a paid-off card as the banner, never as a bar', async () => {
     await open(true);
