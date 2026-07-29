@@ -20,12 +20,15 @@
  * A `$0.00` stat on a legitimately zero first day is a fifth thing, and it is fine: it means
  * the engine hasn't moved money yet, which is true and worth showing.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   FlatList,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -79,9 +82,37 @@ const HERO_HEIGHT_FALLBACK = 320;
  */
 const HYSTERESIS = 24;
 
+/** How long the summary bar takes to arrive, and to leave.
+ *
+ * Asymmetric on purpose: arriving is the moment worth watching, so it eases *out* over a quarter
+ * second and settles; leaving is housekeeping and gets out of the way faster. Equal durations make
+ * a dismissal feel like a hesitation. */
+const BAR_IN_MS = 260;
+const BAR_OUT_MS = 170;
+
+/** Until the bar has measured itself it slides in from this far above the top edge. Only ever the
+ *  first frame of the first appearance — after that it uses its own height, so the band starts
+ *  exactly off screen rather than at a number someone guessed. */
+const BAR_HEIGHT_FALLBACK = 96;
+
+/**
+ * The native driver runs the animation on the UI thread, which is the whole point here: this
+ * transition fires *during a scroll*, and a JS-driven one competes with the scroll it is reacting
+ * to. `react-native-web` has no native animated module, so on web it would only earn a console
+ * warning before falling back to the JS driver anyway. Ask for it where it exists.
+ */
+const NATIVE_DRIVER = Platform.OS !== 'web';
+
+/** How many of the most recent decisions keep a full card. The rest fold away — see `EarlierDays`. */
+const PREVIEW_COUNT = 3;
+
 export function Dashboard({ householdId, linked, onExplain, onAttest, onGetStarted }: Props) {
   const [state, setState] = useState<State>({ status: 'loading' });
   const [collapsed, setCollapsed] = useState(false);
+  // Whether the folded-away days are showing. Starts false on every household: "show me everything"
+  // is a choice about *this* feed, and carrying it across a switch would silently answer a question
+  // the user asked about a different household.
+  const [expanded, setExpanded] = useState(false);
 
   // Where the hero's bottom edge sits in the scrolled content — **measured, not guessed.** The
   // summary may not appear until the hero it summarises is entirely off screen, and a hard-coded
@@ -101,11 +132,55 @@ export function Dashboard({ householdId, linked, onExplain, onAttest, onGetStart
     setHeroEnd(LIST_PADDING_TOP + bottomWithinHeader);
   }, []);
 
+  // ## The summary bar's arrival and departure
+  //
+  // `collapsed` says whether the bar *should* be there; `barPresent` says whether it is still
+  // mounted. They differ for the length of the exit animation, and that gap is the whole feature:
+  // unmounting on `collapsed === false` would snap the bar out of existence mid-fade, which is the
+  // pop this replaced. The bar mounts the instant it is wanted and leaves only once it has finished
+  // leaving.
+  const [barPresent, setBarPresent] = useState(false);
+  const [barHeight, setBarHeight] = useState(BAR_HEIGHT_FALLBACK);
+  const bar = useRef(new Animated.Value(0)).current;
+  // Read inside the effect, never rendered — a ref rather than state so that mounting the bar does
+  // not re-enter the effect and restart the entrance animation it just began.
+  const barMounted = useRef(false);
+
+  useEffect(() => {
+    if (collapsed) {
+      barMounted.current = true;
+      setBarPresent(true);
+      Animated.timing(bar, {
+        toValue: 1,
+        duration: BAR_IN_MS,
+        // Decelerate: it arrives quickly and settles, rather than coasting in at a constant speed.
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: NATIVE_DRIVER,
+      }).start();
+    } else if (barMounted.current) {
+      Animated.timing(bar, {
+        toValue: 0,
+        duration: BAR_OUT_MS,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: NATIVE_DRIVER,
+      }).start(({ finished }) => {
+        // `finished` is false when a scroll back down interrupted the exit — in which case the
+        // effect above has already taken over and the bar must stay exactly where it is.
+        if (!finished) return;
+        barMounted.current = false;
+        setBarPresent(false);
+      });
+    }
+  }, [collapsed, bar]);
+
   const load = useCallback(async () => {
     // Back to `loading` first, on every household. The alternative is holding the previous
     // household's feed on screen while the next one is in flight, which is the stale-data bug
     // 0025 exists to avoid — and it is worse than a spinner precisely because it looks fine.
     setState({ status: 'loading' });
+    // And fold the feed back up. `expanded` is an answer about the feed on screen; carrying it into
+    // the next household's would be answering a question nobody asked about that one.
+    setExpanded(false);
     try {
       if (linked) {
         // A linked household has no graded window — just today's live decision from its Plaid data.
@@ -153,36 +228,155 @@ export function Dashboard({ householdId, linked, onExplain, onAttest, onGetStart
   }
 
   const { summary, decisions } = state.data;
+  // The days behind the fold, and the ones in front of it. Slicing here rather than inside the
+  // renderer keeps `EarlierDays` counting the exact set it is offering to show.
+  const earlier = decisions.slice(PREVIEW_COUNT);
+  const shown = expanded ? decisions : decisions.slice(0, PREVIEW_COUNT);
 
   return (
     <View style={styles.shell}>
       <FlatList
         testID="decision-feed"
-        data={decisions}
+        data={shown}
         keyExtractor={(decision) => decision.date}
         contentContainerStyle={styles.list}
         style={styles.scroll}
         ListHeaderComponent={<Header summary={summary} onHeroLayout={onHeroLayout} />}
         ListEmptyComponent={<Empty />}
-        renderItem={({ item }) => <DecisionFeedItem decision={item} onPress={onExplain} onAttest={onAttest} />}
+        renderItem={({ item, index }) => (
+          <DecisionFeedItem
+            decision={item}
+            onPress={onExplain}
+            onAttest={onAttest}
+            // Everything past the preview is an unfolded day, and reads as a row.
+            compact={index >= PREVIEW_COUNT}
+          />
+        )}
+        ListFooterComponent={
+          earlier.length > 0 ? (
+            <EarlierDays
+              earlier={earlier}
+              expanded={expanded}
+              onToggle={() => setExpanded((was) => !was)}
+            />
+          ) : null
+        }
         onScroll={onScroll}
         scrollEventThrottle={16}
       />
 
       {/* The hero, collapsed to the one thing worth keeping on screen: how far down the card is.
           Absolutely positioned *over* the list rather than pushing it, so the feed does not jump
-          by the height of the bar the moment it appears. */}
-      {collapsed && (
-        <View style={styles.stickyLayer} pointerEvents="none">
+          by the height of the bar the moment it appears — and it slides down from behind the tab
+          bar rather than blinking into place, which is the difference between a band arriving and
+          a band appearing to have always been there. */}
+      {barPresent && (
+        <Animated.View
+          style={[
+            styles.stickyLayer,
+            {
+              opacity: bar,
+              transform: [
+                {
+                  // Its own measured height, so it starts exactly off screen. A constant here is a
+                  // claim about the bar's height, and the symptom of getting it wrong is a band
+                  // that appears to start halfway down its own travel.
+                  translateY: bar.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [-barHeight, 0],
+                  }),
+                },
+              ],
+            },
+          ]}
+          pointerEvents="none"
+          onLayout={(event) => setBarHeight(event.nativeEvent.layout.height)}
+        >
           <View style={styles.stickyCard} testID="paydown-summary">
             <View style={styles.stickyInner}>
               <Paydown summary={summary} topless />
             </View>
           </View>
-        </View>
+        </Animated.View>
       )}
     </View>
   );
+}
+
+/**
+ * The fold at the end of the feed.
+ *
+ * The days it hides are not deleted and not summarised away — they are one tap under a line that
+ * says how many there are and what happened on them. That sentence is the point: a bare "show more"
+ * makes you tap to find out whether tapping was worth it, and on a feed whose most common outcome is
+ * "we left it alone" the honest answer is usually no.
+ *
+ * The tally is derived from the hidden days themselves rather than read off `summary`, which counts
+ * the whole window — including the three still on screen above it.
+ */
+function EarlierDays({
+  earlier,
+  expanded,
+  onToggle,
+}: {
+  earlier: Decision[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const spin = useRef(new Animated.Value(expanded ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(spin, {
+      toValue: expanded ? 1 : 0,
+      duration: 200,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: NATIVE_DRIVER,
+    }).start();
+  }, [expanded, spin]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded }}
+      onPress={onToggle}
+      style={({ pressed }) => [styles.fold, pressed && styles.pressed]}
+      testID="earlier-decisions-toggle"
+    >
+      <View style={styles.foldText}>
+        <Text style={styles.foldLabel}>
+          {expanded ? 'Hide earlier decisions' : `Show ${earlier.length} earlier decisions`}
+        </Text>
+        <Text style={styles.foldTally}>{tally(earlier)}</Text>
+      </View>
+      <Animated.Text
+        style={[
+          styles.foldChevron,
+          {
+            transform: [
+              {
+                rotate: spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] }),
+              },
+            ],
+          },
+        ]}
+      >
+        ▾
+      </Animated.Text>
+    </Pressable>
+  );
+}
+
+/** "1 payment · 2 no-payment days" — the same two words the cards use, so the count and the day it
+ *  counts cannot describe the same outcome differently. A term with no days behind it is dropped
+ *  rather than rendered as a zero. */
+function tally(decisions: Decision[]): string {
+  const paid = decisions.filter((d) => d.action === 'sweep').length;
+  const quiet = decisions.length - paid;
+
+  const parts: string[] = [];
+  if (paid > 0) parts.push(`${paid} payment${paid === 1 ? '' : 's'}`);
+  if (quiet > 0) parts.push(`${quiet} no-payment day${quiet === 1 ? '' : 's'}`);
+  return parts.join(' · ');
 }
 
 /** How far the card has come down since the window opened, as a 0-1 fraction.
@@ -215,9 +409,14 @@ function paidDownFraction(summary: DecisionsResponse['summary']): number {
 function Paydown({
   summary,
   topless = false,
+  animate = false,
 }: {
   summary: DecisionsResponse['summary'];
   topless?: boolean;
+  /** Grow the bar from empty on mount. The hero does; the summary bar does not — it mounts every
+   *  time you scroll past the hero, and a flourish you have to sit through on every scroll is not
+   *  a flourish. */
+  animate?: boolean;
 }) {
   if (summary.paid_off) {
     // Deliberately *not* a `$0.00` — that reads like a bug on the one day it is unambiguously
@@ -234,13 +433,15 @@ function Paydown({
         <Text style={styles.progressPercent}>{percent}%</Text>
       </View>
       {/* accessibility: a bar that only speaks in colour says nothing to a screen reader, and
-          this is the number the whole screen is about. */}
+          this is the number the whole screen is about. The announced value is the real one from
+          the first frame — only the drawing is animated, so a screen reader is never read a
+          number that is on its way somewhere else. */}
       <View
         style={styles.track}
         accessibilityRole="progressbar"
         accessibilityValue={{ min: 0, max: 100, now: percent }}
       >
-        <View style={[styles.fill, { width: `${percent}%` }]} />
+        <ProgressFill percent={percent} animate={animate} />
       </View>
       <Text style={styles.progressFoot}>
         {formatMoneyRounded(summary.starting_debt_balance)} when we started →{' '}
@@ -248,6 +449,39 @@ function Paydown({
       </Text>
     </View>
   );
+}
+
+/**
+ * The filled part of the paydown track.
+ *
+ * Its own component because it owns a hook and `Paydown` returns early for a paid-off card — a
+ * conditional hook is a crash waiting for the day someone pays their card off.
+ *
+ * The width is animated on the JS driver, which the native one cannot do (it moves nothing on the
+ * layout thread). That is the right trade for a 10px bar drawn once on mount: the alternative is a
+ * scaled transform, which needs the track's measured width and stretches the rounded cap with it.
+ */
+function ProgressFill({ percent, animate }: { percent: number; animate: boolean }) {
+  const grown = useRef(new Animated.Value(animate ? 0 : percent)).current;
+
+  useEffect(() => {
+    Animated.timing(grown, {
+      toValue: percent,
+      duration: 900,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [percent, grown]);
+
+  const width = grown.interpolate({
+    inputRange: [0, 100],
+    outputRange: ['0%', '100%'],
+    // A percentage that has already arrived must not keep drifting if the number ever ticks past
+    // its range — clamp rather than extrapolate off the end of the track.
+    extrapolate: 'clamp',
+  });
+
+  return <Animated.View style={[styles.fill, { width }]} />;
 }
 
 function Header({
@@ -286,7 +520,7 @@ function Header({
             celebrate; it is not allowed to drop the condition. */}
         <Text style={styles.heroFoot}>in interest, as long as you keep your payments up</Text>
 
-        <Paydown summary={summary} />
+        <Paydown summary={summary} animate />
       </View>
 
       <Text style={styles.feedLabel}>Recent decisions</Text>
@@ -518,6 +752,25 @@ const styles = StyleSheet.create({
   progressFoot: { ...type.small, color: '#8FBFB4', marginTop: space.sm },
 
   feedLabel: { ...type.label, marginTop: space.md, marginBottom: space.sm },
+
+  // The fold. Deliberately not a card: it is a control that belongs to the list above it, and a
+  // white panel at the end of a run of white cards reads as one more decision.
+  fold: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    minHeight: MIN_TAP_TARGET,
+    marginTop: space.sm,
+    paddingHorizontal: space.md,
+    paddingVertical: space.sm,
+    borderRadius: radius.row,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+  },
+  foldText: { flex: 1 },
+  foldLabel: { ...type.label, color: colors.blueText },
+  foldTally: { ...type.small, fontSize: 13, marginTop: 2 },
+  foldChevron: { ...type.label, color: colors.blueText, fontSize: 16 },
 
   card: {
     backgroundColor: colors.card,

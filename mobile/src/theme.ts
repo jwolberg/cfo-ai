@@ -52,6 +52,9 @@ export const colors = {
 
 export const radius = {
   card: 24,
+  // A dense list row. The card's 24 on a 44px row is nearly a pill and reads as a button; this is
+  // the same family of shape, scaled to something that is one line tall.
+  row: 12,
   pill: 999,
 } as const;
 

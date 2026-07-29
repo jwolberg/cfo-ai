@@ -1,5 +1,6 @@
 /**
- * One decision, as one card.
+ * One decision, as one card — or, for the days folded away behind the feed's disclosure, as one
+ * dense row.
  *
  * The reference cards do one idea each, and so does this: the outcome, the day, and the
  * engine's own first sentence about why. Everything else is behind the tap.
@@ -9,6 +10,16 @@
  * with a headline that says what happened to the money rather than what didn't happen. "No
  * payment today" is a statement; "Failed" or a red badge would be a lie about a system that
  * behaved exactly as designed.
+ *
+ * ## Telling the two outcomes apart at a glance
+ *
+ * The outcome colour lives on a **spine down the leading edge** — blue for a payment, deep green
+ * for a day we left alone. It replaced a short accent bar that sat inline before the date, which
+ * read as a stray dash in front of the date rather than as a status. A spine cannot be misread as
+ * punctuation: it is the edge of the card, it is the full height of the row, and in the dense list
+ * it stacks into a rail you can scan without reading a word.
+ *
+ * The headline carries the same colour, so each item has one accent rather than two competing ones.
  */
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -29,6 +40,14 @@ interface Props {
   /** Open the Attest screen for a coverage-incomplete refusal (ticket 0052). Optional: without it,
    *  the CTA does not render — a household with no coverage refusal never sees one anyway. */
   onAttest?: (refusal: CoverageRefusal) => void;
+  /**
+   * Render as a dense row instead of a full card — the shape the feed's folded-away days take.
+   *
+   * A **request**, not a command: a day carrying a coverage refusal renders full-size regardless,
+   * because its "Confirm your cards" CTA is the household's only route to the Attest screen and a
+   * one-line row has nowhere to put it. Compacting is about volume, never about reachability.
+   */
+  compact?: boolean;
 }
 
 /** The coverage refusal on this decision, if any — the CTA into Attest keys on it. */
@@ -40,9 +59,12 @@ function coverageRefusal(decision: Decision): CoverageRefusal | null {
   return { coverage, unmatched };
 }
 
-export function DecisionFeedItem({ decision, onPress, onAttest }: Props) {
+export function DecisionFeedItem({ decision, onPress, onAttest, compact = false }: Props) {
   const swept = decision.action === 'sweep';
   const refusal = coverageRefusal(decision);
+
+  // See `compact` above: a day with something to do keeps its card.
+  const dense = compact && !refusal;
 
   // "Paid off" is a refusal carrying `no_debt` — never a third action. The backend derives
   // it once (`DayRecord.paid_off`) and every layer reads that flag rather than re-deriving
@@ -53,25 +75,40 @@ export function DecisionFeedItem({ decision, onPress, onAttest }: Props) {
       ? `Paid ${formatMoney(decision.amount)}`
       : 'No payment today';
 
-  const accent = swept ? colors.brandBlue : colors.deepGreen;
+  const spine = swept ? colors.brandBlue : colors.deepGreen;
+  const headlineColor = swept ? colors.blueText : colors.greenText;
   const reason = decision.reasons[0]?.text ?? '';
+
+  const accessibilityLabel = `${headline} on ${formatDateShort(decision.date)}. Tap to explain.`;
+
+  if (dense) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel}
+        onPress={() => onPress(decision)}
+        style={({ pressed }) => [styles.row, { borderLeftColor: spine }, pressed && styles.pressed]}
+      >
+        <Text style={styles.rowDate}>{formatDateShort(decision.date)}</Text>
+        <Text style={[styles.rowHeadline, { color: headlineColor }]} numberOfLines={1}>
+          {headline}
+        </Text>
+      </Pressable>
+    );
+  }
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${headline} on ${formatDateShort(decision.date)}. Tap to explain.`}
+      accessibilityLabel={accessibilityLabel}
       onPress={() => onPress(decision)}
-      style={({ pressed }) => [styles.card, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.card, { borderLeftColor: spine }, pressed && styles.pressed]}
     >
       <View style={styles.header}>
-        {/* The accent bar from the reference cards — a divider, not a progress indicator. */}
-        <View style={[styles.accent, { backgroundColor: accent }]} />
         <Text style={styles.date}>{formatDateShort(decision.date)}</Text>
       </View>
 
-      <Text style={[styles.headline, { color: swept ? colors.blueText : colors.greenText }]}>
-        {headline}
-      </Text>
+      <Text style={[styles.headline, { color: headlineColor }]}>{headline}</Text>
 
       {reason !== '' && (
         <Text style={styles.reason} numberOfLines={2}>
@@ -96,10 +133,15 @@ export function DecisionFeedItem({ decision, onPress, onAttest }: Props) {
   );
 }
 
+/** The width of the outcome spine. Wide enough to read as a colour, narrow enough not to read as
+ *  a second column. */
+const SPINE = 4;
+
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.card,
+    borderLeftWidth: SPINE,
     padding: space.lg,
     marginBottom: space.md,
     minHeight: MIN_TAP_TARGET,
@@ -112,10 +154,28 @@ const styles = StyleSheet.create({
     gap: space.sm,
     marginBottom: space.sm,
   },
-  accent: { width: 28, height: 4, borderRadius: 2 },
   date: { ...type.label },
   headline: { ...type.heading, marginBottom: space.xs },
   reason: { ...type.small },
+
+  // The dense row. No shadow: a stack of eighty-seven lifted cards is the crowding this exists to
+  // fix. White on the page's faint blue cast separates it perfectly well (see `theme.ts`), and the
+  // 4px gap is what makes the run read as one list rather than one block.
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.md,
+    backgroundColor: colors.card,
+    borderRadius: radius.row,
+    borderLeftWidth: SPINE,
+    paddingHorizontal: space.md,
+    minHeight: MIN_TAP_TARGET,
+    marginBottom: space.xs,
+  },
+  // A fixed width, so the outcomes line up in a column instead of ragging off each date's length.
+  rowDate: { ...type.label, width: 52 },
+  rowHeadline: { ...type.small, fontWeight: '600', flex: 1 },
+
   cta: {
     marginTop: space.md,
     minHeight: MIN_TAP_TARGET,

@@ -3212,3 +3212,59 @@ every future re-seed breaks the public demo the same way and gives no signal tha
 gate firing first. With the mask gone, `cadence_hold` rose 67 → 89 across the two affected
 households — expected, but it means the demo now leans on the cadence explanation harder than anyone
 has reviewed it doing.
+
+## 2026-07-29 — the decisions feed, folded (and the dash that was never a dash)
+
+Three UI changes to the Decisions tab, asked for together because they are the same complaint: the
+feed was loud.
+
+**The "stray dash" was the accent bar.** `DecisionFeedItem` drew a 28×4 rounded rect inline before
+the date, and at that size, on that baseline, it reads as punctuation — a dash in front of "May 30"
+rather than a status marker. It carried real meaning (blue = sweep, deep green = refuse), so it moved
+rather than went: the outcome colour is now a **spine down the card's leading edge**
+(`borderLeftWidth: 4`), which cannot be mistaken for a character. The dense rows carry it too, where
+it stacks into a rail you can scan without reading a word. Same two colours, same semantics — the
+theme's "a refusal is never red" rule is untouched.
+
+**The feed keeps three days and folds the rest.** `PREVIEW_COUNT = 3` full cards; everything earlier
+sits behind a disclosure that names what it is holding back ("Show 87 earlier decisions / 25 payments
+· 62 no-payment days"), and unfolds into one-line rows rather than more cards. The tally is derived
+from the hidden slice, not read off `summary`, which counts the whole window including the three
+still on screen.
+
+The one rule worth knowing: **a day carrying a coverage refusal is never compacted**, because its
+"Confirm your cards" CTA is the household's only route into Attest and a one-line row has nowhere to
+put it. `compact` is a request, not a command (`DecisionFeedItem`), and there is a test for it.
+
+**Tradeoff, measured not guessed: the collapsed feed is shorter than a phone screen, so the sticky
+paydown bar no longer appears in the default state.** Measured in Expo web at 420×880: collapsed
+content is 980px against a 791px viewport, giving 189px of scroll, and the hero's bottom edge is at
+~370px. So the bar cannot trigger until you expand. That is arguably correct — the bar exists to keep
+"how far down is the card" on screen when the hero is *not*, and with a feed this short the hero is
+essentially always in view — but it does mean the feature now fires only on the expanded feed.
+`PREVIEW_COUNT` is the knob if that turns out to be the wrong call; note that any value that
+"guarantees" the bar appears is really tuned to one screen height.
+
+**The summary bar animates in and out.** Measured, not assumed: entering, it goes opacity 0 →
+0.91 → 0.99 → 1 with translateY -94 → -8.1 → -1.4 → 0 (its own **measured** height, so it starts
+exactly off screen); leaving, 1 → 0.9 → 0.71 → 0.13 with translateY 0 → -9 → -28 → -81, then it
+unmounts. Asymmetric durations (260ms in, 170ms out) — arriving is the moment worth watching, leaving
+is housekeeping. Native driver everywhere but web, where there is no native animated module.
+
+`collapsed` (should it be there) and `barPresent` (is it still mounted) are deliberately two pieces
+of state: unmounting on `collapsed === false` snaps the bar out mid-fade, which is the pop this
+replaces. The hero's paydown bar also grows from empty on mount (900ms), and the sticky copy
+deliberately does **not** — it remounts on every scroll past the hero, and a flourish you sit through
+every time is not a flourish.
+
+**A test was written, failed honestly, and was deleted.** Two attempts to assert "the bar lingers
+while it fades" both measured the harness rather than the screen: on real timers, "still present one
+line later" failed ~1 run in 3 under load (the animation genuinely had finished); on fake timers,
+`Animated` advances correctly in isolation but the bar could not be queried mid-flight through the
+renderer. What survives is a `waitFor` on its disappearance, which fails loudly if it ever stops
+animating out at all — plus the browser measurements above. The gap is documented in
+`Dashboard.scroll.test.tsx` rather than papered over.
+
+**Pre-existing, not introduced, not fixed:** Expo web logs `<button> cannot contain a nested
+<button>` for the Attest CTA nested inside the card's `Pressable`. That structure predates this
+change. Worth a ticket.
