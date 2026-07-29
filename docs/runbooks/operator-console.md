@@ -75,6 +75,22 @@ the operator name (`operator` unless you set `OPERATOR_USER`) and `OPERATOR_PASS
 password returns to the form; a correct one drops a signed, HTTP-only cookie good for 8 hours and
 lands you on the household list. **Sign out** is in the top-right.
 
+### Light or dark
+
+Next to your operator name: **Auto · Light · Dark**. *Auto* is the default and follows the
+operating system (`prefers-color-scheme`); *Light* and *Dark* pin the console regardless of what
+the rest of your desktop is doing, in an `op_theme` cookie that lasts a year. Plain form posts —
+the console ships no JavaScript, and a god-mode tool is not where to start.
+
+Both palettes are held to **WCAG AA (4.5:1) on every text pair** by
+`tests/test_operator_theme.py`, which reads the stylesheet and does the arithmetic. That test runs
+without a database, on purpose. It exists because the light palette had shipped since the console
+was written and had never been measured: `--muted` — which carries nearly every label, table
+header and timestamp on the page — sat at **3.09:1** on white, and white-on-`--hold` in *dark*
+(the "Money movement is halted" banner, the most safety-critical line in the console) sat at
+**2.42:1**. Both are fixed; `--hold-deep` now backs the solid fills so `--hold` can stay a text
+color. **Do not hand-tune a color in `backend/operator.css` without re-running that file.**
+
 ## [4] Look up a household
 
 The dashboard lists **every** household with, per row: its id, its label, a `demo` tag if it is a
@@ -152,7 +168,8 @@ export OPERATOR_PORT=8787                        # optional
 
 ## Where it lives
 
-- App + auth + rendering: `backend/operator.py` (stylesheet: `backend/operator.css`).
+- App + auth + rendering: `backend/operator.py` (stylesheet: `backend/operator.css`; the two
+  palettes and the `Auto/Light/Dark` control are `tests/test_operator_theme.py`).
 - Audit table: migration `alembic/versions/0016_operator_actions.py`.
 - Tests: `tests/test_operator.py` (the gate, the trace fidelity, pause-really-refuses, halt-derived,
   append-only). Run: `.venv/bin/python -m pytest tests/test_operator.py`.

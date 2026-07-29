@@ -54,6 +54,15 @@ from backend.trace import BLOCK, PASS, DecisionTrace, GateStep, trace
 COOKIE = "op_session"
 SESSION_TTL_SECONDS = 8 * 3600
 
+THEME_COOKIE = "op_theme"
+THEME_TTL_SECONDS = 365 * 24 * 3600
+#: The only two values that may ever reach `<html data-theme=…>`. Absent means "Auto" — no
+#: attribute at all, so `prefers-color-scheme` decides. Validated on the way in *and* on the way
+#: out: the cookie is attacker-controllable in a way the session token is not (it is unsigned, so
+#: that a preference survives a signing-secret rotation), and it is interpolated into an HTML
+#: attribute. An allowlist is the only safe shape.
+THEMES = ("light", "dark")
+
 
 class OperatorNotConfigured(RuntimeError):
     """`OPERATOR_PASSWORD` is unset. Raised at startup, never per-request — the same
@@ -118,6 +127,26 @@ def _session_user(request: Request) -> str | None:
     except ValueError:
         return None
     return user
+
+
+def _session_theme(request: Request) -> str | None:
+    """The pinned theme, or `None` for Auto. Anything unrecognised is Auto."""
+    theme = request.cookies.get(THEME_COOKIE)
+    return theme if theme in THEMES else None
+
+
+def _safe_next(target: str) -> str:
+    """A local path to return to, or `/`.
+
+    `next` arrives from a form field, so it is attacker-controllable via a crafted link. An
+    operator console that forwards to an off-site page is a phishing primitive — the operator is
+    one bounce from a convincing fake of this very login form, and this login form is god-mode.
+    So: one leading slash, no second slash or backslash (`//host` and `/\\host` are both
+    protocol-relative to a browser), and no scheme.
+    """
+    if not target.startswith("/") or target.startswith(("//", "/\\")):
+        return "/"
+    return target
 
 
 def _check_login(user: str, password: str) -> bool:
@@ -444,26 +473,62 @@ def recent_actions(engine: Engine, limit: int = 25) -> list[OperatorAction]:
 # --- rendering -----------------------------------------------------------------------
 
 
-def _page(title: str, body: str, *, user: str | None = None, halted: bool = False) -> str:
+def _theme_picker(theme: str | None, path: str) -> str:
+    """Auto / Light / Dark, as three submit buttons in one form.
+
+    Three states rather than a two-way toggle because the server cannot see the operating
+    system's preference — a toggle would have to guess what it is currently flipping away from,
+    and guess wrong half the time. Plain form posts, no JavaScript.
+    """
+    choices = (
+        ("system", "Auto", theme is None),
+        ("light", "Light", theme == "light"),
+        ("dark", "Dark", theme == "dark"),
+    )
+    buttons = "".join(
+        f'<button class="tbtn{" on" if on else ""}" name="to" value="{value}"'
+        f"{' aria-current=true' if on else ''}>{label}</button>"
+        for value, label, on in choices
+    )
+    return (
+        '<form method="post" action="/theme" class="theme" aria-label="Color theme">'
+        f'<input type="hidden" name="next" value="{html.escape(_safe_next(path), quote=True)}">'
+        f"{buttons}</form>"
+    )
+
+
+def _page(
+    title: str,
+    body: str,
+    *,
+    user: str | None = None,
+    halted: bool = False,
+    theme: str | None = None,
+    path: str = "/",
+) -> str:
     chrome = ""
     if user is not None:
         strip = '<div class="haltstrip">Money movement is halted</div>' if halted else ""
         chrome = (
             '<div class="topbar"><a class="brand" href="/">CFO&nbsp;·&nbsp;Operator</a>'
             f'<span class="who">{html.escape(user)}'
+            f"{_theme_picker(theme, path)}"
             '<form method="post" action="/logout" class="inline">'
             '<button class="linkbtn" type="submit">sign out</button></form></span></div>'
             f"{strip}"
         )
+    # Re-validated here rather than trusted from the caller: this is the single point where the
+    # value becomes markup, so it is the one place the allowlist has to hold.
+    attr = f' data-theme="{theme}"' if theme in THEMES else ""
     return (
-        f"<!doctype html><html lang=en><head><meta charset=utf-8>"
+        f"<!doctype html><html lang=en{attr}><head><meta charset=utf-8>"
         f"<meta name=viewport content='width=device-width, initial-scale=1'>"
         f"<title>{html.escape(title)}</title><style>{CSS}</style></head><body>"
         f"{chrome}<main class=wrap>{body}</main></body></html>"
     )
 
 
-def _login_page(error: str | None = None) -> str:
+def _login_page(error: str | None = None, theme: str | None = None) -> str:
     err = f'<p class="err">{html.escape(error)}</p>' if error else ""
     body = (
         '<section class="login">'
@@ -479,7 +544,7 @@ def _login_page(error: str | None = None) -> str:
         '<button class="primary" type="submit">Enter</button>'
         "</form></section>"
     )
-    return _page("Operator · sign in", body)
+    return _page("Operator · sign in", body, theme=theme)
 
 
 def _badge(status: HouseholdStatus) -> str:
@@ -522,7 +587,11 @@ def _audit_html(actions: list[OperatorAction]) -> str:
 
 
 def _dashboard(
-    rows: list[HouseholdStatus], user: str, halted: bool, actions: list[OperatorAction]
+    rows: list[HouseholdStatus],
+    user: str,
+    halted: bool,
+    actions: list[OperatorAction],
+    theme: str | None = None,
 ) -> str:
     items = ""
     for s in rows:
@@ -546,7 +615,7 @@ def _dashboard(
         "<h2>Recent operator actions</h2>"
         f"{_audit_html(actions)}"
     )
-    return _page("Operator · households", body, user=user, halted=halted)
+    return _page("Operator · households", body, user=user, halted=halted, theme=theme, path="/")
 
 
 def _pill_class(step: GateStep) -> tuple[str, str]:
@@ -667,6 +736,7 @@ def _household_page(
     open_day: str | None,
     halted: bool = False,
     facts: AccountFacts | None = None,
+    theme: str | None = None,
 ) -> str:
     s = detail.status
     # A pause writes a contiguous forward window; a full date dump would flood the page, so show the
@@ -733,7 +803,9 @@ def _household_page(
         f'<section class="col wide">{tracepanel or empty_panel}</section>'
         "</div>"
     )
-    return _page(f"Operator · {s.id}", body, user=user, halted=halted)
+    # So that picking a theme keeps you on the decision you were reading, not just the household.
+    here = f"/household/{s.id}" + (f"/decision/{open_day}" if open_day else "")
+    return _page(f"Operator · {s.id}", body, user=user, halted=halted, theme=theme, path=here)
 
 
 # --- app -----------------------------------------------------------------------------
@@ -753,7 +825,7 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
     async def login_form(request: Request) -> HTMLResponse:
         if require(request):
             return RedirectResponse("/", status_code=303)
-        return HTMLResponse(_login_page())
+        return HTMLResponse(_login_page(theme=_session_theme(request)))
 
     @app.post("/login")
     async def login(request: Request) -> object:
@@ -763,7 +835,10 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         user = form.get("user", [""])[0]
         password = form.get("password", [""])[0]
         if not _check_login(user, password):
-            return HTMLResponse(_login_page("Wrong operator or password."), status_code=401)
+            return HTMLResponse(
+                _login_page("Wrong operator or password.", _session_theme(request)),
+                status_code=401,
+            )
         resp = RedirectResponse("/", status_code=303)
         resp.set_cookie(
             COOKIE,
@@ -780,6 +855,26 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         resp.delete_cookie(COOKIE)
         return resp
 
+    @app.post("/theme")
+    async def theme(request: Request) -> object:
+        """Pin Light or Dark, or clear the pin back to Auto. Behind the gate like everything
+        else, and it never touches `operator_actions` — a color preference is not an override."""
+        if not require(request):
+            return RedirectResponse("/login", status_code=303)
+        form = urllib.parse.parse_qs((await request.body()).decode("utf-8", "replace"))
+        want = form.get("to", [""])[0]
+        if want not in (*THEMES, "system"):
+            return HTMLResponse("Unknown theme.", status_code=400)
+        resp = RedirectResponse(_safe_next(form.get("next", ["/"])[0]), status_code=303)
+        if want == "system":
+            resp.delete_cookie(THEME_COOKIE)
+        else:
+            # Not `httponly`: this one is a display preference, and leaving it readable means a
+            # future client-side enhancement needs no second source of truth. Nothing is
+            # authorised by it — `_page` allowlists the value before it becomes markup.
+            resp.set_cookie(THEME_COOKIE, want, max_age=THEME_TTL_SECONDS, samesite="lax")
+        return resp
+
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request) -> object:
         user = require(request)
@@ -787,7 +882,13 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
             return RedirectResponse("/login", status_code=303)
         eng = app.state.engine
         return HTMLResponse(
-            _dashboard(list_status(eng), user, is_globally_halted(eng), recent_actions(eng))
+            _dashboard(
+                list_status(eng),
+                user,
+                is_globally_halted(eng),
+                recent_actions(eng),
+                _session_theme(request),
+            )
         )
 
     @app.get("/household/{household_id}", response_class=HTMLResponse)
@@ -799,9 +900,19 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         detail = household_detail(eng, household_id)
         if detail is None:
             return HTMLResponse(
-                _page("Not found", "<h1>No such household</h1>", user=user), status_code=404
+                _page(
+                    "Not found",
+                    "<h1>No such household</h1>",
+                    user=user,
+                    theme=_session_theme(request),
+                ),
+                status_code=404,
             )
-        return HTMLResponse(_household_page(detail, user, None, None, is_globally_halted(eng)))
+        return HTMLResponse(
+            _household_page(
+                detail, user, None, None, is_globally_halted(eng), theme=_session_theme(request)
+            )
+        )
 
     @app.get("/household/{household_id}/decision/{day}", response_class=HTMLResponse)
     async def decision(request: Request, household_id: str, day: str) -> object:
@@ -812,15 +923,28 @@ def create_operator_app(engine: Engine | None = None) -> FastAPI:
         detail = household_detail(eng, household_id)
         if detail is None:
             return HTMLResponse(
-                _page("Not found", "<h1>No such household</h1>", user=user), status_code=404
+                _page(
+                    "Not found",
+                    "<h1>No such household</h1>",
+                    user=user,
+                    theme=_session_theme(request),
+                ),
+                status_code=404,
             )
         try:
             parsed = date.fromisoformat(day)
         except ValueError:
-            return HTMLResponse(_page("Bad date", "<h1>Bad date</h1>", user=user), status_code=400)
+            return HTMLResponse(
+                _page("Bad date", "<h1>Bad date</h1>", user=user, theme=_session_theme(request)),
+                status_code=400,
+            )
         t = decision_trace(eng, household_id, parsed)
         facts = account_facts(eng, household_id, parsed)
-        return HTMLResponse(_household_page(detail, user, t, day, is_globally_halted(eng), facts))
+        return HTMLResponse(
+            _household_page(
+                detail, user, t, day, is_globally_halted(eng), facts, theme=_session_theme(request)
+            )
+        )
 
     # --- overrides (writes) ---------------------------------------------------------
     # No CSRF token: this is a single-operator, same-origin local tool behind a god-mode password.
