@@ -1,18 +1,43 @@
+/* Two palettes and three ways to land on one of them: Auto (the operating system decides), or an
+   explicit Light / Dark pinned in the `op_theme` cookie and echoed onto the root data-theme.
+
+   Dark is the `:root` default, so an explicit Dark pick needs no rule of its own — it simply
+   stops the light media query from applying. That is what `:not([data-theme])` is for: without
+   it, choosing Dark on a light-mode Mac would do nothing, because a media query and a plain
+   `:root` have the same specificity and the later rule would keep winning.
+
+   The light block is therefore spelled twice, once per entry point. `tests/test_operator_theme.py`
+   asserts the two copies never drift apart, and holds every text pair in *both* palettes to WCAG
+   AA. That test is why these numbers changed: the light block shipped for months rendering its
+   own labels at 3.09:1, because nothing had ever measured it. Do not hand-tune a value here
+   without re-running that file. */
 :root{
   --ground:#0C181D;--surface:#12232A;--surface-2:#162A32;--border:#24393F;
   /* Text neutrals mapped to Tailwind slate levels (faint teal bias kept): primary at slate-100,
      body at slate-200, muted at slate-400. */
   --ink:#F1F6F8;--body:#DBE6E9;--muted:#94A7AC;
   --sweep:#37C193;--sweep-deep:#0C7F63;--hold:#4FB3CD;--hold-wash:#123039;--sweep-wash:#12312A;
+  /* `--hold` is a text color and cannot also be a fill: white on it measured 2.42:1, which made
+     the halt banner — the one line that says money movement is stopped — the least readable
+     thing on the page. `--hold-deep` is the fill, mirroring `--sweep`/`--sweep-deep`. */
+  --hold-deep:#1A6C86;
   --pass:#6FB89E;--accent:#4AAFC9;
   --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:dark;
 }
 @media (prefers-color-scheme:light){
-  :root{--ground:#EEF3F5;--surface:#FFFFFF;--surface-2:#F6F9FA;--border:#DDE7EB;
-    --ink:#16202A;--body:#51636E;--muted:#8595A0;--sweep:#1D9E75;--sweep-deep:#085041;
-    --hold:#217E96;--hold-wash:#E8F2F5;--sweep-wash:#E9F6F1;--pass:#5C9A82;--accent:#217E96;}
+  :root:not([data-theme]){--ground:#EEF3F5;--surface:#FFFFFF;--surface-2:#F6F9FA;--border:#DDE7EB;
+    --ink:#16202A;--body:#51636E;--muted:#5F6F7A;--sweep:#177C5C;--sweep-deep:#085041;
+    --hold:#1F758C;--hold-deep:#175E75;--hold-wash:#E8F2F5;--sweep-wash:#E9F6F1;--pass:#477664;
+    --accent:#1F758C;
+    color-scheme:light;}
 }
+:root[data-theme="light"]{--ground:#EEF3F5;--surface:#FFFFFF;--surface-2:#F6F9FA;--border:#DDE7EB;
+  --ink:#16202A;--body:#51636E;--muted:#5F6F7A;--sweep:#177C5C;--sweep-deep:#085041;
+  --hold:#1F758C;--hold-deep:#175E75;--hold-wash:#E8F2F5;--sweep-wash:#E9F6F1;--pass:#477664;
+  --accent:#1F758C;
+  color-scheme:light;}
 *{box-sizing:border-box;}
 body{margin:0;background:var(--ground);color:var(--body);font-family:var(--sans);font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;}
 a{color:inherit;text-decoration:none;}
@@ -20,6 +45,17 @@ code{font-family:var(--mono);}
 .topbar{display:flex;align-items:center;justify-content:space-between;padding:.7rem 1.2rem;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:5;}
 .brand{font-weight:700;color:var(--ink);letter-spacing:.02em;}
 .who{font-size:.85rem;color:var(--muted);display:flex;align-items:center;gap:.7rem;}
+/* theme picker — a segmented control of three plain submit buttons, no JavaScript. The console
+   renders server-side and holds god-mode access; it is not the place to start shipping script. */
+.theme{display:flex;margin:0;border:1px solid var(--border);border-radius:999px;overflow:hidden;}
+.tbtn{font:inherit;font-size:.7rem;font-weight:600;letter-spacing:.03em;padding:.2rem .55rem;
+  border:none;background:none;color:var(--muted);cursor:pointer;}
+.tbtn:hover{color:var(--ink);}
+.tbtn.on{background:var(--surface-2);color:var(--ink);}
+.tbtn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;}
+/* Deliberately not hidden on narrow screens: this is the only way to reach a readable theme, so
+   the topbar wraps instead. */
+@media (max-width:600px){.topbar{flex-wrap:wrap;gap:.5rem;}}
 .inline{display:inline;margin:0;}
 .linkbtn{background:none;border:none;color:var(--accent);cursor:pointer;font:inherit;padding:0;}
 .wrap{max-width:1080px;margin:0 auto;padding:clamp(1.2rem,3vw,2.2rem) clamp(1rem,3vw,1.6rem) 3rem;}
@@ -76,7 +112,7 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mut
 .tphead h2{margin:0;}
 .tpout{font-family:var(--mono);font-size:.8rem;font-weight:600;padding:.2rem .5rem;border-radius:999px;color:#fff;}
 .tpout.sweep{background:var(--sweep-deep);}
-.tpout.refuse{background:var(--hold);}
+.tpout.refuse{background:var(--hold-deep);}
 .steps{list-style:none;margin:0;padding:0;}
 .step{padding:.75rem .2rem;border-bottom:1px solid var(--border);}
 .step:last-child{border-bottom:none;}
@@ -109,13 +145,13 @@ h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.08em;color:var(--mut
 @media (max-width:720px){.cols{grid-template-columns:1fr;}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;}}
 /* overrides: halt + pause + audit */
-.haltstrip{background:var(--hold);color:#fff;text-align:center;padding:.4rem;font-size:.8rem;font-weight:600;letter-spacing:.04em;}
+.haltstrip{background:var(--hold-deep);color:#fff;text-align:center;padding:.4rem;font-size:.8rem;font-weight:600;letter-spacing:.04em;}
 .haltcard{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.1rem;border-radius:12px;border:1px solid var(--border);background:var(--surface);margin-bottom:1.2rem;}
 .haltcard.on{border-color:color-mix(in srgb,var(--hold) 45%,transparent);background:var(--hold-wash);}
 .haltcard .hstatus{font-weight:700;color:var(--ink);font-size:.95rem;}
 .haltcard p{margin:.2rem 0 0;font-size:.82rem;color:var(--muted);max-width:52ch;}
 .btn{font:inherit;font-size:.82rem;font-weight:600;padding:.5rem .9rem;border-radius:8px;border:1px solid transparent;cursor:pointer;white-space:nowrap;}
-.btn.halt{background:var(--hold);color:#fff;}
+.btn.halt{background:var(--hold-deep);color:#fff;}
 .btn.resume{background:var(--sweep-deep);color:#fff;}
 .pausebox{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:.85rem 1rem;border-radius:11px;border:1px solid var(--border);background:var(--surface);margin-bottom:1.3rem;}
 .pausebox.paused{border-color:color-mix(in srgb,var(--hold) 40%,transparent);background:var(--hold-wash);}
