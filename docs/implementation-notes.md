@@ -3212,3 +3212,52 @@ every future re-seed breaks the public demo the same way and gives no signal tha
 gate firing first. With the mask gone, `cadence_hold` rose 67 → 89 across the two affected
 households — expected, but it means the demo now leans on the cadence explanation harder than anyone
 has reviewed it doing.
+
+## 2026-07-29 — the operator console's light theme, which already existed and could not be reached
+
+Asked for "a light theme for the operator console." One was already there — a
+`@media (prefers-color-scheme:light)` block in `backend/operator.css`, written when the console was
+and never touched since. Two things were wrong with it, and only the first is the one you notice.
+
+**It was unreachable.** It applied only if the whole operating system was in light mode. There was
+no way to ask for it. So the console now carries an **Auto · Light · Dark** control in the topbar,
+backed by an `op_theme` cookie and echoed onto `<html data-theme>`. Three states rather than a
+two-way toggle because the server cannot see the OS preference — a toggle would have to guess what
+it is flipping away from and would guess wrong half the time. No JavaScript: three submit buttons
+in one form. A god-mode console is not where to start shipping script.
+
+**It had never been measured.** Every foreground/background pair, computed: `--muted` — which
+carries nearly every label, table header and timestamp — was at **3.09:1** on white against a 4.5
+bar. `--sweep` 3.39, `--pass` 3.28, `hold on hold-wash` 4.11. Dark's worst pair was 5.75, so this
+was light-specific: commit `002a962` brightened the dark neutrals to slate-400 and left light
+behind. New values were solved for, not eyeballed — walk HLS lightness down until the pair clears
+4.6 against every background it is drawn on.
+
+**The test found a dark-mode defect too, which is why it covers both palettes.** White on `--hold`
+measured **2.42:1**. `--hold` is the fill behind `.haltstrip` — "Money movement is halted", the
+most safety-critical line in the console, and the least readable thing on the page. The cause is
+structural: one variable was doing duty as both a *text* color on dark surfaces and a *fill* behind
+white text, and no single color can be both. Hence `--hold-deep`, mirroring the `--sweep` /
+`--sweep-deep` split that already existed. `.haltstrip`, `.btn.halt` and `.tpout.refuse` moved to it.
+
+**`tests/test_operator_theme.py` deliberately does not require a database.** It reads the
+stylesheet and does arithmetic. Legibility is not a property of Postgres, and the repo's
+no-database lane already skips 139 tests — putting it behind `requires_db` would mean CI quietly
+stops checking the thing that just broke.
+
+**Two of my own assertions were wrong and are worth remembering.** `assert "data-theme" not in
+body` passes trivially — `_page` inlines the whole stylesheet into every document, and the
+stylesheet now contains `data-theme` in its own selectors. The assertion has to be scoped to the
+opening `<html>` tag. Likewise `assert "script" not in body` matched the word "script" in a CSS
+comment. Both were the test lying green in the wrong direction, caught only because they failed
+first for an unrelated reason.
+
+**Verification note.** Pixel-sampling the rendered PNGs gave colors matching nothing in either
+palette — the coordinates were landing off-target, not the CSS being wrong. What settled it was
+`--dump-dom` against headless Chrome with a script writing `getComputedStyle` into an attribute:
+light resolves `--hold-deep` to `rgb(23,94,117)` and dark to `rgb(26,108,134)`, both exact. Sampled
+pixels are a guess about geometry; computed styles are the browser's own answer.
+
+**Not done:** `--accent` and `--hold` are the same color in light (`#1F758C`), as they were before
+(`#217E96`). That is inherited, not chosen, and if the two ever need to differ it is a real design
+question rather than a contrast one.
