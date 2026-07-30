@@ -221,6 +221,37 @@ class TestPayroll:
 
         assert january == [15, 31]
 
+    def test_pay_stops_after_last_payday(self) -> None:
+        """A household whose income stops — laid off, contract ended, hours cut to nothing.
+
+        The interesting case for the engine is not "no income"; it is income that *was* there and
+        then was not, because that is the household whose balance looks healthy right up until it
+        does not. Without a `last_payday` the sim can only describe someone paid forever, so this
+        household could not be built at all.
+        """
+        h = history(
+            payroll=PayrollSpec(
+                net_pay=money("2600.00"),
+                cadence=PayCadence.BIWEEKLY,
+                first_payday=date(2026, 1, 2),
+                last_payday=date(2026, 3, 13),
+                variation=Decimal("0.00"),
+            )
+        )
+        paydays = [t.day for t in h.txns if t.kind is TxnKind.PAYROLL]
+
+        # Income must exist before it stops, or this is a household never paid — a different thing.
+        assert paydays
+        assert max(paydays) <= date(2026, 3, 13)
+        # ...and the window genuinely continues past the last cheque, so the drawdown is visible.
+        assert max(t.day for t in h.txns) > date(2026, 3, 13)
+
+    def test_no_last_payday_means_paid_for_the_whole_window(self) -> None:
+        """The default must not change any existing household: `None` is 'paid throughout'."""
+        paydays = [t.day for t in history().txns if t.kind is TxnKind.PAYROLL]
+
+        assert max(paydays) > date(2026, 6, 1)
+
     def test_pay_varies_around_the_stated_net(self) -> None:
         pay = [t.amount for t in history().txns if t.kind is TxnKind.PAYROLL]
 

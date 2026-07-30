@@ -107,6 +107,10 @@ _LABELS = {
     "semimonthly_portfolio": "Semimonthly, three cards",
     "monthly_thin": "Monthly, two cards",
     "apr_unreported": "Biweekly, two cards, rates unknown",
+    # Names the *event*, not the shape, for the same reason `_LINKED_DEMO_LABEL` does: this
+    # household's cards and calendar are unremarkable, and its whole distinction is that the income
+    # ended partway through the window. "Biweekly, one card" would be true and would hide the point.
+    "income_stopped": "Biweekly, then paychecks stopped",
 }
 
 # The imported-Plaid demo household. The other four labels name a *shape* (cadence, card count)
