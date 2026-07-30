@@ -101,12 +101,26 @@ class PayrollSpec:
     # Standard deviation of net pay, as a fraction of it. A salaried W2 is ~0.02 (a little
     # overtime, a benefits change); a shift worker is far higher.
     variation: Decimal = ZERO
+    # The last day income arrives, if it stops: laid off, contract ended, hours cut to nothing.
+    # `None` — the default — means paid for the whole window, which is what every household
+    # written before this field assumed, so adding it changes none of them.
+    #
+    # This exists because "no income" and "income that stopped" are different households, and only
+    # the second one is interesting: their balance looks healthy right up until it doesn't, and the
+    # forecast is the only thing that sees it coming. A spec that can only describe someone paid
+    # forever cannot express the case the engine most needs to get right.
+    last_payday: date | None = None
 
     def __post_init__(self) -> None:
         if self.variation < ZERO:
             raise ValueError(f"variation={self.variation} cannot be negative")
         if self.net_pay < ZERO:
             raise ValueError(f"net_pay={self.net_pay} cannot be negative")
+        if self.last_payday is not None and self.last_payday < self.first_payday:
+            raise ValueError(
+                f"last_payday={self.last_payday} precedes first_payday={self.first_payday} — "
+                "that is a household that was never paid, not one whose pay stopped"
+            )
 
 
 @dataclass(frozen=True)
@@ -372,6 +386,12 @@ class History:
 
 
 def _paydays(payroll: PayrollSpec, start: date, through: date) -> Iterator[date]:
+    # `last_payday` is applied by pulling in the horizon every branch already respects, rather than
+    # by filtering each one. Each cadence has its own generator, and three copies of the same
+    # comparison is three places for them to disagree the day a fourth cadence is added.
+    if payroll.last_payday is not None and payroll.last_payday < through:
+        through = payroll.last_payday
+
     if payroll.cadence is PayCadence.SEMIMONTHLY:
         yield from _semimonthly(payroll.first_payday, through)
         return

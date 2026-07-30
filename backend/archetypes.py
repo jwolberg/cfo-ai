@@ -234,6 +234,76 @@ apr_unreported = HouseholdSpec(
 )
 
 
+# --- E — the paychecks stopped --------------------------------------------------------
+#
+# The household every other archetype assumes away: one whose income **ended mid-window.** Paid
+# normally through the first stretch of the served window, then nothing.
+#
+# **Why this is the archetype worth adding.** A/B/C/D all vary the *calendar* or the *cards* while
+# holding a stable W2 constant, so every one of them exercises the engine on a household whose
+# forecast is fundamentally sound. This one breaks that assumption, and it is the case where being
+# wrong costs the household the most: their balance looks fine for weeks after the money stops, so
+# a system that sweeps on the balance keeps sweeping right up to the overdraft. The 30-day
+# projection is the only thing that sees it coming, and this is the household that prices whether
+# it actually does.
+#
+# `last_payday` lands on **2026-04-10**, a biweekly cheque ~40 days into the 90-day served window
+# (`2026-03-02`..`2026-05-30`). That split is deliberate: enough paid days first that the feed shows
+# the engine working normally, then ~50 unpaid days for the drawdown to become visible. A stop
+# before the served window would just be a household with no income — a different and much less
+# interesting thing, since nothing changes.
+#
+# The opening balance is DEMO_SPEC's, and the card is a single revolver: the story here is the
+# income, so nothing else should be unusual enough to compete for the explanation.
+#
+# **The card opens at $12,000, and that number was measured rather than picked.** At DEMO_SPEC's
+# $7,400 the sweeps plus the household's own payments retire the card almost entirely before the
+# income stops — debt runs $7,191 -> $857 by the last payday and ends at $376, a 95% paydown. That
+# makes an incoherent screen: the hero celebrates all-but-finished while every card in the feed says
+# `no_surplus`. At $12,000 the same walk leaves $5,767 owing on the last payday and $5,448 at the
+# end — 55% down, still plainly mid-journey, and the debt visibly *stops moving* once the money
+# stops. Measured at $16,000 too (39%); $12,000 reads as in-progress without burying the paydown.
+#
+# **`payment` must be checked against the monthly interest, not chosen for its own sake.** This card
+# first shipped at $250/mo, and that is a bug worth recording because nothing about it looks wrong:
+# $12,000 at 23.99% accrues ~$239.90 a month, so $250 sends **$10** to principal. The counterfactual
+# in `engine/interest.py` — "what does this card cost if they keep paying what they pay" — then runs
+# for decades, and a single $1,600 sweep claimed **$10,590** of avoided interest on a $12,000 card.
+# The engine was right; the household was mis-specified. `claimable_interest_avoided` only declines
+# when payments do not cover interest *at all*, so a card that barely amortizes slips past the guard
+# and produces an enormous, technically-correct, useless number.
+#
+# $400 sends ~$160.10 of every payment to principal — **40%**, against the anchor archetype's 38%
+# ($450 on $14,000). The whole-window claim falls from $13,781.79 to $6,096.76. Nothing else about
+# the household moves: still 4 sweeps, still none after the stop, still 55% down, no overdraft.
+# The rule for any future archetype: `payment` comfortably above `balance * apr / 12`, or the
+# interest-avoided figure is fiction dressed as arithmetic.
+income_stopped = HouseholdSpec(
+    opening_balance=money("3200.00"),
+    payroll=PayrollSpec(
+        net_pay=BIWEEKLY_NET,
+        cadence=PayCadence.BIWEEKLY,
+        first_payday=date(2026, 1, 2),
+        variation=Decimal("0.02"),
+        last_payday=date(2026, 4, 10),
+    ),
+    bills=DEMO_SPEC.bills,
+    spend=DEMO_SPEC.spend,
+    cards=(
+        CardSpec(
+            balance=money("12000.00"),
+            apr=Decimal("0.2399"),
+            minimum_payment=money("150.00"),
+            payment=money("400.00"),
+            payment_day_of_month=18,
+            card_id="card_e_revolver",
+            behavior=PaymentBehavior.REVOLVER,
+            close_day_of_month=18,
+        ),
+    ),
+)
+
+
 # The name is written to `households.archetype`, whose column comment says why it is nullable:
 # "Null for a real household, which is the point of recording it: synthetic and real must be
 # tellable apart in any number either one appears in."
@@ -242,4 +312,5 @@ ARCHETYPES: dict[str, HouseholdSpec] = {
     "semimonthly_portfolio": semimonthly_portfolio,
     "monthly_thin": monthly_thin,
     "apr_unreported": apr_unreported,
+    "income_stopped": income_stopped,
 }

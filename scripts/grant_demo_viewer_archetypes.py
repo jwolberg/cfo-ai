@@ -5,7 +5,7 @@ The four archetypes have been in production since 2026-07-16 with a full 90-day 
 them and the public demo opens on `hh_demo_plaid` — a linked household with no graded window, whose
 live decision is `card_behavior_unknown`. A refusal is the first and only thing a visitor sees.
 
-Three rows fix that, as `viewer`. No code, no redeploy, no bundle rebuild: `Dashboard.tsx` already
+Four rows fix that, as `viewer`. No code, no redeploy, no bundle rebuild: `Dashboard.tsx` already
 renders a seeded household through its 90-day feed and reserves the live path for linked ones.
 
 **`hh_apr_unreported` is deliberately excluded.** `readpath.list_households` orders by id and
@@ -37,7 +37,16 @@ from sqlalchemy import create_engine, text
 DEMO_EMAIL = "demo-viewer@example.com"
 
 # Sorted by id, which is the order the picker shows and the order the default is taken from.
-GRANT = ("hh_demo_biweekly", "hh_monthly_thin", "hh_semimonthly_portfolio")
+#
+# `hh_income_stopped` (archetype E, added 2026-07-29) is safe to include precisely *because* of that
+# ordering: it sorts after `hh_demo_biweekly`, so it joins the picker without becoming the default.
+# That is the same test `hh_apr_unreported` fails — it sorts first, which is why it stays out.
+GRANT = (
+    "hh_demo_biweekly",
+    "hh_income_stopped",
+    "hh_monthly_thin",
+    "hh_semimonthly_portfolio",
+)
 
 
 def main() -> None:
