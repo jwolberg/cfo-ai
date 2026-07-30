@@ -214,7 +214,7 @@ class HouseholdDetail:
     decisions: list[DecisionRow]
 
 
-def household_detail(engine: Engine, household_id: str, limit: int = 40) -> HouseholdDetail | None:
+def household_detail(engine: Engine, household_id: str) -> HouseholdDetail | None:
     with engine.connect() as conn:
         found = readpath.list_households(conn, only=[household_id])
     if not found:
@@ -224,7 +224,16 @@ def household_detail(engine: Engine, household_id: str, limit: int = 40) -> Hous
     with repository(engine, household_id) as repo:
         policy = repo.policy()
         rows = repo.decisions()
-    rows = sorted(rows, key=lambda r: r["day"], reverse=True)[:limit]
+    # **Every served day, newest first — not a window onto them.** This was capped at 40, which on a
+    # 90-day household silently ended the list in late April: the operator scrolled to the bottom,
+    # found March missing, and had no way to tell a truncated list from a household that simply had
+    # no earlier decisions. A support tool that quietly omits history is worse than a long page.
+    #
+    # Unbounded is safe *here* because `repo.decisions()` already loads the whole window regardless
+    # — the cap only ever hid rows that had been fetched anyway, so removing it costs no query time.
+    # If served windows ever grow past a few hundred days, group this by month rather than
+    # re-truncating it (see the scoping note in ticket 0070).
+    rows = sorted(rows, key=lambda r: r["day"], reverse=True)
     decisions = [
         DecisionRow(
             day=_iso(r["day"]),
