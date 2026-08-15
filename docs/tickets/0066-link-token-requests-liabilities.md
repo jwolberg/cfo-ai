@@ -2,7 +2,7 @@
 id: "0066"
 title: The Plaid Link token requests only `transactions` — so every linked card's APR, statement and minimum are estimated, not reported
 type: fix
-status: open
+status: in-progress
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent

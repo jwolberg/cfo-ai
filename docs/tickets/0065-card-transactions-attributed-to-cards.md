@@ -2,7 +2,7 @@
 id: "0065"
 title: A linked household's card transactions are never attributed to its cards — so behavior stays UNKNOWN and it can never sweep
 type: fix
-status: open
+status: in-progress
 priority: high
 repo: cfo-ai
 agentId: backend-python-agent
