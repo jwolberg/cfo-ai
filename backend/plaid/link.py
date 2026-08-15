@@ -51,10 +51,18 @@ def link_token(
 
     The token is keyed to `client_user_id = user.id` (our stable per-user id, ticket 0046), not a
     household — a household is chosen only at `/link/exchange`, from the session, so nothing here
-    can point a link at someone else's data. `products=[transactions]` matches what the sync reads
-    (`backend/plaid/sync.py`); Sandbox needs no more. Any signed-in **real** user may mint one
-    (`current_real_user` — a demo-plane identity is refused before it can burn Plaid quota, ticket
-    0058); the exchange is where ownership is enforced.
+    can point a link at someone else's data.
+
+    `products=[transactions]` matches what the sync reads (`backend/plaid/sync.py`). `liabilities`
+    is requested as an **optional** product (ticket 0066) — it is the term the payoff engine most
+    needs (a card's reported APR, statement balance and minimum), but a hard `products` entry would
+    make Link *fail* on any institution that does not support it. As optional, a supporting
+    institution consents it (and `ingest_account_state` reads the issuer's real terms), while a
+    non-supporting one still links and `ingest_account_state` degrades to balances-only — the same
+    fail-soft that has always been the only path a linked household took until now.
+
+    Any signed-in **real** user may mint one (`current_real_user` — a demo-plane identity is refused
+    before it can burn Plaid quota, ticket 0058); the exchange is where ownership is enforced.
     """
     from plaid.model.country_code import CountryCode
     from plaid.model.link_token_create_request import LinkTokenCreateRequest
@@ -66,6 +74,7 @@ def link_token(
             user=LinkTokenCreateRequestUser(client_user_id=user.id),
             client_name="cfo-ai",
             products=[Products("transactions")],
+            optional_products=[Products("liabilities")],
             country_codes=[CountryCode("US")],
             language="en",
         )

@@ -192,6 +192,44 @@ def test_link_token_is_minted_for_a_signed_in_user(client: TestClient) -> None:
     assert resp.json()["link_token"] == "link-sandbox-tok"
 
 
+class _CapturingLinkClient:
+    """A Plaid client that records the `link_token_create` request so a test can read what products
+    were actually requested — the fake above ignores the request body."""
+
+    def __init__(self) -> None:
+        self.request = None
+
+    def link_token_create(self, request):
+        self.request = request
+        return _LinkToken()
+
+
+def test_link_token_requests_liabilities_as_an_optional_product(db) -> None:
+    """Ticket 0066: the link token must request `liabilities` so a linked card's APR, statement and
+    minimum are the issuer's *reported* terms, not the engine's estimate. It is requested as an
+    *optional* product, not a hard one, so an institution that does not support liabilities still
+    links (and `ingest_account_state` degrades to balances-only)."""
+    from backend.main import app
+
+    spy = _CapturingLinkClient()
+    app.dependency_overrides[get_plaid_client] = lambda: spy
+    app.dependency_overrides[get_verifier] = _verifier
+    try:
+        with TestClient(app) as c:
+            assert c.post("/plaid/link/token", headers=_auth()).status_code == 200
+    finally:
+        app.dependency_overrides.clear()
+
+    assert spy.request is not None, "link_token_create was never called"
+    products = [str(p.value) for p in spy.request.products]
+    optional = [str(p.value) for p in getattr(spy.request, "optional_products", [])]
+    # `transactions` stays a hard requirement (the sync reads it); `liabilities` is optional so the
+    # degrade path on non-supporting institutions is preserved (AC3).
+    assert "transactions" in products
+    assert "liabilities" not in products
+    assert "liabilities" in optional
+
+
 def test_the_whole_loop_lands_a_transaction(client: TestClient, db) -> None:
     # 1 — create the household (also JIT-provisions the user on first verified session).
     created = client.post("/households", headers=_auth())

@@ -16,7 +16,7 @@ and `spec.bills` (through `derive_cash_events` — the *future* schedule the for
 
 **It produces a decision to *display*, not to move money.** A linked household today is a Plaid
 **Sandbox** one, and the payment rail is in **shadow** — so a first-cut approximation is a wrong
-*number on a screen*, never a wrong transfer. That is what makes shipping v1 honest. The two
+*number on a screen*, never a wrong transfer. That is what makes shipping v1 honest. The
 approximations are named where they live:
 
 1. **The card ledger is anchored at the current balance** (`CardSpec.balance` = today's Plaid
@@ -24,8 +24,18 @@ approximations are named where they live:
    payments and daily accrual, so the today-balance drifts from the current by at most a window of
    accrual — a display error, and one the exact-cycle *normalize* step (`architecture.md` §3.2) will
    later remove.
-2. **Unbilled card charges are not reconstructed** (no `CARD_CHARGE` txns) — the reserve covers the
-   closed statement Plaid reports, and the not-yet-billed spend is the same deferred normalize step.
+2. **Card charges and payments are observed, not billed to exact cycles** (ticket 0065). Each card
+   account's own transactions are attributed to that card as `CARD_CHARGE`/`CARD_PAYMENT`, which is
+   what the classifier needs to resolve `behavior` (revolver / transactor) and what the interest
+   model reads — but they are not reconstructed onto exact statement boundaries. That precise
+   billing is the same deferred normalize step. Before this, no card-account transactions were read
+   at all, so a linked card's `behavior` was `UNKNOWN` forever and the household could never sweep.
+3. **A card payment recorded on the card ledger is treated as a checking outflow** (`CARD_PAYMENT`
+   is a `CHECKING_KIND`). Often true — most households autopay their card from checking — but for a
+   payment funded elsewhere it is a wash at `today` (the opening balance absorbs it) with a
+   historical-only distortion the forward forecast never reads: `engine/forecast.py` projects from
+   the *current* balance and future events, and skips `CARD_PAYMENT` events outright. The bias is
+   conservative (an extra outflow lowers the projected low), which is the safe direction.
 
 When the data cannot support a decision — too little history, no depository account, no card, no
 detectable income — it raises `livepath.NoLinkedHistory` rather than inventing one. Failing to a
@@ -86,16 +96,18 @@ def build_linked_history(repo: Repository) -> History:
     if not card_accounts:
         raise NoLinkedHistory(f"{repo.household_id}: no card to decide about")
 
-    checking_id = checking["plaid_account_id"]
-    rows = [
-        r
-        for r in repo.plaid_transactions()
-        if r["plaid_account_id"] == checking_id
-        and r["amount"] is not None
-        and r["date"] is not None
+    # One read, partitioned: checking movements drive the cash forecast; each card account's own
+    # movements drive that card's observed charge/payment history (ticket 0065).
+    all_rows = [
+        r for r in repo.plaid_transactions() if r["amount"] is not None and r["date"] is not None
     ]
+    checking_id = checking["plaid_account_id"]
+    rows = [r for r in all_rows if r["plaid_account_id"] == checking_id]
     if not rows:
         raise NoLinkedHistory(f"{repo.household_id}: no checking transactions ingested")
+
+    card_ids = {a["plaid_account_id"] for a in card_accounts}
+    card_rows = [r for r in all_rows if r["plaid_account_id"] in card_ids]
 
     # Natural accounting sign (positive in, negative out) — Plaid's convention is the opposite, so
     # every amount flips on the way in (the discipline `backend/recurring.py` documents).
@@ -118,18 +130,25 @@ def build_linked_history(repo: Repository) -> History:
     cards = tuple(_card_spec(a, liabilities.get(a["plaid_account_id"])) for a in card_accounts)
     bills = _bills(streams)
 
-    # The card a card-shaped payment pays down. v1 holds one card; with several, the payment goes to
-    # the first — merchant→card attribution is the normalize step, and no money moves on it here.
+    # The card a card-shaped *checking* payment pays down. v1 holds one card; with several, the
+    # payment goes to the first — merchant→card attribution is the normalize step, and no money
+    # moves on it here. Card-account movements, by contrast, already know their own card (below).
     payoff_card_id = cards[0].card_id
     bill_keys = {b.label for b in bills}
-    txns = tuple(
-        sorted(
-            (_txn(m, bill_keys, payoff_card_id) for m in movements), key=lambda t: (t.day, t.label)
-        )
-    )
+    checking_txns = [_txn(m, bill_keys, payoff_card_id) for m in movements]
+
+    # Each card account's own transactions, attributed to that card, so the engine can observe a
+    # real charge/payment history and classify `behavior` instead of refusing UNKNOWN forever
+    # (ticket 0065). Charges and payments alike are Plaid-*positive* (money out of the cardholder's
+    # pocket), so the same sign flip as checking applies and name — not sign — tells them apart.
+    card_txns = [_card_txn(r) for r in card_rows]
+
+    txns = tuple(sorted(checking_txns + card_txns, key=lambda t: (t.day, t.label)))
 
     # Opening balance chosen so the walk's checking balance lands on the *current* Plaid balance at
-    # `today`: balance_on(today) = opening + Σ(checking txns), so opening = current − Σ.
+    # `today`: balance_on(today) = opening + Σ(checking txns), so opening = current − Σ. Card
+    # charges are not checking movements and drop out here; a card *payment* on the card ledger is a
+    # CHECKING_KIND, so it is included — a wash at `today` (approximation #3, module docstring).
     current_checking = _dec(checking.get("current_balance"))
     checking_delta = sum((t.amount for t in txns if t.kind in _CHECKING_KINDS), ZERO)
     opening = money(current_checking - checking_delta)
@@ -173,6 +192,35 @@ def _checking_account(accounts: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _is_card_payment(name: str) -> bool:
     label = name.lower()
     return any(marker in label for marker in _CARD_MERCHANT_MARKERS)
+
+
+# On a *card* account, a transaction whose name reads like a payment is the household paying that
+# card down — Plaid records it on the card ledger (e.g. "AUTOMATIC PAYMENT - THANK YOU"), often
+# funded from an account we cannot see. Everything else on a card account is a purchase. Sign does
+# not tell them apart: Plaid reports both a purchase and a payment as *positive* on a card account,
+# so the name is the only discriminator.
+_CARD_PAYMENT_NAME_MARKERS = ("payment", "autopay", "auto pay")
+
+
+def _is_card_account_payment(name: str) -> bool:
+    label = name.lower()
+    return any(marker in label for marker in _CARD_PAYMENT_NAME_MARKERS)
+
+
+def _card_txn(row: dict[str, Any]) -> Txn:
+    """One card-account movement, attributed to its own card. The amount takes the same
+    Plaid→natural sign flip as checking (a purchase and a payment are both Plaid-positive → negative
+    here). A payment-named row becomes a `CARD_PAYMENT` (the classifier counts these for
+    `behavior`); everything else is a `CARD_CHARGE` — the charge history the reserve reads."""
+    name = _label(row)
+    kind = TxnKind.CARD_PAYMENT if _is_card_account_payment(name) else TxnKind.CARD_CHARGE
+    return Txn(
+        day=row["date"],
+        amount=-Decimal(row["amount"]),
+        label=name,
+        kind=kind,
+        card_id=row["plaid_account_id"],
+    )
 
 
 def _txn(movement: Movement, bill_keys: set[str], payoff_card_id: str) -> Txn:
