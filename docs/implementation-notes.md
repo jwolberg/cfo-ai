@@ -3317,3 +3317,20 @@ animating out at all — plus the browser measurements above. The gap is documen
 **Pre-existing, not introduced, not fixed:** Expo web logs `<button> cannot contain a nested
 <button>` for the Attest CTA nested inside the card's `Pressable`. That structure predates this
 change. Worth a ticket.
+
+---
+
+## 2026-08-15 — 0066: link token requests `liabilities` (linked cards get *reported* terms)
+
+Added `optional_products=[Products("liabilities")]` to the link-token request (`backend/plaid/link.py`).
+**Decision: optional, not a hard `products` entry** — a hard entry makes Plaid Link *fail* on any
+institution that does not support liabilities; optional lets a supporting institution consent it and
+lets `ingest_account_state` keep its existing balances-only degrade for the rest. That degrade is
+already tested (`test_plaid_accounts.py::test_liabilities_absent_degrades_to_balances_only`), so this
+change cannot regress the link/sync path.
+
+**Tradeoff / deviation from a clean close:** AC2 (`hh_demo_plaid`'s cards move off `apr_source =
+ESTIMATED`) is *not* provable in the suite. The change only affects **new** link tokens; the existing
+`hh_demo_plaid` Item was linked before it, without `liabilities` consented, so its terms stay
+estimated until the Item is **re-linked and re-synced** against Sandbox `user_good`. That is an
+operator step against Neon, left as the open box on the ticket — not silently marked done.

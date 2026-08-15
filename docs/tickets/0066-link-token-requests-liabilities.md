@@ -53,12 +53,26 @@ guessing.
 
 ## Acceptance criteria
 
-- [ ] The link token requests `liabilities` (as `products` or `optional_products` — decision noted
-      in the ticket/PR).
+- [x] The link token requests `liabilities` (as `optional_products`, not a hard `products` entry —
+      see Decision below). Pinned by `tests/test_link_loop.py::test_link_token_requests_liabilities_as_an_optional_product`.
 - [ ] After a re-sync, `hh_demo_plaid`'s `plaid_liabilities` is non-empty and its derived cards
       carry `apr_source = REPORTED` (not `ESTIMATED`) with issuer statement balance and minimum.
-- [ ] A household on an institution that does **not** support liabilities still links and syncs
-      (the degrade path is preserved) — a test or a documented Sandbox check.
+      **Operational step — pending a re-link/re-sync of `hh_demo_plaid` against Plaid Sandbox** (the
+      existing Item was linked *before* this change and never consented `liabilities`; re-linking is
+      required for the issuer to return terms). See Notes.
+- [x] A household on an institution that does **not** support liabilities still links and syncs
+      (the degrade path is preserved). Covered by
+      `tests/test_plaid_accounts.py::test_liabilities_absent_degrades_to_balances_only` and
+      `tests/test_sync.py` (`liabilities absent → balances-only, not a failure`); `optional_products`
+      guarantees Link itself does not fail on a non-supporting institution.
+
+## Decision
+
+Requested as `optional_products=[liabilities]`, not `products`. A hard `products` entry makes Link
+**fail** on any institution that does not support liabilities; optional lets a supporting institution
+consent it while a non-supporting one degrades cleanly (AC3), which is the fail-soft
+`ingest_account_state` has always relied on. For the Sandbox demo either would work; optional is the
+shape the eventual real-bank rung needs, so it is chosen now.
 
 ## Notes
 
@@ -67,3 +81,9 @@ guessing.
 - Complements **`0065`**: this fixes the card's *terms*; `0065` fixes the card's *observed
   behavior*. A linked household needs both before a sweep is honest, but they are independent changes
   and can land in either order.
+- **AC2 is the live half and requires an operator step** (2026-08-15). The code change only affects
+  *new* link tokens; `hh_demo_plaid`'s Item already exists and was linked without `liabilities`, so
+  its terms stay `ESTIMATED` until it is re-linked (a fresh `/plaid/link/token` → Link → `/exchange`)
+  or the Item re-consented, then re-synced. `apr_source` moving off `ESTIMATED` is verified there,
+  against Neon — not something the test suite can prove. Sandbox `user_good` returns real liability
+  terms, so the re-link is the whole check.
