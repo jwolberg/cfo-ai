@@ -9,6 +9,8 @@ agentId: backend-python-agent
 agentKind: classic
 agentScope: repo
 created: 2026-07-23
+refs:
+  - pr: 95
 ---
 
 # Request the `liabilities` product at link time
