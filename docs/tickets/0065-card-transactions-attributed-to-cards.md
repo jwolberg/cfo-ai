@@ -73,15 +73,21 @@ will be a *forecasted* refuse the trace can render, not a blocking one that show
 
 ## Acceptance criteria
 
-- [ ] `build_linked_history` attributes card-account transactions to the matching card; a linked
+- [x] `build_linked_history` attributes card-account transactions to the matching card; a linked
       household with the Sandbox `user_good` dataset derives at least one card with `behavior !=
-      UNKNOWN`.
+      UNKNOWN`. Verified against the **measured** `user_good` shape (see Notes) —
+      `tests/test_linkedpath.py::TestCardAccountActivityUnblocksTheDecision`.
 - [ ] `hh_demo_plaid`'s `/live-decision` no longer refuses on `card_behavior_unknown`; whatever it
-      returns carries a non-null `projected_low_balance` (i.e. the engine forecasted).
-- [ ] A test pins that a linked household with observed card charges + payments produces a
+      returns carries a non-null `projected_low_balance` (i.e. the engine forecasted). **Mechanism
+      proven in the test; the live confirmation is an operator step against Neon.** Unlike `0066`
+      this needs *no* re-sync — the card-account rows are already ingested (the ticket measured 18 of
+      them); the read is simply widened to include them, so re-running the decision confirms it.
+- [x] A test pins that a linked household with observed card charges + payments produces a
       forecasted decision, not a blocking refusal — the tripwire so this cannot silently regress.
-- [ ] No change to seeded-archetype decisions (the shared `derive_portfolio` path is unchanged for
-      them) — the existing schema/engine suites stay green.
+      Proven red-without-fix / green-with-fix (2026-08-15).
+- [x] No change to seeded-archetype decisions (the shared `derive_portfolio` path is unchanged for
+      them) — the full suite stays green (531/1, exit 0). The linked path is a separate assembly; the
+      seeded archetypes never touch `build_linked_history`.
 
 ## Notes
 
@@ -94,3 +100,13 @@ will be a *forecasted* refuse the trace can render, not a blocking one that show
   full normalize: it needs observed history to classify behavior, not an exact-cycle rebuild.
 - Surfaced alongside the 2026-07-23 prod re-seed; see `docs/implementation-notes.md` (that day) and
   the [[cfo-ai-link-flow-dogfood]] note.
+- **The `user_good` card shape, measured 2026-08-15** (probed the Plaid *Sandbox* API directly, no
+  prod): on the credit-card account a purchase **and** the payment are both Plaid-**positive** — the
+  "AUTOMATIC PAYMENT - THANK YOU" is +2078.5, same sign as the charges. So charge-vs-payment is told
+  apart by **name, not sign** (`_is_card_account_payment`). The pattern is 6 txns/cycle summing
+  $4,157; the ticket's measured "18 txns / $12,471" is exactly **3× that** — three cycles, three
+  payments, right at the classifier's three-cycle floor. The card payment is *not* funded from the
+  linked checking (it lands on the card ledger; a smaller "CREDIT CARD … PAYMENT" comes from
+  *savings*), which is why a card payment recorded on the card ledger is treated as a checking
+  outflow only as a documented approximation (#3 in `backend/linkedpath.py`), harmless to the
+  forward forecast.

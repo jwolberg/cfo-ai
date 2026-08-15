@@ -22,8 +22,8 @@ from sqlalchemy.engine import Engine
 from backend.attestation import attested_for, card_fingerprint, current_card_ids
 from backend.db.repository import repository
 from backend.livepath import NoLinkedHistory, linked_history, live_decision
-from engine.models import Action, AprSource, CoverageState
-from sim.household import PayCadence
+from engine.models import Action, AprSource, CoverageState, PaymentBehavior
+from sim.household import PayCadence, TxnKind
 from tests.conftest import requires_db
 
 pytestmark = requires_db
@@ -84,6 +84,46 @@ def _txn(repo, *, day: dt.date, plaid_amount: str, name: str) -> None:
         date=day,
         name=name,
     )
+
+
+def _card_acct_txn(repo, *, day: dt.date, plaid_amount: str, name: str) -> None:
+    """One transaction ingested on the **card** account (`CARD`). On a Plaid credit account a
+    purchase *and* a payment are both reported as a **positive** amount — the sign does not
+    distinguish them, the name does (ticket 0065)."""
+    repo.add_plaid_transaction(
+        transaction_id=f"pt_{uuid.uuid4().hex}",
+        plaid_item_id=ITEM,
+        plaid_account_id=CARD,
+        plaid_transaction_id=f"tx_{uuid.uuid4().hex}",
+        change_type="added",
+        amount=Decimal(plaid_amount),
+        date=day,
+        name=name,
+    )
+
+
+def _seed_card_account_activity(repo) -> None:
+    """The real Plaid Sandbox `user_good` shape (measured 2026-08-15 against the Sandbox API): the
+    card's charges and its `AUTOMATIC PAYMENT` land on the **card account itself**, not on checking,
+    and there is *no* card payment on the checking stream. Four cycles → four observed payments,
+    past the classifier's three-cycle floor. The shape `hh_demo_plaid` refused UNKNOWN on."""
+    for month in (1, 2, 3, 4):
+        # Charges (Plaid-positive), a handful across the cycle.
+        _card_acct_txn(
+            repo, day=dt.date(2026, month, 5), plaid_amount="500.00", name="Madison Bicycle Shop"
+        )
+        _card_acct_txn(repo, day=dt.date(2026, month, 7), plaid_amount="500.00", name="KFC")
+        _card_acct_txn(repo, day=dt.date(2026, month, 9), plaid_amount="500.00", name="Tectra Inc")
+        _card_acct_txn(
+            repo, day=dt.date(2026, month, 12), plaid_amount="78.50", name="Touchstone Climbing"
+        )
+        # The payment, recorded on the card ledger (Plaid-positive, like the charges).
+        _card_acct_txn(
+            repo,
+            day=dt.date(2026, month, 22),
+            plaid_amount="1578.50",
+            name="AUTOMATIC PAYMENT - THANK YOU",
+        )
 
 
 def _seed_transactions(repo) -> None:
@@ -205,3 +245,71 @@ class TestItRefusesRatherThanInventing:
                 )
             with pytest.raises(NoLinkedHistory):
                 linked_history(repo)
+
+
+def _seed_checking_no_card_payment(repo) -> None:
+    """The same checking history as `_seed_transactions`, but with **no card payment on checking** —
+    the honest `user_good` shape, where the card is paid on the card ledger (see
+    `_seed_card_account_activity`). This keeps the test from flattering itself: card behavior can
+    only be resolved from the *card* account, exactly as ticket 0065 requires."""
+    day = dt.date(2026, 1, 2)
+    while day <= START + dt.timedelta(days=DAYS):
+        _txn(repo, day=day, plaid_amount="-2600.00", name="ACH Electronic CreditGUSTO PAY")
+        day += dt.timedelta(days=14)
+    for month in (1, 2, 3, 4):
+        _txn(repo, day=dt.date(2026, month, 1), plaid_amount="1800.00", name="TENANT RENT")
+        _txn(repo, day=dt.date(2026, month, 9), plaid_amount="42.00", name="Starbucks")
+        _txn(repo, day=dt.date(2026, month, 22), plaid_amount="63.00", name="McDonald's")
+
+
+class TestCardAccountActivityUnblocksTheDecision:
+    """Ticket 0065: a linked household's card transactions must be attributed to its card, or its
+    `behavior` stays UNKNOWN, `CARD_BEHAVIOR_UNKNOWN` blocks `decide()` before the forecast, and it
+    refuses forever with a null `projected_low_balance`."""
+
+    @pytest.fixture
+    def linked_realcard(self, db, app_engine: Engine):
+        with db.begin():
+            db.execute(
+                text("INSERT INTO households (id, archetype, is_demo) VALUES (:h, NULL, false)"),
+                {"h": HH},
+            )
+        with repository(app_engine, HH) as repo:
+            repo.set_policy(
+                buffer_floor=Decimal("500.00"),
+                max_sweep=Decimal("1600.00"),
+                max_weekly_sweep=Decimal("3200.00"),
+                min_days_between_sweeps=7,
+                blackout_dates=[],
+            )
+            _accounts(repo, checking_balance="3200.00")
+            _seed_checking_no_card_payment(repo)  # no card payment on the checking stream
+            _seed_card_account_activity(repo)  # charges + AUTOMATIC PAYMENT on the card account
+            repo.add_attestation(card_fingerprint=card_fingerprint(current_card_ids(repo)))
+        return HH
+
+    def test_card_txns_are_attributed_and_the_engine_forecasts(
+        self, linked_realcard, app_engine: Engine
+    ) -> None:
+        with repository(app_engine, HH) as repo:
+            history = linked_history(repo)
+            decided = live_decision(repo, history, history.end)
+
+        # The card account's own transactions are attributed to that card — charges *and* the
+        # payments the classifier needs (four cycles, past the three-cycle floor). Before 0065 both
+        # were dropped: zero card txns in the history.
+        assert any(t.kind is TxnKind.CARD_CHARGE and t.card_id == CARD for t in history.txns), (
+            "card charges were not attributed to the card"
+        )
+        payments = [t for t in history.txns if t.kind is TxnKind.CARD_PAYMENT and t.card_id == CARD]
+        assert len(payments) >= 3, f"expected the card's own payments, got {len(payments)}"
+
+        # So at least one card resolves to a real behavior instead of UNKNOWN...
+        assert any(
+            c.behavior is not PaymentBehavior.UNKNOWN for c in decided.snapshot.portfolio.cards
+        ), "card behavior stayed UNKNOWN — the engine is still starved"
+
+        # ...and the engine gets *past* the blocking CARD_BEHAVIOR_UNKNOWN refusal to actually
+        # forecast: a decision with a non-null projected low, not a blank blocking refusal.
+        assert decided.decision.projected_low_balance is not None
+        assert decided.decision.action in (Action.SWEEP, Action.REFUSE)

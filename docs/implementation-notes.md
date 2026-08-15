@@ -3334,3 +3334,32 @@ ESTIMATED`) is *not* provable in the suite. The change only affects **new** link
 `hh_demo_plaid` Item was linked before it, without `liabilities` consented, so its terms stay
 estimated until the Item is **re-linked and re-synced** against Sandbox `user_good`. That is an
 operator step against Neon, left as the open box on the ticket — not silently marked done.
+
+---
+
+## 2026-08-15 — 0065: card-account transactions attributed to their card (behavior != UNKNOWN)
+
+`build_linked_history` read **only** the checking account, so a linked card's charges/payments were
+dropped, `behavior` stayed `UNKNOWN`, and `CARD_BEHAVIOR_UNKNOWN` blocked `decide()` *before* the
+forecast — a null-`projected_low` refusal, every day, forever. Now each card account's own
+transactions are attributed to that card (`_card_txn`): charges → `CARD_CHARGE`, payment-named rows
+→ `CARD_PAYMENT`.
+
+**Key measured fact (Plaid Sandbox `user_good`, probed 2026-08-15 — Sandbox API, no prod):** on a
+credit-card account a purchase and a payment are *both* Plaid-positive. "AUTOMATIC PAYMENT - THANK
+YOU" is +2078.5, same sign as the charges — so **name, not sign, discriminates them**
+(`_is_card_account_payment` matches "payment"/"autopay"). The ticket's measured 18 card txns /
+$12,471 is exactly three cycles of the 6-txn, $4,157 pattern → three observed payments, right at the
+`MIN_CYCLES_TO_CLASSIFY = 3` floor.
+
+**Decision / approximation (#3 in the module docstring):** the card payment is not funded from the
+linked checking (it lands on the card ledger; a smaller one comes from savings). Treating a
+card-ledger `CARD_PAYMENT` as a `CHECKING_KIND` is a documented approximation — a wash at `today`
+(the opening balance absorbs it) and *harmless to the forward forecast*, which `engine/forecast.py`
+projects from the current balance + future events and which **skips `CARD_PAYMENT` events outright**
+(verified at `engine/forecast.py:103`). The bias is conservative (safe direction).
+
+**Verification:** new tripwire test proven red-without-fix / green-with-fix; full suite exit 0 (no
+seeded-archetype change — they never touch `build_linked_history`). AC2's live half (re-run
+`hh_demo_plaid`'s `/live-decision` against Neon) needs *no* re-sync — the card rows are already
+ingested — but is an operator step I could not run from here (prod DB read blocked).
