@@ -2,7 +2,7 @@
 id: "0071"
 title: Reversibly hide the ResFi brand mark on status.html and its linked HTML pages
 type: chore
-status: open
+status: in-progress
 priority: low
 repo: cfo-ai
 agentId: mobile-rn-agent
@@ -10,6 +10,8 @@ agentKind: classic
 agentScope: repo
 horizon: now
 created: 2026-08-19
+refs:
+  - pr: 96
 ---
 
 # Hide the ResFi logo, keep it one command from coming back
